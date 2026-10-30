@@ -1,5 +1,6 @@
 package com.mio.review.dependencies
 
+import com.intellij.ide.util.PropertiesComponent
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.util.Disposer
@@ -33,7 +34,8 @@ class DiagramBrowser(parent: Disposable, private val onMessage: (String) -> Unit
             val query = JBCefJSQuery.create(browser as JBCefBrowserBase)
             Disposer.register(parent, query)
             query.addHandler { message ->
-                ApplicationManager.getApplication().invokeLater { onMessage(message) }
+                if (message.startsWith(PREF_PREFIX)) savePref(message.removePrefix(PREF_PREFIX))
+                else ApplicationManager.getApplication().invokeLater { onMessage(message) }
                 null
             }
             this.browser = browser
@@ -90,6 +92,7 @@ class DiagramBrowser(parent: Disposable, private val onMessage: (String) -> Unit
         "cycles" to graph.cycleCount,
         "vcs" to vcs,
         "changes" to Json.raw(changesJson(changes)),
+        "prefs" to Json.raw(Json.obj(PANELS.associateWith { PropertiesComponent.getInstance().getBoolean(prefKey(it)) })),
         "nodes" to graph.nodes.map { node ->
             Json.raw(
                 Json.obj(
@@ -144,7 +147,19 @@ class DiagramBrowser(parent: Disposable, private val onMessage: (String) -> Unit
 
     private fun hex(color: Color) = "#%02x%02x%02x".format(color.red, color.green, color.blue)
 
+    /** `painel:1` minimiza o painel da página, `painel:0` mostra. */
+    private fun savePref(pref: String) {
+        val panel = pref.substringBefore(':').takeIf { it in PANELS } ?: return
+        PropertiesComponent.getInstance().setValue(prefKey(panel), pref.substringAfter(':') == "1")
+    }
+
     private companion object {
+        const val PREF_PREFIX = "pref:"
+        /** Painéis da página que o usuário pode minimizar: a legenda e os detalhes da classe. */
+        val PANELS = listOf("legend", "info")
+
+        fun prefKey(panel: String) = "mio.review.diagram.collapsed.$panel"
+
         val template: String by lazy { resource("/diagram/diagram.html") }
         val cytoscape: String by lazy { resource("/diagram/cytoscape.min.js") }
 

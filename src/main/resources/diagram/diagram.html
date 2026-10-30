@@ -56,17 +56,20 @@
   #legend .swatch { display: inline-block; width: 26px; height: 0; border-top: 2px solid; vertical-align: middle; margin-right: 6px; }
   #legend .dot { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: middle; margin: 0 3px 0 8px; }
   #legend .dot:first-child { margin-left: 0; }
+  .panel-head { display: flex; align-items: center; gap: 6px; }
+  .panel-head .title { flex: 1; font-weight: 600; color: var(--fg); }
+  .icon-button { width: 20px; height: 20px; padding: 0; line-height: 18px; text-align: center; color: var(--muted); flex: none; }
+  .collapsed > .body { display: none; }
+  #legend .panel-head { margin-bottom: 2px; }
+  #legend.collapsed { padding: 4px 6px 4px 10px; }
+  #legend.collapsed .panel-head { margin: 0; }
+  #info .panel-head h2 { flex: 1; margin: 0; }
+  #info.collapsed { padding: 6px 8px 6px 12px; }
 </style>
 </head>
 <body>
 <div id="cy"></div>
 <div id="toolbar" class="panel">
-  <select id="layout" title="Como as classes são posicionadas na tela">
-    <option value="concentric">Por distância</option>
-    <option value="cose">Força</option>
-    <option value="breadthfirst">Hierárquico</option>
-    <option value="circle">Círculo</option>
-  </select>
   <input id="search" placeholder="Buscar classe" size="16">
   <button id="fit" title="Enquadrar o diagrama">Enquadrar</button>
   <button id="highlightChanges" title="Apaga as demais classes para destacar as que têm alterações não commitadas">Destacar alteradas</button>
@@ -76,12 +79,15 @@
 <div id="help" class="panel"></div>
 <div id="info" class="panel"></div>
 <div id="legend" class="panel">
-  <div><span class="swatch" style="border-color: var(--edge)"></span>usa</div>
-  <div><span class="swatch" style="border-color: var(--edge); border-top-style: dashed"></span>herda / implementa</div>
-  <div><span class="swatch" style="border-color: var(--cycle)"></span>ciclo de dependência</div>
-  <div>Risco ao alterar:<span class="dot" style="background: var(--low)"></span>baixo<span class="dot" style="background: var(--medium)"></span>médio<span class="dot" style="background: var(--high)"></span>alto</div>
-  <div>⚠ risco médio ou alto e sem testes</div>
-  <div><span class="ring"></span>alterada e não commitada</div>
+  <div class="panel-head"><span class="title">Legenda</span><button class="icon-button" id="collapseLegend"></button></div>
+  <div class="body">
+    <div><span class="swatch" style="border-color: var(--edge)"></span>usa</div>
+    <div><span class="swatch" style="border-color: var(--edge); border-top-style: dashed"></span>herda / implementa</div>
+    <div><span class="swatch" style="border-color: var(--cycle)"></span>ciclo de dependência</div>
+    <div>Risco ao alterar:<span class="dot" style="background: var(--low)"></span>baixo<span class="dot" style="background: var(--medium)"></span>médio<span class="dot" style="background: var(--high)"></span>alto</div>
+    <div>⚠ risco médio ou alto e sem testes</div>
+    <div><span class="ring"></span>alterada e não commitada</div>
+  </div>
 </div>
 <script>/*MIO_CYTOSCAPE*/</script>
 <script>
@@ -125,16 +131,11 @@
     ],
   });
 
-  function layoutOptions(name) {
-    const base = { name, animate: true, animationDuration: 350, fit: true, padding: 40 };
-    if (name === 'cose') return { ...base, animate: 'end', randomize: true, nodeRepulsion: () => 400000,
-      idealEdgeLength: () => 120, nodeOverlap: 20, gravity: 0.3, numIter: 2000 };
-    if (name === 'concentric') return { ...base, concentric: n => maxLevel - n.data('level'), levelWidth: () => 1, minNodeSpacing: 30 };
-    if (name === 'breadthfirst') return { ...base, directed: true, roots: '#' + CSS.escape(DATA.focus), spacingFactor: 1.15 };
-    return base;
+  /** A classe analisada no centro e cada anel um passo de dependência mais longe dela. */
+  function runLayout() {
+    cy.layout({ name: 'concentric', animate: true, animationDuration: 350, fit: true, padding: 40,
+      concentric: n => maxLevel - n.data('level'), levelWidth: () => 1, minNodeSpacing: 30 }).run();
   }
-  function runLayout() { cy.layout(layoutOptions(document.getElementById('layout').value)).run(); }
-  document.getElementById('layout').addEventListener('change', runLayout);
   document.getElementById('fit').addEventListener('click', () => cy.animate({ fit: { padding: 40 } }, { duration: 300 }));
   document.getElementById('search').addEventListener('input', e => {
     const text = e.target.value.trim().toLowerCase();
@@ -179,6 +180,23 @@
   }
   function simpleName(id) { return id.substring(id.lastIndexOf('.') + 1); }
 
+  /** Painéis minimizados ficam só com o título; a escolha é lembrada pela IDE. */
+  const prefs = { legend: !!DATA.prefs.legend, info: !!DATA.prefs.info };
+  function renderCollapsed(panel, buttonId, collapsed, what) {
+    panel.classList.toggle('collapsed', collapsed);
+    const button = panel.querySelector('#' + buttonId);
+    button.textContent = collapsed ? '+' : '−';
+    button.title = collapsed ? `Mostrar ${what}` : `Minimizar ${what}`;
+  }
+  function togglePref(key, panel, buttonId, what) {
+    prefs[key] = !prefs[key];
+    renderCollapsed(panel, buttonId, prefs[key], what);
+    mioSend(`pref:${key}:${prefs[key] ? 1 : 0}`);
+  }
+  const legendPanel = document.getElementById('legend');
+  renderCollapsed(legendPanel, 'collapseLegend', prefs.legend, 'a legenda');
+  document.getElementById('collapseLegend').addEventListener('click', () => togglePref('legend', legendPanel, 'collapseLegend', 'a legenda'));
+
   const helpPanel = document.getElementById('help');
   helpPanel.innerHTML = `<h2>Entenda as métricas <button id="closeHelp" title="Fechar">✕</button></h2>` +
     DATA.help.map(t => `<h3>${escapeHtml(t.title)}</h3><p>${escapeHtml(t.text)}</p>`).join('');
@@ -218,7 +236,12 @@
     const uses = node.outgoers('node').map(o => o.id()), usedBy = node.incomers('node').map(o => o.id());
     const info = document.getElementById('info');
     info.innerHTML = `
-      <h2>${escapeHtml(n.name)}</h2>
+      <div class="panel-head">
+        <h2>${escapeHtml(n.name)}</h2>
+        <button class="icon-button" id="collapseInfo"></button>
+        <button class="icon-button" id="closeInfo" title="Fechar os detalhes (clique numa classe para abrir de novo)">✕</button>
+      </div>
+      <div class="body">
       <div class="pkg">${escapeHtml(n.pkg || '(pacote padrão)')}</div>
       <div><span class="tag kind">${escapeHtml(n.kind)}</span>${n.cycle ? `<span class="tag cycle">em ciclo</span>${why('cycle')}` : ''}</div>
       <div class="metrics">
@@ -238,8 +261,12 @@
       <div class="actions">
         <button id="open">Abrir no editor</button>
         ${id === DATA.focus ? '' : '<button id="refocus">Analisar a partir daqui</button>'}
+      </div>
       </div>`;
     info.style.display = 'block';
+    renderCollapsed(info, 'collapseInfo', prefs.info, 'os detalhes');
+    info.querySelector('#collapseInfo').addEventListener('click', () => togglePref('info', info, 'collapseInfo', 'os detalhes'));
+    info.querySelector('#closeInfo').addEventListener('click', () => { info.style.display = 'none'; });
     info.querySelectorAll('ul.nodes li[data-id]').forEach(li => li.addEventListener('click', () => select(li.dataset.id)));
     info.querySelectorAll('ul.tests li[data-id]').forEach(li => li.addEventListener('click', () => mioSend('open:' + li.dataset.id)));
     info.querySelectorAll('.why').forEach(button => button.addEventListener('click', () => explain(button.dataset.topic)));

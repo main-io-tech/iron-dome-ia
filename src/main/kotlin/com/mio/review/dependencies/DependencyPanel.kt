@@ -1,6 +1,7 @@
 package com.mio.review.dependencies
 
 import com.intellij.icons.AllIcons
+import com.intellij.ide.util.PropertiesComponent
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.ActionUpdateThread
@@ -97,9 +98,18 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
             },
             object : DumbAwareAction("Todas as Classes", "Lista todas as classes do projeto para analisar sem abrir o arquivo", AllIcons.Nodes.Class) {
                 override fun actionPerformed(e: AnActionEvent) {
-                    tabs.selectedIndex = ALL_CLASSES_TAB
+                    showTab(ALL_CLASSES_TAB)
                     projectClasses.loadIfNeeded()
                 }
+            },
+            object : DumbAwareToggleAction(
+                "Mostrar Painel Inferior",
+                "Mostra ou esconde as tabelas, a lista de classes e as explicações, deixando o diagrama com todo o espaço",
+                AllIcons.Actions.SplitHorizontally,
+            ) {
+                override fun getActionUpdateThread() = ActionUpdateThread.EDT
+                override fun isSelected(e: AnActionEvent) = tabs.isVisible
+                override fun setSelected(e: AnActionEvent, state: Boolean) = setBottomVisible(state)
             },
             object : DumbAwareAction("Atualizar", "Refaz a análise da classe atual do diagrama", AllIcons.Actions.Refresh) {
                 override fun getActionUpdateThread() = ActionUpdateThread.EDT
@@ -111,9 +121,7 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
                 }
             },
             object : DumbAwareAction("Entenda as Métricas", "Explica o que cada número, cor e coluna significa", AllIcons.Actions.Help) {
-                override fun actionPerformed(e: AnActionEvent) {
-                    tabs.selectedIndex = HELP_TAB
-                }
+                override fun actionPerformed(e: AnActionEvent) = showTab(HELP_TAB)
             },
             object : DumbAwareToggleAction("Expandir", "Ocupa toda a janela da IDE", AllIcons.General.ExpandComponent) {
                 override fun getActionUpdateThread() = ActionUpdateThread.EDT
@@ -145,6 +153,7 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
         tabs.addTab("Todas as classes", projectClasses)
         tabs.addTab("Entenda as métricas", JBScrollPane(helpPane()))
         tabs.selectedIndex = ALL_CLASSES_TAB
+        tabs.isVisible = !PropertiesComponent.getInstance().getBoolean(BOTTOM_HIDDEN_KEY)
         val splitter = OnePixelSplitter(true, "MioReview.DependenciesSplitter", 0.68f).apply {
             firstComponent = diagram.component
             secondComponent = tabs
@@ -164,6 +173,18 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
 
     override fun dispose() {
         running?.cancel()
+    }
+
+    private fun setBottomVisible(visible: Boolean) {
+        tabs.isVisible = visible
+        PropertiesComponent.getInstance().setValue(BOTTOM_HIDDEN_KEY, !visible)
+        revalidate()
+        repaint()
+    }
+
+    private fun showTab(index: Int) {
+        if (!tabs.isVisible) setBottomVisible(true)
+        tabs.selectedIndex = index
     }
 
     fun analyzeCurrentEditor() {
@@ -445,6 +466,7 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
     private companion object {
         const val ALL_CLASSES_TAB = 1
         const val HELP_TAB = 2
+        const val BOTTOM_HIDDEN_KEY = "mio.review.dependencies.bottomHidden"
 
         /** 0 é verde (tranquilo), 1 amarelo e 2 vermelho (pede cuidado). */
         fun colorOf(level: Int): Color = when (level) {

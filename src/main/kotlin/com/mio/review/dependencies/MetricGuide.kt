@@ -61,7 +61,8 @@ object MetricGuide {
     val reading = Topic(
         "diagram",
         "Como ler o diagrama",
-        "Cada caixa é uma classe e a seta sai de quem usa para quem é usado. Seta tracejada indica herança " +
+        "A classe analisada fica no centro, e cada anel em volta está um passo de dependência mais longe " +
+            "dela. Cada caixa é uma classe e a seta sai de quem usa para quem é usado. Seta tracejada indica herança " +
             "ou implementação de interface. A cor mostra o risco ao alterar: verde é baixo, amarelo é médio " +
             "e vermelho é alto. O sinal ⚠ marca classes com risco médio ou alto e sem testes, e o contorno " +
             "azul marca classes com alterações ainda não commitadas. Clique numa classe para ver os detalhes " +
