@@ -33,7 +33,7 @@ class SaveReviewAction : DumbAwareAction() {
     }
 
     private fun notifySaved(project: Project, written: List<Path>) {
-        val group = NotificationGroupManager.getInstance().getNotificationGroup("mio-review-ia")
+        val group = NotificationGroupManager.getInstance().getNotificationGroup("Mio Review AI")
         if (written.isEmpty()) {
             group.createNotification("Nenhuma revisão aberta com comentários.", NotificationType.INFORMATION)
                 .notify(project)

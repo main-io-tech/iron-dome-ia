@@ -1,14 +1,40 @@
 <idea-plugin>
     <id>com.mio.review</id>
-    <name>mio-review-ia</name>
-    <vendor>mio</vendor>
+    <name>Mio Review AI</name>
+    <vendor>Mio</vendor>
 
     <description><![CDATA[
-    Adicione comentários de revisão no arquivo aberto, como num pull request: passe o mouse na margem
-    e clique no <b>+</b>, ou dê duplo clique no número da linha.
-    Ao salvar, o plugin gera <code>mio-review/mio-review-&lt;id&gt;.md</code> com as correções
-    pedidas, pronto para uma IA ler e aplicar os ajustes.
+    <p>Review your code like a pull request and let an AI assistant apply the fixes. Inline comments
+    are exported to a Markdown file that any AI tool can read, apply and mark as resolved.</p>
+    <p>Revise o código como num pull request e deixe a IA aplicar as correções.</p>
+    <p>Comente qualquer linha ou trecho direto no editor. Ao salvar, o Mio Review AI gera
+    <code>mio-review/mio-review-&lt;id&gt;.md</code> com cada comentário e o código citado, pronto
+    para qualquer assistente de IA ler, aplicar e marcar como resolvido.</p>
+    <h3>Recursos</h3>
+    <ul>
+      <li><b>Comentários inline:</b> clique no <b>+</b> da margem, dê duplo clique no número da linha
+        ou use <kbd>Ctrl+Alt+Shift+M</kbd>.</li>
+      <li><b>Dois modos por comentário:</b> <i>Aplicar direto</i> ou <i>Discutir antes de alterar</i>,
+        em que a IA apresenta a proposta e espera sua aprovação.</li>
+      <li><b>Acompanha o código:</b> os comentários se movem com as linhas inseridas ou removidas.</li>
+      <li><b>Ciclo completo:</b> pendentes, resolvidos pela IA (em verde), editáveis e removíveis com
+        desfazer.</li>
+      <li><b>Detecção de conflitos:</b> a IA é instruída a perguntar antes de aplicar comentários que
+        se contradizem ou se cruzam.</li>
+      <li><b>Independente de ferramenta:</b> o <code>.md</code> funciona com Cursor, Claude Code ou
+        qualquer outro assistente.</li>
+    </ul>
     ]]></description>
+
+    <change-notes><![CDATA[
+    <h3>0.1.0</h3>
+    <ul>
+      <li>Primeira versão: comentários inline, modos de aplicação, edição, remoção e exportação da
+        revisão em Markdown.</li>
+      <li>Instruções para a IA detectar contradições e cruzamentos entre comentários antes de alterar
+        os arquivos.</li>
+    </ul>
+    ]]></change-notes>
 
     <depends>com.intellij.modules.platform</depends>
 
@@ -17,7 +43,7 @@
         <editorFactoryMouseListener implementation="com.mio.review.listeners.ReviewMouseListener"/>
         <editorFactoryMouseMotionListener implementation="com.mio.review.listeners.ReviewMouseMotionListener"/>
         <editorFloatingToolbarProvider implementation="com.mio.review.ui.ReviewFloatingToolbarProvider"/>
-        <notificationGroup id="mio-review-ia" displayType="BALLOON"/>
+        <notificationGroup id="Mio Review AI" displayType="BALLOON"/>
     </extensions>
 
     <applicationListeners>
@@ -43,17 +69,17 @@
 
         <action id="MioReview.AddComment"
                 class="com.mio.review.actions.AddReviewCommentAction"
-                text="mio-review-ia: Adicionar Comentário"
+                text="Mio Review AI: Adicionar Comentário"
                 description="Comenta a seleção ou a linha atual para a IA corrigir">
             <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt shift M"/>
         </action>
         <action id="MioReview.RemoveComment"
                 class="com.mio.review.actions.RemoveReviewCommentAction"
-                text="mio-review-ia: Remover Comentário"
+                text="Mio Review AI: Remover Comentário"
                 description="Marca para remoção, ao salvar, os comentários não resolvidos da seleção ou da linha atual"/>
         <action id="MioReview.RemoveResolved"
                 class="com.mio.review.actions.RemoveResolvedCommentsAction"
-                text="mio-review-ia: Remover Comentários Resolvidos"
+                text="Mio Review AI: Remover Comentários Resolvidos"
                 description="Tira do editor os comentários resolvidos, sem alterar o .md da revisão"/>
     </actions>
 </idea-plugin>

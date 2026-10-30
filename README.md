@@ -1,4 +1,4 @@
-# mio-review-ia
+# Mio Review AI
 
 Plugin para IntelliJ que permite comentar o arquivo aberto como num pull request. Ao salvar, gera
 `mio-review/mio-review-<id>.md` com os comentários e o trecho de código de cada um, para uma IA ler e
