@@ -53,6 +53,51 @@ A tool window **Mio Review AI**, na barra lateral direita, tem duas abas:
   diff com o último commit (as setas do diff passam pelos demais arquivos) e duplo clique para abrir
   o arquivo.
 
+## Diagrama de dependências
+
+A aba **Dependências** da tool window mostra, para uma classe Java ou Kotlin, as classes de que ela
+depende (eferentes) e as que dependem dela (aferentes), até 3 níveis de distância. Há três formas de
+escolher a classe:
+
+- **Menu de contexto:** clique com o botão direito numa classe ou arquivo e escolha **Mio Review AI:
+  Analisar Dependências**. Funciona no editor (vale a classe sob o cursor), na aba do arquivo, no
+  Project view, no Structure view e na barra de navegação.
+- **Todas as classes:** na aba de mesmo nome, embaixo do diagrama, **Carregar todas as classes** lista
+  as classes Java e Kotlin do projeto, com filtro por nome ou pacote e a opção de mostrar as de teste.
+  Clique (ou Enter) analisa a classe sem abrir o arquivo; duplo clique também a abre no editor. Classes
+  com alterações não commitadas aparecem na cor do git.
+- **Analisar Classe Atual:** na barra da aba, analisa a classe aberta no editor.
+
+- **Diagrama:** a classe analisada fica destacada e a cor de cada classe mostra o risco de alterá-la
+  (verde baixo, amarelo médio, vermelho alto). O sinal ⚠ marca classes com risco médio ou alto e sem
+  testes. Interfaces aparecem como elipses, setas cheias indicam uso, setas tracejadas com ponta vazada
+  indicam herança ou implementação, e ligações vermelhas indicam ciclos de dependência. Passe o mouse
+  para destacar os vizinhos de uma classe, clique para ver os detalhes e dê duplo clique para abrir o
+  código. Em **Analisar a partir daqui**, o diagrama é refeito em torno de outra classe.
+- **Aferentes e eferentes:** quantas classes do projeto dependem da classe (aferentes) e de quantas
+  ela depende (eferentes). Contam o código de produção inteiro, não só o que aparece no diagrama.
+- **Risco ao alterar:** baixo com menos de 3 classes dependendo dela, médio de 3 a 7 e alto com 8 ou
+  mais. Fazer parte de um ciclo sobe o risco um nível.
+- **Testes:** as classes de teste que usam a classe diretamente. **Bem coberta** quando há um teste
+  com o nome dela (como `ServiceTest`) ou 3 ou mais classes de teste a usam, **Parcial** com uma ou
+  duas, **Sem testes** com nenhuma. Os testes não são executados; para medir as linhas cobertas, use
+  **Run with Coverage**. Cada classe traz uma recomendação do que fazer antes de alterá-la.
+- **Alterações não commitadas:** as classes cujo arquivo foi mexido e ainda não entrou num commit,
+  pela mesma regra da aba **Alterações**, ganham um contorno azul no diagrama e aparecem na coluna
+  **Alteração** da tabela. **Destacar alteradas** apaga as demais classes, e **Ver alterações**, nos
+  detalhes da classe, abre o diff com o último commit, passando pelas outras classes alteradas do
+  diagrama. As marcas se atualizam sozinhas ao editar, commitar ou reverter.
+- **Explicações:** **Entenda as métricas**, na barra da aba e no diagrama, explica cada número e cor.
+  Os botões **?** nos detalhes da classe e os cabeçalhos da tabela também explicam cada métrica.
+- **Controles:** profundidade (1 a 3 níveis), direção (ambas, só eferentes ou só aferentes), layout
+  (por distância, força, hierárquico ou círculo) e busca. **Expandir** faz a aba ocupar a janela
+  inteira e **Abrir em Janela** a destaca numa janela separada.
+
+Contam como dependência: tipos citados, herança, construtores e membros estáticos, de `object` ou de
+nível de arquivo. Classes aninhadas contam como a classe de topo que as contém, e bibliotecas ficam de
+fora. O diagrama usa o [Cytoscape.js](https://js.cytoscape.org/) (licença MIT) e exige o plugin Java
+do IntelliJ; sem ele, a aba não aparece.
+
 ## Instruções para a IA
 
 Adicione ao `AGENTS.md` (ou a uma rule do Cursor) do projeto revisado:

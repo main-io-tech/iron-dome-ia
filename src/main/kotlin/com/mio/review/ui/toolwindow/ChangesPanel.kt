@@ -1,35 +1,21 @@
 package com.mio.review.ui.toolwindow
 
-import com.intellij.diff.DiffContentFactory
-import com.intellij.diff.chains.DiffRequestProducer
-import com.intellij.diff.chains.DiffRequestProducerException
-import com.intellij.diff.chains.SimpleDiffRequestChain
-import com.intellij.diff.editor.ChainDiffVirtualFile
-import com.intellij.diff.editor.DiffEditorTabFilesManager
-import com.intellij.diff.requests.DiffRequest
-import com.intellij.diff.requests.SimpleDiffRequest
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.service
-import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.fileTypes.FileTypeManager
-import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.SimpleToolWindowPanel
-import com.intellij.openapi.util.UserDataHolder
 import com.intellij.openapi.vcs.FilePath
 import com.intellij.openapi.vcs.FileStatus
 import com.intellij.openapi.vcs.ProjectLevelVcsManager
 import com.intellij.openapi.vcs.changes.Change
 import com.intellij.openapi.vcs.changes.ChangeListListener
 import com.intellij.openapi.vcs.changes.ChangeListManager
-import com.intellij.openapi.vcs.changes.CurrentContentRevision
-import com.intellij.openapi.vcs.VcsException
 import com.intellij.openapi.vcs.changes.VcsDirtyScopeManager
-import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.ui.ColoredListCellRenderer
 import com.intellij.ui.ScrollPaneFactory
 import com.intellij.ui.SimpleTextAttributes
@@ -63,8 +49,7 @@ class ChangesPanel(private val project: Project) : SimpleToolWindowPanel(true, t
         cellRenderer = Renderer()
         emptyText.text = "Nenhuma alteração não commitada"
     }
-    /** O diff aberto por este painel, fechado ao abrir o próximo para não acumular abas. */
-    private var openDiff: VirtualFile? = null
+    private val diff = ChangeDiff(project)
     private var refreshQueued = false
 
     init {
@@ -115,7 +100,7 @@ class ChangesPanel(private val project: Project) : SimpleToolWindowPanel(true, t
             (change.afterRevision ?: change.beforeRevision)?.file?.let { entry(change, it, unversioned = false) }
         }
         val unversioned = changeListManager.unversionedFilesPaths.map {
-            entry(Change(null, CurrentContentRevision.create(it)), it, unversioned = true)
+            entry(ChangeDiff.unversioned(it), it, unversioned = true)
         }
         val selected = list.selectedValue?.path
         model.clear()
@@ -145,39 +130,12 @@ class ChangesPanel(private val project: Project) : SimpleToolWindowPanel(true, t
 
     /** O diff navega por todos os arquivos da lista, a partir do clicado. */
     private fun showDiff(index: Int) {
-        val producers = (0 until model.size()).map { ChangeProducer(project, model[it]) }
-        val file = ChainDiffVirtualFile(
-            SimpleDiffRequestChain.fromProducers(producers, index),
-            "Alterações não commitadas",
-        )
-        openDiff?.let { FileEditorManager.getInstance(project).closeFile(it) }
-        openDiff = file
-        DiffEditorTabFilesManager.getInstance(project).showDiffFile(file, false)
+        diff.show((0 until model.size()).map { model[it].let { entry -> ChangeDiff.Item(entry.change, entry.path, entry.relativePath) } }, index)
     }
 
     private fun openFile(entry: Entry) {
         val file = entry.path.virtualFile ?: return
         OpenFileDescriptor(project, file).navigate(true)
-    }
-
-    /** Roda em segundo plano, chamado pelo diff: ler a versão do commit pode acionar o git. */
-    private class ChangeProducer(private val project: Project, private val entry: Entry) : DiffRequestProducer {
-
-        override fun getName(): String = entry.relativePath
-
-        override fun process(context: UserDataHolder, indicator: ProgressIndicator): DiffRequest {
-            val factory = DiffContentFactory.getInstance()
-            val fileType = FileTypeManager.getInstance().getFileTypeByFileName(entry.path.name)
-            val before = try {
-                entry.change.beforeRevision?.content?.let { factory.create(project, it, fileType) }
-            } catch (e: VcsException) {
-                throw DiffRequestProducerException(e)
-            } ?: factory.createEmpty()
-            val after = entry.path.virtualFile?.takeIf { entry.change.afterRevision != null }
-                ?.let { factory.create(project, it) }
-                ?: factory.createEmpty()
-            return SimpleDiffRequest(entry.relativePath, before, after, "Último commit", "Local")
-        }
     }
 
     private class Renderer : ColoredListCellRenderer<Entry>() {

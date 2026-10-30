@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<style>
+  :root { /*MIO_THEME_CSS*/ }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--fg);
+    font: 12px -apple-system, "Segoe UI", "Inter", sans-serif; }
+  #cy { position: absolute; inset: 0; }
+  .panel { position: absolute; background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, .15); }
+  #toolbar { top: 8px; left: 8px; display: flex; gap: 6px; align-items: center; padding: 6px 8px; }
+  #toolbar select, #toolbar input, button { background: var(--bg); color: var(--fg); border: 1px solid var(--border);
+    border-radius: 5px; padding: 3px 7px; font: inherit; }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  #summary { color: var(--muted); padding-left: 4px; }
+  #info { top: 8px; right: 8px; width: 330px; max-height: calc(100% - 16px); overflow: auto; padding: 12px; display: none; }
+  #info h2 { margin: 0 0 2px; font-size: 14px; word-break: break-all; }
+  #info .pkg { color: var(--muted); margin-bottom: 8px; word-break: break-all; }
+  #info .metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 10px 0; }
+  #info .metric { position: relative; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 6px; text-align: center; }
+  #info .metric b { display: block; font-size: 18px; }
+  #info .metric span { color: var(--muted); font-size: 11px; }
+  #info .metric .why { position: absolute; top: 4px; right: 4px; }
+  #info .row { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
+  #info .row .label { font-weight: 600; flex: 1; }
+  #info .note { color: var(--muted); margin-top: 3px; }
+  #info .advice { margin-top: 10px; padding: 8px; border-radius: 6px; border-left: 3px solid var(--accent); background: var(--bg); line-height: 1.45; }
+  #info h3 { font-size: 12px; margin: 12px 0 4px; color: var(--muted); font-weight: 600; }
+  #info ul { margin: 0; padding: 0; list-style: none; }
+  #info li { padding: 2px 4px; border-radius: 4px; cursor: pointer; }
+  #info li:hover { background: var(--bg); }
+  #info .actions { display: flex; gap: 6px; margin-top: 12px; }
+  .explain { display: none; margin-top: 6px; padding: 8px; border-radius: 6px; background: var(--bg); border: 1px solid var(--border); line-height: 1.45; }
+  .explain b { display: block; margin-bottom: 3px; }
+  .why { width: 18px; height: 18px; padding: 0; border-radius: 50%; font-size: 11px; line-height: 16px; color: var(--muted); }
+  .tag { display: inline-block; border-radius: 10px; padding: 1px 8px; font-size: 11px; margin-right: 4px; }
+  .tag.cycle { background: var(--cycleBg); color: var(--cycle); }
+  .tag.kind { background: var(--bg); border: 1px solid var(--border); }
+  .badge { border-radius: 10px; padding: 1px 9px; color: var(--nodeText); font-weight: 600; }
+  .badge.LOW, .badge.GOOD { background: var(--low); }
+  .badge.MEDIUM, .badge.PARTIAL { background: var(--medium); }
+  .badge.HIGH, .badge.NONE { background: var(--high); }
+  .badge.changed { background: transparent; border: 1px solid var(--changed); color: var(--changed); }
+  .badge.clean { background: var(--bg); border: 1px solid var(--border); color: var(--muted); font-weight: normal; }
+  button.pressed { border-color: var(--changed); color: var(--changed); }
+  button:disabled { opacity: .5; cursor: default; }
+  #legend .ring { display: inline-block; width: 12px; height: 12px; border-radius: 3px; border: 2px solid var(--changed); vertical-align: middle; margin-right: 6px; }
+  #help { top: 50px; left: 8px; width: 440px; max-height: calc(100% - 58px); overflow: auto; padding: 12px 14px; display: none; line-height: 1.5; }
+  #help h2 { margin: 0 0 6px; font-size: 14px; display: flex; justify-content: space-between; align-items: center; }
+  #help h3 { margin: 12px 0 2px; font-size: 12px; }
+  #help p { margin: 0; }
+  #legend { left: 8px; bottom: 8px; padding: 8px 10px; color: var(--muted); line-height: 1.7; }
+  #legend .swatch { display: inline-block; width: 26px; height: 0; border-top: 2px solid; vertical-align: middle; margin-right: 6px; }
+  #legend .dot { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: middle; margin: 0 3px 0 8px; }
+  #legend .dot:first-child { margin-left: 0; }
+</style>
+</head>
+<body>
+<div id="cy"></div>
+<div id="toolbar" class="panel">
+  <select id="layout" title="Como as classes são posicionadas na tela">
+    <option value="concentric">Por distância</option>
+    <option value="cose">Força</option>
+    <option value="breadthfirst">Hierárquico</option>
+    <option value="circle">Círculo</option>
+  </select>
+  <input id="search" placeholder="Buscar classe" size="16">
+  <button id="fit" title="Enquadrar o diagrama">Enquadrar</button>
+  <button id="highlightChanges" title="Apaga as demais classes para destacar as que têm alterações não commitadas">Destacar alteradas</button>
+  <button id="helpButton" title="Explica o que cada número e cor significa">Entenda as métricas</button>
+  <span id="summary"></span>
+</div>
+<div id="help" class="panel"></div>
+<div id="info" class="panel"></div>
+<div id="legend" class="panel">
+  <div><span class="swatch" style="border-color: var(--edge)"></span>usa</div>
+  <div><span class="swatch" style="border-color: var(--edge); border-top-style: dashed"></span>herda / implementa</div>
+  <div><span class="swatch" style="border-color: var(--cycle)"></span>ciclo de dependência</div>
+  <div>Risco ao alterar:<span class="dot" style="background: var(--low)"></span>baixo<span class="dot" style="background: var(--medium)"></span>médio<span class="dot" style="background: var(--high)"></span>alto</div>
+  <div>⚠ risco médio ou alto e sem testes</div>
+  <div><span class="ring"></span>alterada e não commitada</div>
+</div>
+<script>/*MIO_CYTOSCAPE*/</script>
+<script>
+  const THEME = /*MIO_THEME_JSON*/;
+  const DATA = /*MIO_DATA*/;
+  function mioSend(message) { /*MIO_BRIDGE*/ }
+
+  const byId = new Map(DATA.nodes.map(n => [n.id, n]));
+  const help = new Map(DATA.help.map(t => [t.id, t]));
+  const maxLevel = Math.max(0, ...DATA.nodes.map(n => n.level));
+  const riskColors = { LOW: THEME.low, MEDIUM: THEME.medium, HIGH: THEME.high };
+  const shapes = { classe: 'round-rectangle', abstrata: 'round-rectangle', interface: 'ellipse', enum: 'hexagon', 'anotação': 'tag' };
+
+  const cy = cytoscape({
+    container: document.getElementById('cy'),
+    wheelSensitivity: 0.25,
+    elements: [
+      ...DATA.nodes.map(n => ({
+        data: { ...n, label: (n.attention ? '⚠ ' : '') + n.name, color: riskColors[n.risk], shape: shapes[n.kind] || 'round-rectangle' },
+        classes: [n.id === DATA.focus ? 'focus' : '', n.kind === 'abstrata' || n.kind === 'interface' ? 'abstract' : ''].join(' ') })),
+      ...DATA.edges.map((e, i) => ({ data: { id: 'e' + i, source: e.source, target: e.target },
+        classes: [e.kind === 'INHERITANCE' ? 'inheritance' : '', e.cycle ? 'cycle' : ''].join(' ') })),
+    ],
+    style: [
+      { selector: 'node', style: {
+        'shape': 'data(shape)', 'label': 'data(label)', 'background-color': 'data(color)', 'background-opacity': .9,
+        'color': THEME.nodeText, 'font-size': 11, 'text-valign': 'center', 'text-halign': 'center',
+        'width': 'label', 'height': 26, 'padding': '10px', 'border-width': 1, 'border-color': THEME.border } },
+      { selector: 'node.abstract', style: { 'font-style': 'italic' } },
+      { selector: 'node.focus', style: { 'border-width': 3, 'border-color': THEME.accent, 'font-weight': 'bold' } },
+      { selector: 'node:selected', style: { 'border-width': 3, 'border-color': THEME.accent, 'overlay-opacity': 0 } },
+      { selector: 'node.match', style: { 'border-width': 3, 'border-color': THEME.match } },
+      { selector: 'node.changed', style: { 'outline-width': 3, 'outline-color': THEME.changed, 'outline-offset': 3, 'outline-opacity': 1 } },
+      { selector: 'edge', style: {
+        'width': 1.4, 'line-color': THEME.edge, 'target-arrow-color': THEME.edge, 'target-arrow-shape': 'vee',
+        'curve-style': 'bezier', 'arrow-scale': 1.1, 'opacity': .85 } },
+      { selector: 'edge.inheritance', style: { 'line-style': 'dashed', 'target-arrow-shape': 'triangle', 'target-arrow-fill': 'hollow' } },
+      { selector: 'edge.cycle', style: { 'line-color': THEME.cycle, 'target-arrow-color': THEME.cycle, 'width': 2.4, 'opacity': 1 } },
+      { selector: '.faded, .dimmed', style: { 'opacity': .12 } },
+      { selector: 'edge.highlight', style: { 'width': 2.4, 'opacity': 1 } },
+    ],
+  });
+
+  function layoutOptions(name) {
+    const base = { name, animate: true, animationDuration: 350, fit: true, padding: 40 };
+    if (name === 'cose') return { ...base, animate: 'end', randomize: true, nodeRepulsion: () => 400000,
+      idealEdgeLength: () => 120, nodeOverlap: 20, gravity: 0.3, numIter: 2000 };
+    if (name === 'concentric') return { ...base, concentric: n => maxLevel - n.data('level'), levelWidth: () => 1, minNodeSpacing: 30 };
+    if (name === 'breadthfirst') return { ...base, directed: true, roots: '#' + CSS.escape(DATA.focus), spacingFactor: 1.15 };
+    return base;
+  }
+  function runLayout() { cy.layout(layoutOptions(document.getElementById('layout').value)).run(); }
+  document.getElementById('layout').addEventListener('change', runLayout);
+  document.getElementById('fit').addEventListener('click', () => cy.animate({ fit: { padding: 40 } }, { duration: 300 }));
+  document.getElementById('search').addEventListener('input', e => {
+    const text = e.target.value.trim().toLowerCase();
+    cy.nodes().removeClass('match');
+    if (text) cy.nodes().filter(n => n.data('name').toLowerCase().includes(text)).addClass('match');
+  });
+
+  let changes = DATA.changes, vcs = DATA.vcs, highlighting = false, infoId = null;
+  const highlightButton = document.getElementById('highlightChanges');
+
+  function changedCount() { return DATA.nodes.filter(n => changes[n.id]).length; }
+  function renderSummary() {
+    const changed = changedCount();
+    document.getElementById('summary').textContent =
+      `${DATA.nodes.length} classes · ${DATA.edges.length} ligações` + (DATA.cycles ? ` · ${DATA.cycles} ciclo(s)` : '') +
+      (changed ? ` · ${changed} alterada(s) sem commit` : '') + (DATA.truncated ? ' · limite de classes atingido' : '');
+  }
+  function renderHighlight() {
+    cy.elements().removeClass('dimmed');
+    if (highlighting) {
+      cy.nodes().not('.changed').addClass('dimmed');
+      cy.edges().filter(e => !e.source().hasClass('changed') && !e.target().hasClass('changed')).addClass('dimmed');
+    }
+    highlightButton.classList.toggle('pressed', highlighting);
+  }
+  function applyChanges() {
+    cy.nodes().forEach(node => node.toggleClass('changed', !!changes[node.id()]));
+    const changed = changedCount();
+    if (!changed) highlighting = false;
+    highlightButton.disabled = !changed;
+    highlightButton.title = changed
+      ? 'Apaga as demais classes para destacar as que têm alterações não commitadas'
+      : (vcs ? 'Nenhuma classe do diagrama tem alterações não commitadas' : 'O projeto não usa controle de versão');
+    renderHighlight();
+    renderSummary();
+    if (infoId && document.getElementById('info').style.display === 'block') showInfo(infoId);
+  }
+  highlightButton.addEventListener('click', () => { highlighting = !highlighting; renderHighlight(); });
+
+  function escapeHtml(text) {
+    return text.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+  function simpleName(id) { return id.substring(id.lastIndexOf('.') + 1); }
+
+  const helpPanel = document.getElementById('help');
+  helpPanel.innerHTML = `<h2>Entenda as métricas <button id="closeHelp" title="Fechar">✕</button></h2>` +
+    DATA.help.map(t => `<h3>${escapeHtml(t.title)}</h3><p>${escapeHtml(t.text)}</p>`).join('');
+  document.getElementById('helpButton').addEventListener('click', () => {
+    helpPanel.style.display = helpPanel.style.display === 'block' ? 'none' : 'block';
+  });
+  document.getElementById('closeHelp').addEventListener('click', () => { helpPanel.style.display = 'none'; });
+
+  cy.on('mouseover', 'node', e => {
+    const hood = e.target.closedNeighborhood();
+    cy.elements().not(hood).addClass('faded');
+    hood.edges().addClass('highlight');
+  });
+  cy.on('mouseout', 'node', () => cy.elements().removeClass('faded highlight'));
+  cy.on('tap', 'node', e => { showInfo(e.target.id()); mioSend('select:' + e.target.id()); });
+  cy.on('dbltap', 'node', e => mioSend('open:' + e.target.id()));
+  cy.on('tap', e => { if (e.target === cy) document.getElementById('info').style.display = 'none'; });
+
+  function why(topic) { return `<button class="why" data-topic="${topic}" title="O que é isso?">?</button>`; }
+  function listOf(ids, name) {
+    if (!ids.length) return '<li style="cursor: default">nenhuma</li>';
+    return ids.map(id => `<li data-id="${escapeHtml(id)}">${escapeHtml(name(id))}</li>`).join('');
+  }
+  function changeRow(n) {
+    const change = changes[n.id];
+    if (!vcs) return '<div class="row"><span class="label">Alterações</span><span class="badge clean">sem git</span></div>' +
+      '<div class="note">O projeto não usa controle de versão, então não há alterações para mostrar.</div>';
+    if (!change) return `<div class="row"><span class="label">Alterações</span><span class="badge clean">Nenhuma</span>${why('changes')}</div>` +
+      '<div class="note">Igual ao último commit.</div>';
+    return `<div class="row"><span class="label">Alterações</span><span class="badge changed">${escapeHtml(change.label)}, sem commit</span>${why('changes')}</div>` +
+      `<div class="note">${escapeHtml(n.changeAdvice)}</div>` +
+      '<div class="actions"><button id="diff">Ver alterações</button></div>';
+  }
+  function showInfo(id) {
+    infoId = id;
+    const n = byId.get(id), node = cy.getElementById(id);
+    const uses = node.outgoers('node').map(o => o.id()), usedBy = node.incomers('node').map(o => o.id());
+    const info = document.getElementById('info');
+    info.innerHTML = `
+      <h2>${escapeHtml(n.name)}</h2>
+      <div class="pkg">${escapeHtml(n.pkg || '(pacote padrão)')}</div>
+      <div><span class="tag kind">${escapeHtml(n.kind)}</span>${n.cycle ? `<span class="tag cycle">em ciclo</span>${why('cycle')}` : ''}</div>
+      <div class="metrics">
+        <div class="metric">${why('afferent')}<b>${n.afferent}</b><span>Aferentes<br>classes que dependem dela</span></div>
+        <div class="metric">${why('efferent')}<b>${n.efferent}</b><span>Eferentes<br>classes de que ela depende</span></div>
+      </div>
+      <div class="row"><span class="label">Risco ao alterar</span><span class="badge ${n.risk}">${escapeHtml(n.riskLabel)}</span>${why('risk')}</div>
+      <div class="note">${escapeHtml(n.riskReason)}</div>
+      <div class="row"><span class="label">Testes</span><span class="badge ${n.coverage}">${escapeHtml(n.coverageLabel)}</span>${why('tests')}</div>
+      <div class="note">${n.tests.length ? `Classes de teste que a usam (${n.tests.length}):` : 'Nenhuma classe de teste usa esta classe diretamente.'}</div>
+      <ul class="tests">${n.tests.length ? listOf(n.tests, simpleName) : ''}</ul>
+      ${changeRow(n)}
+      <div class="explain" id="explain"></div>
+      <div class="advice"><b>O que fazer:</b> ${escapeHtml(n.advice)}</div>
+      <h3>Depende de, no diagrama (${uses.length})</h3><ul class="nodes">${listOf(uses, i => byId.get(i).name)}</ul>
+      <h3>Dependem dela, no diagrama (${usedBy.length})</h3><ul class="nodes">${listOf(usedBy, i => byId.get(i).name)}</ul>
+      <div class="actions">
+        <button id="open">Abrir no editor</button>
+        ${id === DATA.focus ? '' : '<button id="refocus">Analisar a partir daqui</button>'}
+      </div>`;
+    info.style.display = 'block';
+    info.querySelectorAll('ul.nodes li[data-id]').forEach(li => li.addEventListener('click', () => select(li.dataset.id)));
+    info.querySelectorAll('ul.tests li[data-id]').forEach(li => li.addEventListener('click', () => mioSend('open:' + li.dataset.id)));
+    info.querySelectorAll('.why').forEach(button => button.addEventListener('click', () => explain(button.dataset.topic)));
+    info.querySelector('#open').addEventListener('click', () => mioSend('open:' + id));
+    info.querySelector('#diff')?.addEventListener('click', () => mioSend('diff:' + id));
+    info.querySelector('#refocus')?.addEventListener('click', () => mioSend('focus:' + id));
+  }
+  function explain(topicId) {
+    const box = document.getElementById('explain'), topic = help.get(topicId);
+    if (!topic) return;
+    const open = box.style.display === 'block' && box.dataset.topic === topicId;
+    box.dataset.topic = topicId;
+    box.innerHTML = `<b>${escapeHtml(topic.title)}</b>${escapeHtml(topic.text)}`;
+    box.style.display = open ? 'none' : 'block';
+  }
+
+  function select(id) {
+    const node = cy.getElementById(id);
+    if (node.empty()) return;
+    cy.nodes().unselect();
+    node.select();
+    cy.animate({ center: { eles: node }, zoom: Math.max(cy.zoom(), 1) }, { duration: 300 });
+    showInfo(id);
+  }
+  function setChanges(next, nextVcs) { changes = next; vcs = nextVcs; applyChanges(); }
+  window.mio = { select, setChanges };
+
+  applyChanges();
+  runLayout();
+  if (byId.has(DATA.focus)) showInfo(DATA.focus);
+</script>
+</body>
+</html>

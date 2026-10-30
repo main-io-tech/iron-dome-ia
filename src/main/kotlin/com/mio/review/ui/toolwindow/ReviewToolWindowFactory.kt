@@ -1,6 +1,7 @@
 package com.mio.review.ui.toolwindow
 
 import com.intellij.icons.AllIcons
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.project.DumbAware
@@ -18,6 +19,16 @@ class ReviewToolWindowFactory : ToolWindowFactory, DumbAware {
         val changes = ChangesPanel(project)
         toolWindow.contentManager.addContent(factory.createContent(comments, "Comentários", false).apply { setDisposer(comments) })
         toolWindow.contentManager.addContent(factory.createContent(changes, "Alterações", false).apply { setDisposer(changes) })
+        for (tab in ReviewToolWindowTab.EP_NAME.extensionList) {
+            val component = tab.createComponent(project, toolWindow)
+            toolWindow.contentManager.addContent(
+                factory.createContent(component, tab.title, false).apply { (component as? Disposable)?.let(::setDisposer) },
+            )
+        }
+    }
+
+    companion object {
+        const val ID = "Mio Review AI"
     }
 }
 
