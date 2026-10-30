@@ -9,7 +9,10 @@ import com.intellij.openapi.editor.toolbar.floating.FloatingToolbarComponent
 import com.mio.review.ReviewCommentService
 import com.mio.review.ReviewCommentsListener
 
-/** Mostra "Salvar Revisão" no canto superior direito do editor enquanto há comentários não salvos. */
+/**
+ * Mostra "Salvar Este Arquivo" e "Salvar Todos" no canto superior direito do editor enquanto há
+ * comentários não salvos; cada ação decide se aparece conforme o arquivo aberto.
+ */
 class ReviewFloatingToolbarProvider : AbstractFloatingToolbarProvider(ACTION_GROUP) {
 
     override val autoHideable: Boolean = false

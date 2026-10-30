@@ -76,13 +76,19 @@
     </projectListeners>
 
     <actions>
+        <action id="MioReview.SaveFileReview"
+                class="com.mio.review.actions.SaveFileReviewAction"
+                text="Salvar Este Arquivo"
+                description="Salva o arquivo aberto e grava no .md de revisão só os comentários dele"
+                icon="/icons/saveReview.svg"/>
         <action id="MioReview.SaveReview"
                 class="com.mio.review.actions.SaveReviewAction"
-                text="Salvar Revisão"
-                description="Salva os arquivos e grava os .md de revisão em mio-review/"
-                icon="/icons/saveReview.svg"/>
+                text="Salvar Todos"
+                description="Salva todos os arquivos e grava no .md de revisão os comentários de todos eles"
+                icon="AllIcons.Actions.MenuSaveall"/>
 
         <group id="MioReview.FloatingToolbar">
+            <reference ref="MioReview.SaveFileReview"/>
             <reference ref="MioReview.SaveReview"/>
         </group>
 

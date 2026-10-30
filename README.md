@@ -21,11 +21,18 @@ aplicar as correções.
    Para mudar o texto ou o modo, clique em **Editar**, à direita do cartão: o formulário abre preenchido no
    lugar dele, e **Atualizar** (`Ctrl+Enter`) aplica a mudança, que vai para o `.md` no próximo
    salvamento. Comentários resolvidos ou marcados para remoção não podem ser editados.
-4. Clique em **Salvar Revisão**, no canto superior direito do editor, ou salve com `Ctrl+S`.
+4. Salve pelos botões no canto superior direito do editor:
+   - **Salvar Este Arquivo** grava só os comentários do arquivo aberto. Os comentários não salvos de
+     outros arquivos continuam pendentes, e o `.md` mantém a versão que já estava salva deles.
+   - **Salvar Todos** grava os comentários de todos os arquivos, assim como o `Ctrl+S`. O botão mostra
+     quantos arquivos têm comentários não salvos e só aparece quando há pendências fora do arquivo
+     aberto.
+
    O plugin grava a revisão aberta em `mio-review/mio-review-<id>.md`, por exemplo
-   `mio-review/mio-review-1.md`, com os comentários de todos os arquivos do projeto.
-   Enquanto houver comentários pendentes, cada salvamento atualiza o mesmo arquivo. Os salvamentos
-   automáticos da IDE (ao fechar a aba, trocar de janela etc.) não gravam a revisão.
+   `mio-review/mio-review-1.md`. Enquanto houver comentários pendentes, cada salvamento atualiza o
+   mesmo arquivo. Os salvamentos automáticos da IDE (ao fechar a aba, trocar de janela etc.) não
+   gravam a revisão. Comentários não salvos continuam não salvos, com os botões de salvar, mesmo
+   depois de fechar e reabrir o IntelliJ.
 5. Peça à IA para aplicar a revisão. Ela troca `[ ]` por `[x]` em cada comentário aplicado, e o
    plugin mostra esses comentários em verde como resolvidos, recolhidos numa barra de uma linha com o
    início do texto. Clique na barra para expandir ou recolher, e no **OK** à direita para tirar o
@@ -34,7 +41,8 @@ aplicar as correções.
    alterado e o próximo comentário abre `mio-review-<id + 1>.md`.
 7. Para remover comentários, passe o mouse sobre uma das linhas comentadas e clique no **-** que
    aparece ao lado do **+**. Um comentário ainda não salvo sai na hora, pois ainda não está no `.md`.
-   Um já salvo fica cinza e riscado, e dá para marcar vários. Eles só são removidos ao salvar; até
+   Um já salvo fica cinza e riscado, e dá para marcar vários. Eles só são removidos ao salvar o
+   arquivo deles (ou todos); até
    lá, o botão **Desfazer** na margem cancela a remoção.
    Comentários resolvidos (verdes) não têm o **-** e não podem ser removidos um a um. Se a IA resolver
    um comentário que estava marcado, a marca é desfeita e ele fica.
@@ -89,9 +97,13 @@ escolher a classe:
   diagrama. As marcas se atualizam sozinhas ao editar, commitar ou reverter.
 - **Explicações:** **Entenda as métricas**, na barra da aba e no diagrama, explica cada número e cor.
   Os botões **?** nos detalhes da classe e os cabeçalhos da tabela também explicam cada métrica.
-- **Controles:** profundidade (1 a 3 níveis), direção (ambas, só eferentes ou só aferentes), layout
-  (por distância, força, hierárquico ou círculo) e busca. **Expandir** faz a aba ocupar a janela
-  inteira e **Abrir em Janela** a destaca numa janela separada.
+- **Controles:** profundidade (1 a 3 níveis), direção (ambas, só eferentes ou só aferentes) e busca.
+  A classe analisada fica no centro e cada anel em volta está um passo de dependência mais longe
+  dela. **Expandir** faz a aba ocupar a janela inteira e **Abrir em Janela** a destaca numa janela
+  separada.
+- **Mais espaço para o diagrama:** **Mostrar Painel Inferior**, na barra da aba, esconde ou mostra as
+  tabelas, a lista de classes e as explicações. No diagrama, o **−** minimiza a legenda e os detalhes
+  da classe, deixando só o título, e o **✕** fecha os detalhes. A IDE lembra dessas escolhas.
 
 Contam como dependência: tipos citados, herança, construtores e membros estáticos, de `object` ou de
 nível de arquivo. Classes aninhadas contam como a classe de topo que as contém, e bibliotecas ficam de

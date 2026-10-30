@@ -15,13 +15,27 @@ import com.intellij.openapi.vfs.LocalFileSystem
 import com.mio.review.ReviewCommentService
 import java.nio.file.Path
 
-/** Salva os documentos e regrava o `.md` da revisão aberta. */
+/** Salva os documentos e regrava o `.md` da revisão aberta com os comentários de todos os arquivos. */
 class SaveReviewAction : DumbAwareAction() {
 
-    override fun getActionUpdateThread() = ActionUpdateThread.BGT
+    override fun getActionUpdateThread() = ActionUpdateThread.EDT
 
+    /** Na barra do editor, só aparece se houver pendências fora do arquivo aberto, que tem o próprio botão. */
     override fun update(e: AnActionEvent) {
-        e.presentation.isEnabled = e.project != null
+        val project = e.project
+        if (project == null) {
+            e.presentation.isEnabledAndVisible = false
+            return
+        }
+        val service = project.service<ReviewCommentService>()
+        val pending = service.pendingPaths()
+        val current = e.editorAndFile()?.second?.let(service::relativePath)
+        e.presentation.isVisible = current == null || (pending - current).isNotEmpty()
+        e.presentation.isEnabled = true
+        e.presentation.text = when (pending.size) {
+            0, 1 -> "Salvar Todos"
+            else -> "Salvar Todos (${pending.size} arquivos)"
+        }
         e.presentation.putClientProperty(ActionUtil.SHOW_TEXT_IN_TOOLBAR, true)
     }
 
@@ -29,28 +43,48 @@ class SaveReviewAction : DumbAwareAction() {
         val project = e.project ?: return
         val written = project.service<ReviewCommentService>().exportAll()
         FileDocumentManager.getInstance().saveAllDocuments()
-        notifySaved(project, written)
+        notifySaved(project, written.firstOrNull(), "Revisão salva em ${ReviewCommentService.REVIEW_DIR}/")
+    }
+}
+
+/** Salva o arquivo aberto e grava no `.md` só os comentários dele; os de outros arquivos continuam pendentes. */
+class SaveFileReviewAction : DumbAwareAction() {
+
+    override fun getActionUpdateThread() = ActionUpdateThread.EDT
+
+    override fun update(e: AnActionEvent) {
+        val project = e.project
+        val file = e.editorAndFile()?.second
+        e.presentation.isEnabledAndVisible = project != null && file != null &&
+            project.service<ReviewCommentService>().hasPendingChanges(file)
+        e.presentation.putClientProperty(ActionUtil.SHOW_TEXT_IN_TOOLBAR, true)
     }
 
-    private fun notifySaved(project: Project, written: List<Path>) {
-        val group = NotificationGroupManager.getInstance().getNotificationGroup("Mio Review AI")
-        if (written.isEmpty()) {
-            group.createNotification("Nenhuma revisão aberta com comentários.", NotificationType.INFORMATION)
-                .notify(project)
-            return
+    override fun actionPerformed(e: AnActionEvent) {
+        val project = e.project ?: return
+        val (editor, file) = e.editorAndFile() ?: return
+        val service = project.service<ReviewCommentService>()
+        val written = service.exportFile(file)
+        FileDocumentManager.getInstance().saveDocument(editor.document)
+        val others = service.pendingPaths().size
+        val title = buildString {
+            append("Comentários de ${file.name} salvos")
+            if (others > 0) append(". ${if (others == 1) "1 outro arquivo continua" else "$others outros arquivos continuam"} com comentários não salvos")
         }
-        val names = written.joinToString("<br>") { it.fileName.toString() }
-        val notification = group.createNotification(
-            "Revisão salva em ${ReviewCommentService.REVIEW_DIR}/",
-            names,
-            NotificationType.INFORMATION,
-        )
-        written.take(3).forEach { path ->
-            notification.addAction(NotificationAction.createSimpleExpiring("Abrir ${path.fileName}") {
-                LocalFileSystem.getInstance().refreshAndFindFileByNioFile(path)
-                    ?.let { FileEditorManager.getInstance(project).openFile(it, true) }
-            })
-        }
-        notification.notify(project)
+        notifySaved(project, written, title)
     }
+}
+
+private fun notifySaved(project: Project, written: Path?, title: String) {
+    val group = NotificationGroupManager.getInstance().getNotificationGroup("Mio Review AI")
+    if (written == null) {
+        group.createNotification("Nenhuma revisão aberta com comentários salvos.", NotificationType.INFORMATION).notify(project)
+        return
+    }
+    val notification = group.createNotification(title, written.fileName.toString(), NotificationType.INFORMATION)
+    notification.addAction(NotificationAction.createSimpleExpiring("Abrir ${written.fileName}") {
+        LocalFileSystem.getInstance().refreshAndFindFileByNioFile(written)
+            ?.let { FileEditorManager.getInstance(project).openFile(it, true) }
+    })
+    notification.notify(project)
 }
