@@ -47,10 +47,67 @@ object ReviewMarkdown {
             "do usuário."
 
     private val resolvedHeading = Regex("""^#+ \[[xX]] (C\d+)\b""", RegexOption.MULTILINE)
+    private val fileHeading = Regex("""^## `(.+)`\s*$""")
+    private val commentHeading = Regex("""^### \[([ xX])] (C\d+) — linhas? (\d+)(?:–(\d+))?""")
+    private const val COMMENT_LABEL = "**Comentário:**"
+    private const val MODE_LABEL = "**Modo:**"
     private val displayTimestamp = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm:ss")
 
     fun resolvedIds(markdown: String): Set<String> =
         resolvedHeading.findAll(markdown).map { it.groupValues[1] }.toSet()
+
+    /** Lê os comentários de um `.md` gravado por [render], como o de uma revisão já concluída. */
+    fun parse(markdown: String): List<SavedComment> {
+        val comments = mutableListOf<SavedComment>()
+        var path = ""
+        var current: ParsedComment? = null
+
+        fun flush() {
+            current?.let { comments += it.toSaved(path) }
+            current = null
+        }
+
+        for (line in markdown.lines()) {
+            val file = fileHeading.matchEntire(line)
+            val heading = commentHeading.find(line)
+            val parsing = current
+            val text = parsing?.text
+            when {
+                file != null -> {
+                    flush()
+                    path = file.groupValues[1]
+                }
+                heading != null -> {
+                    flush()
+                    current = ParsedComment(heading)
+                }
+                parsing == null -> Unit
+                text != null -> text += line
+                line == COMMENT_LABEL -> parsing.text = mutableListOf()
+                line.startsWith(MODE_LABEL) -> parsing.discuss = DISCUSS_MODE in line
+            }
+        }
+        flush()
+        return comments
+    }
+
+    private class ParsedComment(val heading: MatchResult) {
+        var discuss = false
+        var text: MutableList<String>? = null
+
+        fun toSaved(path: String): SavedComment {
+            val (mark, id, start, end) = heading.destructured
+            return SavedComment(
+                id = id,
+                filePath = path,
+                startLine = start.toInt() - 1,
+                endLine = end.ifEmpty { start }.toInt() - 1,
+                resolved = mark.isNotBlank(),
+                discuss = discuss,
+                text = text.orEmpty().joinToString("\n").trim(),
+            )
+        }
+    }
 
     /** `comments` devem vir ordenados por arquivo e linha. */
     fun render(

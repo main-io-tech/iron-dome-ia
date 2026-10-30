@@ -118,8 +118,11 @@ private class RemoveCommentIconRenderer(
     override fun getIcon(): Icon = ReviewIcons.removeComment
 
     override fun getTooltipText(): String {
-        val ids = ReviewGutter.removableAt(editor, line).joinToString(", ") { it.id }
-        return "Remover comentário $ids ao salvar"
+        val removable = ReviewGutter.removableAt(editor, line)
+        val ids = removable.joinToString(", ") { it.id }
+        val service = editor.project?.service<ReviewCommentService>()
+        return if (service != null && removable.all(service::isDraft)) "Remover comentário $ids"
+        else "Remover comentário $ids ao salvar"
     }
 
     override fun isNavigateAction(): Boolean = true

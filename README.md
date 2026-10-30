@@ -24,7 +24,8 @@ aplicar as correções.
 4. Clique em **Salvar Revisão**, no canto superior direito do editor, ou salve com `Ctrl+S`.
    O plugin grava a revisão aberta em `mio-review/mio-review-<id>.md`, por exemplo
    `mio-review/mio-review-1.md`, com os comentários de todos os arquivos do projeto.
-   Enquanto houver comentários pendentes, cada salvamento atualiza o mesmo arquivo.
+   Enquanto houver comentários pendentes, cada salvamento atualiza o mesmo arquivo. Os salvamentos
+   automáticos da IDE (ao fechar a aba, trocar de janela etc.) não gravam a revisão.
 5. Peça à IA para aplicar a revisão. Ela troca `[ ]` por `[x]` em cada comentário aplicado, e o
    plugin mostra esses comentários em verde como resolvidos, recolhidos numa barra de uma linha com o
    início do texto. Clique na barra para expandir ou recolher, e no **OK** à direita para tirar o
@@ -32,12 +33,25 @@ aplicar as correções.
 6. Quando todos os comentários estão resolvidos, a revisão é concluída: o `.md` dela não é mais
    alterado e o próximo comentário abre `mio-review-<id + 1>.md`.
 7. Para remover comentários, passe o mouse sobre uma das linhas comentadas e clique no **-** que
-   aparece ao lado do **+**. O comentário fica cinza e riscado, e dá para marcar vários. Eles só são
-   removidos ao salvar; até lá, o botão **Desfazer** na margem cancela a remoção.
+   aparece ao lado do **+**. Um comentário ainda não salvo sai na hora, pois ainda não está no `.md`.
+   Um já salvo fica cinza e riscado, e dá para marcar vários. Eles só são removidos ao salvar; até
+   lá, o botão **Desfazer** na margem cancela a remoção.
    Comentários resolvidos (verdes) não têm o **-** e não podem ser removidos um a um. Se a IA resolver
    um comentário que estava marcado, a marca é desfeita e ele fica.
    **Remover Comentários Resolvidos**, no Find Action (`Ctrl+Shift+A`), faz o mesmo que o **OK** em
    todos os resolvidos de uma vez.
+
+## Painel Mio Review AI
+
+A tool window **Mio Review AI**, na barra lateral direita, tem duas abas:
+
+- **Comentários:** as revisões em árvore (revisão > arquivo > comentário), com a revisão aberta no
+  topo e o histórico lido dos `.md` de `mio-review/`. Cada comentário mostra as linhas, o status e o
+  início do texto. Clique para ir ao comentário no código; duplo clique também foca o editor.
+- **Alterações:** os arquivos com alterações ainda não commitadas no git, como os que a IA mudou ao
+  aplicar a revisão, indicando quantos comentários da revisão aberta cada um tem. Clique para abrir o
+  diff com o último commit (as setas do diff passam pelos demais arquivos) e duplo clique para abrir
+  o arquivo.
 
 ## Instruções para a IA
 

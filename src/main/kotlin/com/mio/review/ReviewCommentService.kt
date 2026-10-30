@@ -17,6 +17,7 @@ import com.intellij.openapi.util.TextRange
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VfsUtilCore
 import com.intellij.openapi.vfs.VirtualFile
+import com.mio.review.ui.CommentStatus
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.LocalDateTime
@@ -36,9 +37,14 @@ class ReviewCommentService(private val project: Project) : PersistentStateCompon
     private val markers = mutableMapOf<ReviewComment, RangeMarker>()
     private val markedForRemoval = mutableSetOf<ReviewComment>()
     private val unsaved = mutableSetOf<ReviewComment>()
+    /** Criados depois do último salvamento: ainda não existem no `.md`. */
+    private val drafts = mutableSetOf<ReviewComment>()
     /** Com o formulário de edição aberto no lugar do cartão. */
     private val editing = mutableSetOf<ReviewComment>()
-    private var pendingExport = false
+    /** Algum comentário que já estava no `.md` foi removido. */
+    private var removedSinceExport = false
+    /** As linhas ou o trecho de algum comentário da revisão aberta mudaram desde o último `.md`. */
+    private var positionsChanged = false
 
     override fun getState(): ReviewState = state
 
@@ -47,6 +53,7 @@ class ReviewCommentService(private val project: Project) : PersistentStateCompon
         markers.clear()
         markedForRemoval.clear()
         unsaved.clear()
+        drafts.clear()
         editing.clear()
         state = loaded
     }
@@ -59,20 +66,60 @@ class ReviewCommentService(private val project: Project) : PersistentStateCompon
 
     fun accepts(document: Document): Boolean = pathOf(document) != null
 
-    fun hasPendingChanges(): Boolean = pendingExport || markedForRemoval.isNotEmpty()
+    fun hasPendingChanges(): Boolean =
+        removedSinceExport || unsaved.isNotEmpty() || markedForRemoval.isNotEmpty()
 
     fun isMarkedForRemoval(comment: ReviewComment): Boolean = comment in markedForRemoval
 
-    /** Adicionado depois do último salvamento, ainda fora do `.md`. */
+    /** Adicionado ou editado depois do último salvamento, com a mudança ainda fora do `.md`. */
     fun isUnsaved(comment: ReviewComment): Boolean = comment in unsaved
 
+    fun isDraft(comment: ReviewComment): Boolean = comment in drafts
+
+    fun statusOf(comment: ReviewComment): CommentStatus = when {
+        comment in markedForRemoval -> CommentStatus.REMOVING
+        comment in unsaved -> CommentStatus.UNSAVED
+        comment.resolved -> CommentStatus.RESOLVED
+        else -> CommentStatus.PENDING
+    }
+
+    /** 0 quando não há revisão aberta. */
+    val activeReviewId: Int get() = state.activeReviewId
+
+    /** Ordenados por arquivo e linha, inclusive os não salvos e os dispensados. */
+    fun activeComments(): List<ReviewComment> {
+        val reviewId = state.activeReviewId
+        if (reviewId == 0) return emptyList()
+        return state.comments.filter { it.reviewId == reviewId }.sortedWith(compareBy({ it.filePath }, { it.startLine }))
+    }
+
+    /** `.md` gravados em `mio-review/`, do mais recente para o mais antigo. */
+    fun savedReviews(): List<Pair<Int, Path>> {
+        val root = reviewRoot()?.takeIf(Files::isDirectory) ?: return emptyList()
+        val name = Regex("""${Regex.escape(REVIEW_PREFIX)}(\d+)\.md""")
+        return Files.list(root).use { files ->
+            files.toList().mapNotNull { file ->
+                name.matchEntire(file.fileName.toString())?.let { it.groupValues[1].toInt() to file }
+            }
+        }.sortedByDescending { it.first }
+    }
+
+    fun findFile(path: String): VirtualFile? = project.guessProjectDir()?.findFileByRelativePath(path)
+
     /**
-     * Os comentários continuam no editor, riscados, até o próximo salvamento. Resolvidos são
-     * ignorados: só saem por [remove], via "Remover Comentários Resolvidos".
+     * Rascunhos, que ainda não estão no `.md`, saem na hora. Os demais continuam no editor, riscados,
+     * até o próximo salvamento. Resolvidos são ignorados: só saem por [remove], via
+     * "Remover Comentários Resolvidos".
      */
     fun markForRemoval(comments: Collection<ReviewComment>) {
-        if (!markedForRemoval.addAll(comments.filterNot { it.resolved || it in editing })) return
-        refreshEditorsOf(comments)
+        val removable = comments.filterNot { it.resolved || it in editing }
+        val (discarded, marked) = removable.partition { it in drafts }
+        if (discarded.isNotEmpty()) {
+            remove(discarded)
+            releaseEmptyReview()
+        }
+        if (!markedForRemoval.addAll(marked)) return
+        refreshEditorsOf(marked)
         notifyChanged()
     }
 
@@ -102,8 +149,8 @@ class ReviewCommentService(private val project: Project) : PersistentStateCompon
         )
         state.comments += comment
         unsaved += comment
+        drafts += comment
         markers[comment] = createMarker(document, comment)
-        pendingExport = true
         refreshEditors(document)
         notifyChanged()
         return comment
@@ -130,7 +177,6 @@ class ReviewCommentService(private val project: Project) : PersistentStateCompon
             comment.text = text
             comment.discuss = discuss
             unsaved += comment
-            pendingExport = true
             notifyChanged()
         }
         refreshEditorsOf(listOf(comment))
@@ -152,12 +198,13 @@ class ReviewCommentService(private val project: Project) : PersistentStateCompon
     fun remove(comments: Collection<ReviewComment>) {
         if (comments.isEmpty()) return
         val removed = comments.toSet()
+        if (removed.any { it.reviewId == state.activeReviewId && it !in drafts }) removedSinceExport = true
         state.comments.removeAll(removed)
         markedForRemoval.removeAll(removed)
         unsaved.removeAll(removed)
+        drafts.removeAll(removed)
         editing.removeAll(removed)
         removed.forEach { markers.remove(it)?.dispose() }
-        if (removed.any { it.reviewId == state.activeReviewId }) pendingExport = true
         refreshEditorsOf(removed)
         notifyChanged()
     }
@@ -210,21 +257,26 @@ class ReviewCommentService(private val project: Project) : PersistentStateCompon
         }
     }
 
-    /** Regrava o `.md` da revisão aberta quando um arquivo-fonte comentado nela é salvo. */
-    fun exportFile(file: VirtualFile) {
-        val path = relativePath(file) ?: return
-        if (hasPendingChanges() || activeComments().any { it.filePath == path }) {
-            export()
-            notifyChanged()
+    /**
+     * Salvamento explícito (Ctrl+S): regrava o `.md` se os comentários mudaram ou se o código comentado
+     * se moveu ou foi alterado.
+     */
+    fun exportOnSave() {
+        activeComments().map { it.filePath }.distinct().forEach { path ->
+            documentOf(path)?.let { syncFromMarkers(path, it) }
         }
+        if (!hasPendingChanges() && !positionsChanged) return
+        export()
+        notifyChanged()
     }
 
-    /** Retorna o `.md` gravado, se houver. */
-    fun exportPending(): List<Path> {
-        if (!hasPendingChanges()) return emptyList()
-        val written = listOfNotNull(export())
-        notifyChanged()
-        return written
+    /**
+     * Salvamentos automáticos da IDE não gravam o `.md`, mas guardam a posição atual dos comentários
+     * para ela não se perder se a IDE fechar antes de salvar a revisão.
+     */
+    fun syncPositions(file: VirtualFile) {
+        val path = relativePath(file) ?: return
+        documentOf(path)?.let { syncFromMarkers(path, it) }
     }
 
     fun exportAll(): List<Path> {
@@ -261,6 +313,15 @@ class ReviewCommentService(private val project: Project) : PersistentStateCompon
         return state.activeReviewId
     }
 
+    /** Revisão aberta só com rascunhos descartados: libera o id para o próximo comentário reaproveitar. */
+    private fun releaseEmptyReview() {
+        val reviewId = state.activeReviewId
+        if (reviewId == 0 || activeComments().isNotEmpty()) return
+        if (activeReviewFile()?.let(Files::exists) == true) return
+        state.activeReviewId = 0
+        state.nextReviewId = reviewId
+    }
+
     private fun concludeIfDone() {
         val comments = activeComments()
         if (comments.isNotEmpty() && comments.all { it.resolved }) {
@@ -280,14 +341,16 @@ class ReviewCommentService(private val project: Project) : PersistentStateCompon
     private fun export(): Path? {
         if (importResolved()) refreshEditorsOf(activeComments())
         remove(markedForRemoval.toList())
-        pendingExport = false
+        removedSinceExport = false
         val saved = unsaved.toList()
         unsaved.clear()
+        drafts.clear()
         refreshEditorsOf(saved)
         val target = activeReviewFile() ?: return null
         activeComments().map { it.filePath }.distinct().forEach { path ->
             documentOf(path)?.let { syncFromMarkers(path, it) }
         }
+        positionsChanged = false
         importResolved()
 
         val comments = activeComments()
@@ -321,16 +384,15 @@ class ReviewCommentService(private val project: Project) : PersistentStateCompon
     private fun syncFromMarkers(path: String, document: Document) {
         for (comment in commentsFor(path)) {
             val marker = markers[comment]?.takeIf { it.isValid } ?: continue
-            comment.startLine = document.getLineNumber(marker.startOffset)
-            comment.endLine = document.getLineNumber(marker.endOffset)
-            comment.snippet = linesText(document, comment.startLine, comment.endLine)
+            val startLine = document.getLineNumber(marker.startOffset)
+            val endLine = document.getLineNumber(marker.endOffset)
+            val snippet = linesText(document, startLine, endLine)
+            if (startLine == comment.startLine && endLine == comment.endLine && snippet == comment.snippet) continue
+            comment.startLine = startLine
+            comment.endLine = endLine
+            comment.snippet = snippet
+            if (comment.reviewId == state.activeReviewId) positionsChanged = true
         }
-    }
-
-    private fun activeComments(): List<ReviewComment> {
-        val reviewId = state.activeReviewId
-        if (reviewId == 0) return emptyList()
-        return state.comments.filter { it.reviewId == reviewId }.sortedWith(compareBy({ it.filePath }, { it.startLine }))
     }
 
     private fun activeReviewFile(): Path? {
@@ -374,7 +436,7 @@ class ReviewCommentService(private val project: Project) : PersistentStateCompon
         FileDocumentManager.getInstance().getFile(document)?.let(::relativePath)
 
     private fun documentOf(path: String): Document? {
-        val file = project.guessProjectDir()?.findFileByRelativePath(path) ?: return null
+        val file = findFile(path) ?: return null
         return FileDocumentManager.getInstance().getCachedDocument(file)
     }
 
@@ -394,8 +456,9 @@ class ReviewCommentService(private val project: Project) : PersistentStateCompon
 
     companion object {
         const val REVIEW_DIR = "mio-review"
+        private const val REVIEW_PREFIX = "mio-review-"
 
-        fun reviewName(reviewId: Int): String = "mio-review-$reviewId"
+        fun reviewName(reviewId: Int): String = "$REVIEW_PREFIX$reviewId"
 
         fun reviewFileName(reviewId: Int): String = "${reviewName(reviewId)}.md"
     }

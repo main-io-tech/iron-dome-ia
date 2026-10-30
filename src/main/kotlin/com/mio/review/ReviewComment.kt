@@ -20,6 +20,17 @@ class ReviewComment(
     var dismissed: Boolean = false,
 )
 
+/** Comentário lido de um `.md` de revisão. Linhas 0-based, como em [ReviewComment]. */
+class SavedComment(
+    val id: String,
+    val filePath: String,
+    val startLine: Int,
+    val endLine: Int,
+    val resolved: Boolean,
+    val discuss: Boolean,
+    val text: String,
+)
+
 class ReviewState {
     var nextReviewId: Int = 1
 

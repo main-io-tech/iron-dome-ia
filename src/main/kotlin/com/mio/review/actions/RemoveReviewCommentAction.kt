@@ -6,7 +6,10 @@ import com.intellij.openapi.components.service
 import com.intellij.openapi.project.DumbAwareAction
 import com.mio.review.ReviewCommentService
 
-/** Marca para remoção, ao salvar, os comentários não resolvidos que cruzam a seleção ou a linha do cursor. */
+/**
+ * Remove os comentários não resolvidos que cruzam a seleção ou a linha do cursor: os ainda não salvos
+ * saem na hora, os demais ficam marcados até o próximo salvamento.
+ */
 class RemoveReviewCommentAction : DumbAwareAction() {
 
     override fun getActionUpdateThread() = ActionUpdateThread.EDT

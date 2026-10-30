@@ -19,6 +19,8 @@
       <li><b>Acompanha o código:</b> os comentários se movem com as linhas inseridas ou removidas.</li>
       <li><b>Ciclo completo:</b> pendentes, resolvidos pela IA (em verde), editáveis e removíveis com
         desfazer.</li>
+      <li><b>Painel de revisão:</b> tool window com todas as revisões e comentários por arquivo, e
+        com os arquivos não commitados e o diff de cada um.</li>
       <li><b>Detecção de conflitos:</b> a IA é instruída a perguntar antes de aplicar comentários que
         se contradizem ou se cruzam.</li>
       <li><b>Independente de ferramenta:</b> o <code>.md</code> funciona com Cursor, Claude Code ou
@@ -37,6 +39,7 @@
     ]]></change-notes>
 
     <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.modules.vcs</depends>
 
     <extensions defaultExtensionNs="com.intellij">
         <editorFactoryListener implementation="com.mio.review.listeners.ReviewEditorFactoryListener"/>
@@ -44,11 +47,17 @@
         <editorFactoryMouseMotionListener implementation="com.mio.review.listeners.ReviewMouseMotionListener"/>
         <editorFloatingToolbarProvider implementation="com.mio.review.ui.ReviewFloatingToolbarProvider"/>
         <notificationGroup id="Mio Review AI" displayType="BALLOON"/>
+        <toolWindow id="Mio Review AI"
+                    anchor="right"
+                    icon="/icons/toolWindow.svg"
+                    factoryClass="com.mio.review.ui.toolwindow.ReviewToolWindowFactory"/>
     </extensions>
 
     <applicationListeners>
         <listener class="com.mio.review.listeners.ReviewSaveListener"
                   topic="com.intellij.openapi.fileEditor.FileDocumentManagerListener"/>
+        <listener class="com.mio.review.listeners.ReviewSaveActionListener"
+                  topic="com.intellij.openapi.actionSystem.ex.AnActionListener"/>
     </applicationListeners>
 
     <projectListeners>
@@ -76,7 +85,7 @@
         <action id="MioReview.RemoveComment"
                 class="com.mio.review.actions.RemoveReviewCommentAction"
                 text="Mio Review AI: Remover Comentário"
-                description="Marca para remoção, ao salvar, os comentários não resolvidos da seleção ou da linha atual"/>
+                description="Remove os comentários não resolvidos da seleção ou da linha atual; os já salvos saem no próximo salvamento"/>
         <action id="MioReview.RemoveResolved"
                 class="com.mio.review.actions.RemoveResolvedCommentsAction"
                 text="Mio Review AI: Remover Comentários Resolvidos"
