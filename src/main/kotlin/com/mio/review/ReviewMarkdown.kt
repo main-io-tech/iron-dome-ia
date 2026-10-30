@@ -8,6 +8,44 @@ object ReviewMarkdown {
     private const val APPLY_MODE = "aplicar direto"
     private const val DISCUSS_MODE = "discutir antes de alterar"
 
+    /** Escrito para qualquer assistente de IA, sem depender de ferramentas de um produto específico. */
+    private val INSTRUCTIONS = """
+        **Instruções para a IA** (valem para qualquer assistente ou modelo):
+
+        1. Antes de alterar qualquer arquivo, leia esta revisão inteira e os arquivos citados. Localize
+           cada comentário pendente (`[ ]`) pelo trecho citado, pois os números de linha podem ter mudado.
+        2. Analise os comentários pendentes em conjunto, inclusive os de arquivos diferentes, e procure:
+           - **Contradições:** comentários que pedem coisas incompatíveis para o mesmo ponto, a mesma
+             regra ou o mesmo comportamento.
+           - **Cruzamentos:** aplicar um comentário quebra ou invalida outro. Por exemplo, um renomeia,
+             move ou remove algo que outro cita ou de que depende, ou os dois alteram o mesmo trecho.
+        3. Se encontrar contradição ou cruzamento, não altere nenhum arquivo e entre no modo de pergunta
+           (abaixo), apresentando cada caso com os comentários envolvidos (`C1`, `C2`...), o conflito e
+           as opções de solução.
+        4. Se não houver contradições nem cruzamentos, ou depois das respostas do usuário, trate os
+           comentários em sequência, na ordem deste arquivo, respeitando o modo de cada um:
+           - **$APPLY_MODE:** aplique a correção sem consultar o usuário.
+           - **$DISCUSS_MODE:** não altere nenhum arquivo antes de discutir. Entre no modo de pergunta,
+             apresente sua análise do apontamento e a alteração que propõe, com alternativas se houver,
+             e só aplique o que o usuário escolher.
+        5. Depois de tratar um comentário, troque `[ ]` por `[x]` no título dele. Não altere o resto
+           deste arquivo.
+
+        **Modo de pergunta:** $ASK_MODE
+    """.trimIndent()
+
+    private const val ASK_MODE =
+        "use a ferramenta de perguntas estruturadas do seu ambiente, se houver (por exemplo, `AskQuestion` " +
+            "no Cursor ou `AskUserQuestion` no Claude Code), com uma pergunta por caso e as opções de resposta. " +
+            "Se não houver, pergunte no chat com opções numeradas. Em qualquer caso, pare e espere a resposta: " +
+            "não suponha a escolha do usuário nem altere arquivos antes dela."
+
+    private const val DISCUSS_NOTICE =
+        "**IA: discuta antes de alterar.** Não altere nenhum arquivo por causa deste comentário. Entre no " +
+            "modo de pergunta descrito nas instruções do topo: apresente sua análise e a proposta, ofereça as " +
+            "opções (aplicar a proposta, cada alternativa, não alterar ou deixar para depois) e espere a escolha " +
+            "do usuário."
+
     private val resolvedHeading = Regex("""^#+ \[[xX]] (C\d+)\b""", RegexOption.MULTILINE)
     private val displayTimestamp = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm:ss")
 
@@ -25,13 +63,7 @@ object ReviewMarkdown {
         appendLine()
         appendLine("Criada em ${createdAt.format(displayTimestamp)}. Atualizada em ${updatedAt.format(displayTimestamp)}.")
         appendLine()
-        appendLine("> **Instruções para a IA:** trate cada comentário pendente (`[ ]`) no arquivo indicado na seção dele.")
-        appendLine("> Use o trecho citado para localizar o ponto exato, pois os números de linha podem ter mudado.")
-        appendLine("> Respeite o modo de cada comentário:")
-        appendLine("> - **$APPLY_MODE:** aplique a correção sem consultar o usuário.")
-        appendLine("> - **$DISCUSS_MODE:** não altere nenhum arquivo antes de discutir. Apresente ao usuário sua")
-        appendLine(">   análise do apontamento e a alteração que propõe, e só aplique depois que ele concordar.")
-        appendLine("> Depois de tratar um comentário, troque `[ ]` por `[x]` no título dele. Não altere o resto deste arquivo.")
+        INSTRUCTIONS.lines().forEach { appendLine(if (it.isEmpty()) ">" else "> $it") }
         appendLine()
         appendLine("Pendentes: ${comments.count { !it.resolved }} de ${comments.size}.")
 
@@ -45,6 +77,10 @@ object ReviewMarkdown {
                 appendLine()
                 appendLine("**Modo:** ${if (comment.discuss) DISCUSS_MODE else APPLY_MODE}")
                 appendLine()
+                if (comment.discuss && !comment.resolved) {
+                    appendLine("> $DISCUSS_NOTICE")
+                    appendLine()
+                }
                 if (comment.snippet.isNotBlank()) {
                     val fence = fenceFor(comment.snippet)
                     appendLine("$fence${language(path)}")

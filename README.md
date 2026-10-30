@@ -49,9 +49,11 @@ Adicione ao `AGENTS.md` (ou a uma rule do Cursor) do projeto revisado:
 Quando houver arquivos em `mio-review/mio-review-*.md` com comentários pendentes (`[ ]`), trate cada
 um no arquivo indicado na seção dele (código, spec, documentação ou configuração), localizando o
 ponto pelo trecho citado, e marque-o como `[x]` ao terminar. Não edite o restante do `.md`.
-Comentários com `**Modo:** aplicar direto` podem ser aplicados sem consulta. Nos de
-`**Modo:** discutir antes de alterar`, apresente a análise e a proposta e só altere depois que o
-usuário concordar.
+Antes de alterar qualquer arquivo, analise os comentários pendentes em conjunto. Se algum contradizer
+outro, ou se aplicar um quebrar outro, pergunte ao usuário como resolver e espere a resposta. Sem
+conflitos, trate os comentários em sequência. Os de `**Modo:** aplicar direto` podem ser aplicados
+sem consulta. Nos de `**Modo:** discutir antes de alterar`, apresente a análise e a proposta e só
+altere depois que o usuário concordar.
 ```
 
 ## Desenvolvimento
