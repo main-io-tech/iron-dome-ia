@@ -1,0 +1,10 @@
+.gradle/
+.kotlin/
+.intellijPlatform/
+build/
+out/
+
+.idea/
+*.iml
+
+mio-review/

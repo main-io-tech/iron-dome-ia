@@ -1,0 +1,59 @@
+<idea-plugin>
+    <id>com.mio.review</id>
+    <name>mio-review-ia</name>
+    <vendor>mio</vendor>
+
+    <description><![CDATA[
+    Adicione comentários de revisão no arquivo aberto, como num pull request: passe o mouse na margem
+    e clique no <b>+</b>, ou dê duplo clique no número da linha.
+    Ao salvar, o plugin gera <code>mio-review/mio-review-&lt;id&gt;.md</code> com as correções
+    pedidas, pronto para uma IA ler e aplicar os ajustes.
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <editorFactoryListener implementation="com.mio.review.listeners.ReviewEditorFactoryListener"/>
+        <editorFactoryMouseListener implementation="com.mio.review.listeners.ReviewMouseListener"/>
+        <editorFactoryMouseMotionListener implementation="com.mio.review.listeners.ReviewMouseMotionListener"/>
+        <editorFloatingToolbarProvider implementation="com.mio.review.ui.ReviewFloatingToolbarProvider"/>
+        <notificationGroup id="mio-review-ia" displayType="BALLOON"/>
+    </extensions>
+
+    <applicationListeners>
+        <listener class="com.mio.review.listeners.ReviewSaveListener"
+                  topic="com.intellij.openapi.fileEditor.FileDocumentManagerListener"/>
+    </applicationListeners>
+
+    <projectListeners>
+        <listener class="com.mio.review.listeners.ReviewFileListener"
+                  topic="com.intellij.openapi.vfs.newvfs.BulkFileListener"/>
+    </projectListeners>
+
+    <actions>
+        <action id="MioReview.SaveReview"
+                class="com.mio.review.actions.SaveReviewAction"
+                text="Salvar Revisão"
+                description="Salva os arquivos e grava os .md de revisão em mio-review/"
+                icon="/icons/saveReview.svg"/>
+
+        <group id="MioReview.FloatingToolbar">
+            <reference ref="MioReview.SaveReview"/>
+        </group>
+
+        <action id="MioReview.AddComment"
+                class="com.mio.review.actions.AddReviewCommentAction"
+                text="mio-review-ia: Adicionar Comentário"
+                description="Comenta a seleção ou a linha atual para a IA corrigir">
+            <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt shift M"/>
+        </action>
+        <action id="MioReview.RemoveComment"
+                class="com.mio.review.actions.RemoveReviewCommentAction"
+                text="mio-review-ia: Remover Comentário"
+                description="Marca para remoção, ao salvar, os comentários não resolvidos da seleção ou da linha atual"/>
+        <action id="MioReview.RemoveResolved"
+                class="com.mio.review.actions.RemoveResolvedCommentsAction"
+                text="mio-review-ia: Remover Comentários Resolvidos"
+                description="Tira do editor os comentários resolvidos, sem alterar o .md da revisão"/>
+    </actions>
+</idea-plugin>
