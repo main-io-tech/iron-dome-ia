@@ -40,3 +40,7 @@ intellijPlatform {
     }
     buildSearchableOptions = false
 }
+
+tasks.named("buildPlugin") {
+    dependsOn(tasks.test)
+}
