@@ -55,7 +55,6 @@
   #legend { left: 8px; bottom: 8px; padding: 8px 10px; color: var(--muted); line-height: 1.7; }
   #legend .swatch { display: inline-block; width: 26px; height: 0; border-top: 2px solid; vertical-align: middle; margin-right: 6px; }
   #legend .dot { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: middle; margin: 0 3px 0 8px; }
-  #legend .dot:first-child { margin-left: 0; }
   .panel-head { display: flex; align-items: center; gap: 6px; }
   .panel-head .title { flex: 1; font-weight: 600; color: var(--fg); }
   .icon-button { width: 20px; height: 20px; padding: 0; line-height: 18px; text-align: center; color: var(--muted); flex: none; }
@@ -133,10 +132,10 @@
 
   /** A classe analisada no centro e cada anel um passo de dependência mais longe dela. */
   function runLayout() {
-    cy.layout({ name: 'concentric', animate: true, animationDuration: 350, fit: true, padding: 40,
+    cy.layout({ name: 'concentric', animate: true, animationDuration: 350, fit: true, padding: 64,
       concentric: n => maxLevel - n.data('level'), levelWidth: () => 1, minNodeSpacing: 30 }).run();
   }
-  document.getElementById('fit').addEventListener('click', () => cy.animate({ fit: { padding: 40 } }, { duration: 300 }));
+  document.getElementById('fit').addEventListener('click', () => cy.animate({ fit: { padding: 64 } }, { duration: 300 }));
   document.getElementById('search').addEventListener('input', e => {
     const text = e.target.value.trim().toLowerCase();
     cy.nodes().removeClass('match');
