@@ -1,33 +1,33 @@
 <idea-plugin>
     <id>com.mio.review</id>
-    <name>Mio Review AI</name>
+    <name>Iron Dome IA</name>
     <vendor>Mio</vendor>
 
     <description><![CDATA[
-    <p>Review your code like a pull request and let an AI assistant apply the fixes. Inline comments
-    are exported to a Markdown file that any AI tool can read, apply and mark as resolved.</p>
-    <p>Revise o código como num pull request e deixe a IA aplicar as correções.</p>
-    <p>Comente qualquer linha ou trecho direto no editor. Ao salvar, o Mio Review AI gera
-    <code>mio-review/mio-review-&lt;id&gt;.md</code> com cada comentário e o código citado, pronto
-    para qualquer assistente de IA ler, aplicar e marcar como resolvido.</p>
-    <h3>Recursos</h3>
+    <p>An air defense system for your code: mark the bugs like in a pull request review and let an AI
+    assistant intercept them. Inline comments are exported to a Markdown file that any AI tool can read,
+    apply and mark as resolved.</p>
+    <p><b>Nenhum bug passa pelo domo.</b> Revise o código como num pull request e deixe a IA
+    interceptar as correções.</p>
+    <p>Marque qualquer linha ou trecho como alvo direto no editor. Ao salvar, o Iron Dome IA envia as
+    ordens de interceptação em <code>iron-dome/ordem-interceptacao-&lt;id&gt;.md</code>, com cada comentário e
+    o código citado, prontas para qualquer assistente de IA ler, aplicar e marcar como resolvidas.</p>
+    <h3>Mecanismos de defesa</h3>
     <ul>
-      <li><b>Comentários inline:</b> clique no <b>+</b> da margem, dê duplo clique no número da linha
-        ou use <kbd>Ctrl+Alt+Shift+M</kbd>.</li>
-      <li><b>Dois modos por comentário:</b> <i>Aplicar direto</i> ou <i>Discutir antes de alterar</i>,
-        em que a IA apresenta a proposta e espera sua aprovação.</li>
-      <li><b>Acompanha o código:</b> os comentários se movem com as linhas inseridas ou removidas.</li>
-      <li><b>Ciclo completo:</b> pendentes, resolvidos pela IA (em verde), editáveis e removíveis com
-        desfazer.</li>
-      <li><b>Painel de revisão:</b> tool window com todas as revisões e comentários por arquivo, e
-        com os arquivos não commitados e o diff de cada um.</li>
-      <li><b>Diagrama de dependências:</b> para classes Java e Kotlin, quantas classes dependem de cada
-        uma (aferentes), de quantas ela depende (eferentes), o risco de alterá-la e os testes que a
-        usam, com ciclos e alterações não commitadas destacados e explicações de cada métrica.</li>
-      <li><b>Detecção de conflitos:</b> a IA é instruída a perguntar antes de aplicar comentários que
-        se contradizem ou se cruzam.</li>
-      <li><b>Independente de ferramenta:</b> o <code>.md</code> funciona com Cursor, Claude Code ou
-        qualquer outro assistente.</li>
+      <li><b>📡 Radar:</b> marque os alvos com o <b>+</b> da margem, duplo clique no número da linha
+        ou <kbd>Ctrl+Alt+Shift+M</kbd>. Os comentários acompanham o código quando linhas entram ou
+        saem, e o ciclo é completo: pendentes, resolvidos pela IA (em verde), editáveis e removíveis
+        com desfazer. Pelo botão direito, marque também um arquivo ou pacote inteiro como alvo.</li>
+      <li><b>🎯 Centro de Comando:</b> cada comentário vira uma ordem com dois modos, <i>Aplicar
+        direto</i> ou <i>Discutir antes de alterar</i>, em que a IA apresenta a proposta e espera sua
+        autorização. Funciona com Cursor, Claude Code ou qualquer outro assistente.</li>
+      <li><b>🤝 Sem fogo amigo:</b> a IA é instruída a perguntar antes de aplicar comentários que se
+        contradizem ou se cruzam.</li>
+      <li><b>💥 Raio de Impacto:</b> para classes Java e Kotlin, quantas classes dependem de cada uma
+        (aferentes), de quantas ela depende (eferentes), o risco de alterá-la e os testes que formam o
+        seu escudo, com ciclos e alterações não commitadas destacados.</li>
+      <li><b>🛰️ Sentinela:</b> vigia o perímetro dos arquivos não commitados, agrupados por pacote,
+        com o diff de cada um a um clique.</li>
     </ul>
     ]]></description>
 
@@ -38,57 +38,66 @@
         revisão em Markdown.</li>
       <li>Instruções para a IA detectar contradições e cruzamentos entre comentários antes de alterar
         os arquivos.</li>
+      <li>Novo nome, Iron Dome IA, com o código organizado em mecanismos de defesa: Radar, Centro de
+        Comando, Raio de Impacto e Sentinela.</li>
+      <li>As revisões passam a ficar em <code>iron-dome/</code>; a pasta antiga <code>mio-review/</code>
+        é movida automaticamente ao abrir o projeto.</li>
+      <li>Comentários de arquivo ou pacote inteiro, pelo botão direito na árvore do projeto, na aba do
+        editor ou na aba Alterações.</li>
     </ul>
     ]]></change-notes>
 
     <depends>com.intellij.modules.platform</depends>
     <depends>com.intellij.modules.vcs</depends>
-    <depends optional="true" config-file="mio-review-java.xml">com.intellij.java</depends>
+    <depends optional="true" config-file="raio-de-impacto-java.xml">com.intellij.java</depends>
 
     <extensionPoints>
         <extensionPoint name="toolWindowTab"
-                        interface="com.mio.review.ui.toolwindow.ReviewToolWindowTab"
+                        interface="com.mio.review.base.ReviewToolWindowTab"
                         dynamic="true"/>
     </extensionPoints>
 
     <extensions defaultExtensionNs="com.intellij">
-        <editorFactoryListener implementation="com.mio.review.listeners.ReviewEditorFactoryListener"/>
-        <editorFactoryMouseListener implementation="com.mio.review.listeners.ReviewMouseListener"/>
-        <editorFactoryMouseMotionListener implementation="com.mio.review.listeners.ReviewMouseMotionListener"/>
-        <editorFloatingToolbarProvider implementation="com.mio.review.ui.ReviewFloatingToolbarProvider"/>
-        <notificationGroup id="Mio Review AI" displayType="BALLOON"/>
-        <toolWindow id="Mio Review AI"
+        <editorFactoryListener implementation="com.mio.review.radar.ReviewEditorFactoryListener"/>
+        <editorFactoryMouseListener implementation="com.mio.review.radar.ReviewMouseListener"/>
+        <editorFactoryMouseMotionListener implementation="com.mio.review.radar.ReviewMouseMotionListener"/>
+        <editorFloatingToolbarProvider implementation="com.mio.review.base.ReviewFloatingToolbarProvider"/>
+        <projectViewNodeDecorator implementation="com.mio.review.radar.TargetDecorator"/>
+        <notificationGroup id="Iron Dome IA" displayType="BALLOON"/>
+        <toolWindow id="Iron Dome IA"
                     anchor="right"
                     icon="/icons/toolWindow.svg"
-                    factoryClass="com.mio.review.ui.toolwindow.ReviewToolWindowFactory"/>
+                    factoryClass="com.mio.review.base.ReviewToolWindowFactory"/>
     </extensions>
 
     <applicationListeners>
-        <listener class="com.mio.review.listeners.ReviewSaveListener"
+        <listener class="com.mio.review.comando.ReviewSaveListener"
                   topic="com.intellij.openapi.fileEditor.FileDocumentManagerListener"/>
-        <listener class="com.mio.review.listeners.ReviewSaveActionListener"
+        <listener class="com.mio.review.comando.ReviewSaveActionListener"
                   topic="com.intellij.openapi.actionSystem.ex.AnActionListener"/>
     </applicationListeners>
 
     <projectListeners>
-        <listener class="com.mio.review.listeners.ReviewFileListener"
+        <listener class="com.mio.review.comando.ReviewFileListener"
                   topic="com.intellij.openapi.vfs.newvfs.BulkFileListener"/>
+        <listener class="com.mio.review.radar.TargetDecoratorRefresher"
+                  topic="com.mio.review.radar.ReviewCommentsListener"/>
     </projectListeners>
 
     <actions>
         <action id="MioReview.SaveFileReview"
-                class="com.mio.review.actions.SaveFileReviewAction"
+                class="com.mio.review.comando.SaveFileReviewAction"
                 text="Salvar Este Arquivo"
-                description="Salva o arquivo aberto e grava no .md de revisão só os comentários dele"
+                description="Salva o arquivo aberto e envia à IA, no .md de revisão, as ordens de interceptação só dele"
                 icon="/icons/saveReview.svg"/>
         <action id="MioReview.SaveReview"
-                class="com.mio.review.actions.SaveReviewAction"
+                class="com.mio.review.comando.SaveReviewAction"
                 text="Salvar Todos"
-                description="Salva todos os arquivos e grava no .md de revisão os comentários de todos eles"
+                description="Salva todos os arquivos e envia à IA, no .md de revisão, as ordens de interceptação de todos eles"
                 icon="AllIcons.Actions.MenuSaveall"/>
 
         <action id="MioReview.ShowFileDiff"
-                class="com.mio.review.actions.ShowFileDiffAction"
+                class="com.mio.review.sentinela.ShowFileDiffAction"
                 text="Ver Diff"
                 description="Compara este arquivo com a versão do último commit"
                 icon="AllIcons.Actions.Diff"/>
@@ -100,18 +109,27 @@
         </group>
 
         <action id="MioReview.AddComment"
-                class="com.mio.review.actions.AddReviewCommentAction"
-                text="Mio Review AI: Adicionar Comentário"
-                description="Comenta a seleção ou a linha atual para a IA corrigir">
+                class="com.mio.review.radar.AddReviewCommentAction"
+                text="Iron Dome IA: Adicionar Comentário"
+                description="Marca a seleção ou a linha atual como alvo para a IA corrigir">
             <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt shift M"/>
         </action>
+        <action id="MioReview.MarkTarget"
+                class="com.mio.review.radar.MarkTargetAction"
+                text="Iron Dome IA: Marcar como Alvo"
+                description="Comenta o arquivo ou o pacote inteiro para a IA corrigir"
+                icon="/icons/addComment.svg">
+            <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
+            <add-to-group group-id="EditorTabPopupMenu" anchor="last"/>
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+        </action>
         <action id="MioReview.RemoveComment"
-                class="com.mio.review.actions.RemoveReviewCommentAction"
-                text="Mio Review AI: Remover Comentário"
+                class="com.mio.review.radar.RemoveReviewCommentAction"
+                text="Iron Dome IA: Remover Comentário"
                 description="Remove os comentários não resolvidos da seleção ou da linha atual; os já salvos saem no próximo salvamento"/>
         <action id="MioReview.RemoveResolved"
-                class="com.mio.review.actions.RemoveResolvedCommentsAction"
-                text="Mio Review AI: Remover Comentários Resolvidos"
-                description="Tira do editor os comentários resolvidos, sem alterar o .md da revisão"/>
+                class="com.mio.review.radar.RemoveResolvedCommentsAction"
+                text="Iron Dome IA: Remover Comentários Resolvidos"
+                description="Tira do editor os alvos já interceptados, sem alterar o .md da revisão"/>
     </actions>
 </idea-plugin>

@@ -1,0 +1,19 @@
+<idea-plugin>
+    <extensions defaultExtensionNs="com.mio.review">
+        <toolWindowTab implementation="com.mio.review.impacto.DependencyTab"/>
+    </extensions>
+
+    <actions>
+        <action id="MioReview.DependencyDiagram"
+                class="com.mio.review.impacto.ShowDependencyDiagramAction"
+                text="Iron Dome IA: Analisar Dependências"
+                description="Calcula o raio de impacto da classe: quem depende dela, de quem ela depende, o risco de alterá-la e os testes que a usam"
+                icon="AllIcons.Graph.Layout">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            <add-to-group group-id="EditorTabPopupMenu" anchor="last"/>
+            <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
+            <add-to-group group-id="StructureViewPopupMenu" anchor="last"/>
+            <add-to-group group-id="NavbarPopupMenu" anchor="last"/>
+        </action>
+    </actions>
+</idea-plugin>
