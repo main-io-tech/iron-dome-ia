@@ -1,11 +1,11 @@
 <idea-plugin>
-    <extensions defaultExtensionNs="com.mio.review">
-        <toolWindowTab implementation="com.mio.review.impacto.DependencyTab"/>
+    <extensions defaultExtensionNs="com.mio.irondome">
+        <toolWindowTab implementation="com.mio.irondome.impacto.DependencyTab"/>
     </extensions>
 
     <actions>
-        <action id="MioReview.DependencyDiagram"
-                class="com.mio.review.impacto.ShowDependencyDiagramAction"
+        <action id="IronDome.DependencyDiagram"
+                class="com.mio.irondome.impacto.ShowDependencyDiagramAction"
                 text="Iron Dome IA: Calcular Raio de Impacto"
                 description="Calcula o raio de impacto da classe: quem depende dela, de quem ela depende, o risco de alterá-la e os testes que a usam"
                 icon="/icons/impacto.svg">

@@ -1,5 +1,5 @@
 <idea-plugin>
-    <id>com.mio.review</id>
+    <id>com.mio.irondome</id>
     <name>Iron Dome IA</name>
     <vendor>Mio</vendor>
 
@@ -19,8 +19,9 @@
         saem, e o ciclo é completo: pendentes, resolvidos pela IA (em verde), editáveis e removíveis
         com desfazer. Pelo botão direito, marque também um arquivo ou pacote inteiro como alvo.</li>
       <li><b>🎯 Centro de Comando:</b> cada comentário vira uma ordem com dois modos, <i>Aplicar
-        direto</i> ou <i>Discutir antes de alterar</i>, em que a IA apresenta a proposta e espera sua
-        autorização. Funciona com Cursor, Claude Code ou qualquer outro assistente.</li>
+        direto</i> ou <i>Discutir antes de alterar</i>, em que a IA explica os motivos do código atual e o
+        impacto de manter, alterar ou remover, traz até 5 opções com prévia da alteração e discute com você
+        até a decisão final. Funciona com Cursor, Claude Code ou qualquer outro assistente.</li>
       <li><b>🤝 Sem fogo amigo:</b> a IA é instruída a perguntar antes de aplicar comentários que se
         contradizem ou se cruzam.</li>
       <li><b>💥 Raio de Impacto:</b> para classes Java e Kotlin, quantas classes dependem de cada uma
@@ -40,8 +41,6 @@
         os arquivos.</li>
       <li>Novo nome, Iron Dome IA, com o código organizado em mecanismos de defesa: Radar, Centro de
         Comando, Raio de Impacto e Sentinela.</li>
-      <li>As revisões passam a ficar em <code>iron-dome/</code>; a pasta antiga <code>mio-review/</code>
-        é movida automaticamente ao abrir o projeto.</li>
       <li>Comentários de arquivo ou pacote inteiro, pelo botão direito na árvore do projeto, na aba do
         editor ou na aba Sentinela.</li>
       <li>Abas Radar, Sentinela e Raio de Impacto com ícones coloridos, e ações e status com nomes do
@@ -55,70 +54,70 @@
 
     <extensionPoints>
         <extensionPoint name="toolWindowTab"
-                        interface="com.mio.review.base.ReviewToolWindowTab"
+                        interface="com.mio.irondome.base.ReviewToolWindowTab"
                         dynamic="true"/>
     </extensionPoints>
 
     <extensions defaultExtensionNs="com.intellij">
-        <editorFactoryListener implementation="com.mio.review.radar.ReviewEditorFactoryListener"/>
-        <editorFactoryMouseListener implementation="com.mio.review.radar.ReviewMouseListener"/>
-        <editorFactoryMouseMotionListener implementation="com.mio.review.radar.ReviewMouseMotionListener"/>
-        <editorFloatingToolbarProvider implementation="com.mio.review.base.ReviewFloatingToolbarProvider"/>
-        <projectViewNodeDecorator implementation="com.mio.review.radar.TargetDecorator"/>
+        <editorFactoryListener implementation="com.mio.irondome.radar.ReviewEditorFactoryListener"/>
+        <editorFactoryMouseListener implementation="com.mio.irondome.radar.ReviewMouseListener"/>
+        <editorFactoryMouseMotionListener implementation="com.mio.irondome.radar.ReviewMouseMotionListener"/>
+        <editorFloatingToolbarProvider implementation="com.mio.irondome.base.ReviewFloatingToolbarProvider"/>
+        <projectViewNodeDecorator implementation="com.mio.irondome.radar.TargetDecorator"/>
         <notificationGroup id="Iron Dome IA" displayType="BALLOON"/>
         <toolWindow id="Iron Dome IA"
                     anchor="right"
                     icon="/icons/toolWindow.svg"
-                    factoryClass="com.mio.review.base.ReviewToolWindowFactory"/>
+                    factoryClass="com.mio.irondome.base.ReviewToolWindowFactory"/>
     </extensions>
 
     <applicationListeners>
-        <listener class="com.mio.review.comando.ReviewSaveListener"
+        <listener class="com.mio.irondome.comando.ReviewSaveListener"
                   topic="com.intellij.openapi.fileEditor.FileDocumentManagerListener"/>
-        <listener class="com.mio.review.comando.ReviewSaveActionListener"
+        <listener class="com.mio.irondome.comando.ReviewSaveActionListener"
                   topic="com.intellij.openapi.actionSystem.ex.AnActionListener"/>
     </applicationListeners>
 
     <projectListeners>
-        <listener class="com.mio.review.comando.ReviewFileListener"
+        <listener class="com.mio.irondome.comando.ReviewFileListener"
                   topic="com.intellij.openapi.vfs.newvfs.BulkFileListener"/>
-        <listener class="com.mio.review.radar.TargetDecoratorRefresher"
-                  topic="com.mio.review.radar.ReviewCommentsListener"/>
+        <listener class="com.mio.irondome.radar.TargetDecoratorRefresher"
+                  topic="com.mio.irondome.radar.ReviewCommentsListener"/>
     </projectListeners>
 
     <actions>
-        <action id="MioReview.SaveFileReview"
-                class="com.mio.review.comando.SaveFileReviewAction"
+        <action id="IronDome.SaveFileReview"
+                class="com.mio.irondome.comando.SaveFileReviewAction"
                 text="Disparar Este Arquivo"
                 description="Salva o arquivo aberto e envia à IA, no .md de revisão, as ordens de interceptação só dele"
                 icon="/icons/saveReview.svg"/>
-        <action id="MioReview.SaveReview"
-                class="com.mio.review.comando.SaveReviewAction"
+        <action id="IronDome.SaveReview"
+                class="com.mio.irondome.comando.SaveReviewAction"
                 text="Disparar Todos"
                 description="Salva todos os arquivos e envia à IA, no .md de revisão, as ordens de interceptação de todos eles"
                 icon="/icons/fireAll.svg"/>
 
-        <action id="MioReview.ShowFileDiff"
-                class="com.mio.review.sentinela.ShowFileDiffAction"
+        <action id="IronDome.ShowFileDiff"
+                class="com.mio.irondome.sentinela.ShowFileDiffAction"
                 text="Inspecionar Diff"
                 description="Compara este arquivo com a versão do último commit"
                 icon="AllIcons.Actions.Diff"/>
 
-        <group id="MioReview.FloatingToolbar">
-            <reference ref="MioReview.ShowFileDiff"/>
-            <reference ref="MioReview.SaveFileReview"/>
-            <reference ref="MioReview.SaveReview"/>
+        <group id="IronDome.FloatingToolbar">
+            <reference ref="IronDome.ShowFileDiff"/>
+            <reference ref="IronDome.SaveFileReview"/>
+            <reference ref="IronDome.SaveReview"/>
         </group>
 
-        <action id="MioReview.AddComment"
-                class="com.mio.review.radar.AddReviewCommentAction"
+        <action id="IronDome.AddComment"
+                class="com.mio.irondome.radar.AddReviewCommentAction"
                 text="Iron Dome IA: Marcar Alvo"
                 description="Marca a seleção ou a linha atual como alvo para a IA corrigir"
                 icon="/icons/addComment.svg">
             <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt shift M"/>
         </action>
-        <action id="MioReview.MarkTarget"
-                class="com.mio.review.radar.MarkTargetAction"
+        <action id="IronDome.MarkTarget"
+                class="com.mio.irondome.radar.MarkTargetAction"
                 text="Iron Dome IA: Marcar como Alvo"
                 description="Comenta o arquivo ou o pacote inteiro para a IA corrigir"
                 icon="/icons/addComment.svg">
@@ -126,13 +125,13 @@
             <add-to-group group-id="EditorTabPopupMenu" anchor="last"/>
             <add-to-group group-id="EditorPopupMenu" anchor="last"/>
         </action>
-        <action id="MioReview.RemoveComment"
-                class="com.mio.review.radar.RemoveReviewCommentAction"
+        <action id="IronDome.RemoveComment"
+                class="com.mio.irondome.radar.RemoveReviewCommentAction"
                 text="Iron Dome IA: Cancelar Alvo"
                 description="Cancela os alvos não interceptados da seleção ou da linha atual; os já disparados saem no próximo disparo"
                 icon="/icons/removeComment.svg"/>
-        <action id="MioReview.RemoveResolved"
-                class="com.mio.review.radar.RemoveResolvedCommentsAction"
+        <action id="IronDome.RemoveResolved"
+                class="com.mio.irondome.radar.RemoveResolvedCommentsAction"
                 text="Iron Dome IA: Limpar Alvos Interceptados"
                 description="Tira do editor os alvos já interceptados, sem alterar o .md da revisão"
                 icon="/icons/radar.svg"/>

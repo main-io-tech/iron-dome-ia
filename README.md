@@ -87,7 +87,7 @@ alvo como resolvido e você vê o resultado em verde no editor.
 - 🎯 **Arquivo ou pacote inteiro:** para pedidos que não cabem numa linha, como *"separe este pacote em dois"*, clique com o botão direito num pacote ou arquivo (na árvore do projeto, na aba do editor ou na aba Sentinela) e use **Marcar como Alvo**. O alvo de arquivo aparece no topo do editor, e a árvore do projeto mostra quantos alvos cada pacote e arquivo tem.
 - ✏️ **Ciclo completo:** edite, cancele com desfazer e acompanhe o status: **não disparado**, **na mira** ou **interceptado**.
 - 💾 **Nada se perde:** rascunhos ficam guardados mesmo se você fechar a IDE antes de salvar.
-- 🚦 **Dois modos por comentário:** *Aplicar direto* para o que é óbvio; *Discutir antes de alterar* para a IA apresentar a proposta e esperar a sua autorização de disparo.
+- 🚦 **Dois modos por comentário:** *Aplicar direto* para o que é óbvio; *Discutir antes de alterar* para a IA explicar por que o código está assim, o impacto de manter, alterar ou remover e até 5 opções com prévia da alteração, e argumentar com você até a decisão final.
 
 ### 🎯 Centro de Comando: ordens que qualquer IA entende
 
@@ -205,16 +205,14 @@ arquivos da pasta indicada na seção.
 Antes de alterar qualquer arquivo, analise os comentários pendentes em conjunto. Se algum contradizer
 outro, ou se aplicar um quebrar outro, pergunte ao usuário como resolver e espere a resposta. Sem
 conflitos, trate os comentários em sequência. Os de `**Modo:** aplicar direto` podem ser aplicados
-sem consulta. Nos de `**Modo:** discutir antes de alterar`, apresente a análise e a proposta e só
-altere depois que o usuário concordar.
+sem consulta. Nos de `**Modo:** discutir antes de alterar`, siga o modo de discussão do `.md`:
+escreva a análise completa (por que o código está assim, se o apontamento procede e o impacto de
+manter, alterar ou remover), de 2 a 5 opções com prévia da alteração e a sua recomendação, discuta
+com o usuário e só altere depois da decisão final.
 ```
 
 > [!TIP]
 > Depois disso, basta dizer à IA algo como *"aplique a revisão"*.
-
-> [!NOTE]
-> Vindo da versão com o nome Mio Review AI? Ao abrir o projeto, o plugin move `mio-review/` para
-> `iron-dome/` sozinho. Só falta trocar o caminho na regra do `AGENTS.md` ou do Cursor.
 
 ## ❓ Perguntas frequentes
 
@@ -259,7 +257,7 @@ Requer JDK 21+.
 > [!IMPORTANT]
 > O `buildPlugin` roda os testes antes e não gera o `.zip` se algum falhar.
 
-O código fica em `src/main/kotlin/com/mio/review`, com um pacote por mecanismo de defesa:
+O código fica em `src/main/kotlin/com/mio/irondome`, com um pacote por mecanismo de defesa:
 
 | Pacote | Mecanismo | O que tem |
 | --- | --- | --- |

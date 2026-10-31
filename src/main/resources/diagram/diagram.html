@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <style>
-  :root { /*MIO_THEME_CSS*/ }
+  :root { /*IRON_DOME_THEME_CSS*/ }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--fg);
     font: 12px -apple-system, "Segoe UI", "Inter", sans-serif; }
@@ -88,11 +88,11 @@
     <div><span class="ring"></span>alterada e não commitada</div>
   </div>
 </div>
-<script>/*MIO_CYTOSCAPE*/</script>
+<script>/*IRON_DOME_CYTOSCAPE*/</script>
 <script>
-  const THEME = /*MIO_THEME_JSON*/;
-  const DATA = /*MIO_DATA*/;
-  function mioSend(message) { /*MIO_BRIDGE*/ }
+  const THEME = /*IRON_DOME_THEME_JSON*/;
+  const DATA = /*IRON_DOME_DATA*/;
+  function ironDomeSend(message) { /*IRON_DOME_BRIDGE*/ }
 
   const byId = new Map(DATA.nodes.map(n => [n.id, n]));
   const help = new Map(DATA.help.map(t => [t.id, t]));
@@ -190,7 +190,7 @@
   function togglePref(key, panel, buttonId, what) {
     prefs[key] = !prefs[key];
     renderCollapsed(panel, buttonId, prefs[key], what);
-    mioSend(`pref:${key}:${prefs[key] ? 1 : 0}`);
+    ironDomeSend(`pref:${key}:${prefs[key] ? 1 : 0}`);
   }
   const legendPanel = document.getElementById('legend');
   renderCollapsed(legendPanel, 'collapseLegend', prefs.legend, 'a legenda');
@@ -210,8 +210,8 @@
     hood.edges().addClass('highlight');
   });
   cy.on('mouseout', 'node', () => cy.elements().removeClass('faded highlight'));
-  cy.on('tap', 'node', e => { showInfo(e.target.id()); mioSend('select:' + e.target.id()); });
-  cy.on('dbltap', 'node', e => mioSend('open:' + e.target.id()));
+  cy.on('tap', 'node', e => { showInfo(e.target.id()); ironDomeSend('select:' + e.target.id()); });
+  cy.on('dbltap', 'node', e => ironDomeSend('open:' + e.target.id()));
   cy.on('tap', e => { if (e.target === cy) document.getElementById('info').style.display = 'none'; });
 
   function why(topic) { return `<button class="why" data-topic="${topic}" title="O que é isso?">?</button>`; }
@@ -268,11 +268,11 @@
     info.querySelector('#collapseInfo').addEventListener('click', () => togglePref('info', info, 'collapseInfo', 'os detalhes'));
     info.querySelector('#closeInfo').addEventListener('click', () => { info.style.display = 'none'; });
     info.querySelectorAll('ul.nodes li[data-id]').forEach(li => li.addEventListener('click', () => select(li.dataset.id)));
-    info.querySelectorAll('ul.tests li[data-id]').forEach(li => li.addEventListener('click', () => mioSend('open:' + li.dataset.id)));
+    info.querySelectorAll('ul.tests li[data-id]').forEach(li => li.addEventListener('click', () => ironDomeSend('open:' + li.dataset.id)));
     info.querySelectorAll('.why').forEach(button => button.addEventListener('click', () => explain(button.dataset.topic)));
-    info.querySelector('#open').addEventListener('click', () => mioSend('open:' + id));
-    info.querySelector('#diff')?.addEventListener('click', () => mioSend('diff:' + id));
-    info.querySelector('#refocus')?.addEventListener('click', () => mioSend('focus:' + id));
+    info.querySelector('#open').addEventListener('click', () => ironDomeSend('open:' + id));
+    info.querySelector('#diff')?.addEventListener('click', () => ironDomeSend('diff:' + id));
+    info.querySelector('#refocus')?.addEventListener('click', () => ironDomeSend('focus:' + id));
   }
   function explain(topicId) {
     const box = document.getElementById('explain'), topic = help.get(topicId);
@@ -292,7 +292,7 @@
     showInfo(id);
   }
   function setChanges(next, nextVcs) { changes = next; vcs = nextVcs; applyChanges(); }
-  window.mio = { select, setChanges };
+  window.ironDome = { select, setChanges };
 
   applyChanges();
   runLayout();
