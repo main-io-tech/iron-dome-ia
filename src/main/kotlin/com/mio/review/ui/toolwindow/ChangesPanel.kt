@@ -1,12 +1,17 @@
 package com.mio.review.ui.toolwindow
 
+import com.intellij.icons.AllIcons
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.actionSystem.ActionManager
+import com.intellij.openapi.actionSystem.ActionUpdateThread
+import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DefaultActionGroup
+import com.intellij.openapi.actionSystem.Separator
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.service
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.fileTypes.FileTypeManager
+import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.SimpleToolWindowPanel
 import com.intellij.openapi.vcs.FilePath
@@ -17,6 +22,7 @@ import com.intellij.openapi.vcs.changes.ChangeListListener
 import com.intellij.openapi.vcs.changes.ChangeListManager
 import com.intellij.openapi.vcs.changes.VcsDirtyScopeManager
 import com.intellij.ui.ColoredListCellRenderer
+import com.intellij.ui.PopupHandler
 import com.intellij.ui.ScrollPaneFactory
 import com.intellij.ui.SimpleTextAttributes
 import com.intellij.ui.components.JBList
@@ -27,11 +33,13 @@ import java.awt.event.KeyEvent
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import javax.swing.DefaultListModel
+import javax.swing.Icon
 import javax.swing.JList
+import javax.swing.SwingUtilities
 
 /**
  * Arquivos com alterações ainda não commitadas, como os que a IA mudou ao aplicar a revisão.
- * Clique abre o diff; duplo clique abre o arquivo.
+ * O clique só seleciona; os botões da barra e o menu de contexto abrem o diff ou o arquivo.
  */
 class ChangesPanel(private val project: Project) : SimpleToolWindowPanel(true, true), Disposable {
 
@@ -52,11 +60,21 @@ class ChangesPanel(private val project: Project) : SimpleToolWindowPanel(true, t
     private val diff = ChangeDiff(project)
     private var refreshQueued = false
 
+    private val showDiffAction = selectionAction("Ver Diff", "Compara o arquivo selecionado com a versão do último commit", AllIcons.Actions.Diff) {
+        showDiff(list.selectedIndex)
+    }
+    private val openFileAction = selectionAction("Abrir Arquivo", "Abre o arquivo selecionado no editor", AllIcons.Actions.EditSource) {
+        openFile(list.selectedValue)
+    }
+
     init {
         setContent(ScrollPaneFactory.createScrollPane(list, true))
         toolbar = ActionManager.getInstance().createActionToolbar(
             "MioReview.ChangesToolbar",
             DefaultActionGroup(
+                showDiffAction,
+                openFileAction,
+                Separator.getInstance(),
                 refreshAction { VcsDirtyScopeManager.getInstance(project).markEverythingDirty() },
             ),
             true,
@@ -113,14 +131,24 @@ class ChangesPanel(private val project: Project) : SimpleToolWindowPanel(true, t
         return path.path.removePrefix("$base/")
     }
 
+    private fun selectionAction(text: String, description: String, icon: Icon, perform: () -> Unit) =
+        object : DumbAwareAction(text, description, icon) {
+            override fun getActionUpdateThread() = ActionUpdateThread.EDT
+            override fun update(e: AnActionEvent) {
+                e.presentation.isEnabled = list.selectedIndex >= 0
+            }
+            override fun actionPerformed(e: AnActionEvent) = perform()
+        }
+
     private fun installNavigation() {
         list.addMouseListener(object : MouseAdapter() {
-            override fun mouseClicked(e: MouseEvent) {
-                if (e.button != MouseEvent.BUTTON1) return
+            override fun mousePressed(e: MouseEvent) {
+                if (!SwingUtilities.isRightMouseButton(e)) return
                 val index = list.locationToIndex(e.point).takeIf { it >= 0 && list.getCellBounds(it, it).contains(e.point) } ?: return
-                if (e.clickCount >= 2) openFile(model[index]) else showDiff(index)
+                list.selectedIndex = index
             }
         })
+        PopupHandler.installPopupMenu(list, DefaultActionGroup(showDiffAction, openFileAction), "MioReview.ChangesPopup")
         list.addKeyListener(object : KeyAdapter() {
             override fun keyPressed(e: KeyEvent) {
                 if (e.keyCode == KeyEvent.VK_ENTER && list.selectedIndex >= 0) showDiff(list.selectedIndex)
@@ -133,8 +161,8 @@ class ChangesPanel(private val project: Project) : SimpleToolWindowPanel(true, t
         diff.show((0 until model.size()).map { model[it].let { entry -> ChangeDiff.Item(entry.change, entry.path, entry.relativePath) } }, index)
     }
 
-    private fun openFile(entry: Entry) {
-        val file = entry.path.virtualFile ?: return
+    private fun openFile(entry: Entry?) {
+        val file = entry?.path?.virtualFile ?: return
         OpenFileDescriptor(project, file).navigate(true)
     }
 
