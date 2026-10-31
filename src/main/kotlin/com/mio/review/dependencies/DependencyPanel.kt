@@ -32,6 +32,7 @@ import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.ui.JBColor
 import com.intellij.ui.OnePixelSplitter
 import com.intellij.ui.SimpleListCellRenderer
+import com.intellij.ui.components.ActionLink
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTabbedPane
@@ -48,6 +49,7 @@ import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import java.awt.event.MouseMotionAdapter
 import java.util.concurrent.Callable
+import javax.swing.JComponent
 import javax.swing.JEditorPane
 import javax.swing.JPanel
 import javax.swing.JTable
@@ -77,6 +79,11 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
     private val classModel = ClassTableModel()
     private val classTable = table(classModel)
     private val tabs = JBTabbedPane()
+    private val bottomPanel = JPanel(BorderLayout())
+    private val minimizedBar = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(14), JBUI.scale(3))).apply {
+        border = JBUI.Borders.customLineTop(JBColor.border())
+        add(JBLabel(AllIcons.General.ArrowUp).apply { toolTipText = "Painel minimizado: clique numa aba para mostrar" })
+    }
     private val projectClasses = ProjectClassesPanel(project, ::analyze).also { Disposer.register(this, it) }
 
     private val diff = ChangeDiff(project)
@@ -108,7 +115,7 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
                 AllIcons.Actions.SplitHorizontally,
             ) {
                 override fun getActionUpdateThread() = ActionUpdateThread.EDT
-                override fun isSelected(e: AnActionEvent) = tabs.isVisible
+                override fun isSelected(e: AnActionEvent) = bottomPanel.isVisible
                 override fun setSelected(e: AnActionEvent, state: Boolean) = setBottomVisible(state)
             },
             object : DumbAwareAction("Atualizar", "Refaz a análise da classe atual do diagrama", AllIcons.Actions.Refresh) {
@@ -149,17 +156,23 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
         }
         listOf(depth, direction).forEach { combo -> combo.addActionListener { focus?.let(::analyze) } }
 
-        tabs.addTab("Classes do diagrama", JBScrollPane(classTable))
-        tabs.addTab("Todas as classes", projectClasses)
-        tabs.addTab("Entenda as métricas", JBScrollPane(helpPane()))
+        tabs.addTab(TAB_TITLES[DIAGRAM_CLASSES_TAB], JBScrollPane(classTable))
+        tabs.addTab(TAB_TITLES[ALL_CLASSES_TAB], projectClasses)
+        tabs.addTab(TAB_TITLES[HELP_TAB], JBScrollPane(helpPane()))
         tabs.selectedIndex = ALL_CLASSES_TAB
-        tabs.isVisible = !PropertiesComponent.getInstance().getBoolean(BOTTOM_HIDDEN_KEY)
+        bottomPanel.add(tabs, BorderLayout.CENTER)
+        bottomPanel.add(minimizeToolbar(), BorderLayout.EAST)
+        TAB_TITLES.forEachIndexed { index, title ->
+            minimizedBar.add(ActionLink(title) { showTab(index) }.apply { toolTipText = "Mostrar o painel em $title" })
+        }
         val splitter = OnePixelSplitter(true, "MioReview.DependenciesSplitter", 0.68f).apply {
             firstComponent = diagram.component
-            secondComponent = tabs
+            secondComponent = bottomPanel
         }
         add(controls, BorderLayout.NORTH)
         add(splitter, BorderLayout.CENTER)
+        add(minimizedBar, BorderLayout.SOUTH)
+        setBottomVisible(!PropertiesComponent.getInstance().getBoolean(BOTTOM_HIDDEN_KEY))
 
         installTableNavigation()
         project.messageBus.connect(this).subscribe(ChangeListListener.TOPIC, object : ChangeListListener {
@@ -175,16 +188,27 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
         running?.cancel()
     }
 
+    /** Minimizado, o painel inferior vira uma barra com o nome das abas e o diagrama fica com o espaço. */
     private fun setBottomVisible(visible: Boolean) {
-        tabs.isVisible = visible
+        bottomPanel.isVisible = visible
+        minimizedBar.isVisible = !visible
         PropertiesComponent.getInstance().setValue(BOTTOM_HIDDEN_KEY, !visible)
         revalidate()
         repaint()
     }
 
     private fun showTab(index: Int) {
-        if (!tabs.isVisible) setBottomVisible(true)
+        if (!bottomPanel.isVisible) setBottomVisible(true)
         tabs.selectedIndex = index
+    }
+
+    private fun minimizeToolbar(): JComponent {
+        val minimize = object : DumbAwareAction("Minimizar Painel", "Recolhe as abas para uma barra e deixa o diagrama com todo o espaço", AllIcons.General.HideToolWindow) {
+            override fun actionPerformed(e: AnActionEvent) = setBottomVisible(false)
+        }
+        val toolbar = ActionManager.getInstance().createActionToolbar("MioReview.DependenciesBottom", DefaultActionGroup(minimize), false)
+        toolbar.targetComponent = bottomPanel
+        return toolbar.component
     }
 
     fun analyzeCurrentEditor() {
@@ -464,8 +488,10 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
     }
 
     private companion object {
+        const val DIAGRAM_CLASSES_TAB = 0
         const val ALL_CLASSES_TAB = 1
         const val HELP_TAB = 2
+        val TAB_TITLES = listOf("Classes do diagrama", "Todas as classes", "Entenda as métricas")
         const val BOTTOM_HIDDEN_KEY = "mio.review.dependencies.bottomHidden"
 
         /** 0 é verde (tranquilo), 1 amarelo e 2 vermelho (pede cuidado). */
