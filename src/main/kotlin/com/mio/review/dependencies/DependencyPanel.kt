@@ -414,7 +414,9 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
         ): Component {
             super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column)
             val tests = value as? TestUsage
-            if (!isSelected && tests != null) foreground = colorOf(TestCoverage.GOOD.ordinal - tests.coverage.ordinal)
+            if (!isSelected && tests != null && tests.coverage != TestCoverage.TEST_CLASS) {
+                foreground = colorOf(TestCoverage.GOOD.ordinal - tests.coverage.ordinal)
+            }
             toolTipText = tests?.testClasses?.takeIf { it.isNotEmpty() }
                 ?.joinToString("<br>", "<html>Classes de teste que a usam:<br>", "</html>") { DependencyAnalyzer.simpleName(it) }
             return this

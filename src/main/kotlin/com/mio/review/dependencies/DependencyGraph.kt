@@ -46,15 +46,18 @@ enum class TestCoverage(val label: String) {
     NONE("Sem testes"),
     PARTIAL("Parcial"),
     GOOD("Bem coberta"),
+    /** A própria classe é um teste, então a métrica não se aplica. */
+    TEST_CLASS("Classe de teste"),
 }
 
 /**
  * Classes de teste que citam a classe diretamente. Não é cobertura de linhas: os testes não são
  * executados. [dedicated] indica um teste com o nome da classe, como `ServiceTest`.
  */
-class TestUsage(val testClasses: List<String>, val dedicated: Boolean) : Comparable<TestUsage> {
+class TestUsage(val testClasses: List<String>, val dedicated: Boolean, val isTest: Boolean = false) : Comparable<TestUsage> {
     val coverage: TestCoverage
         get() = when {
+            isTest -> TestCoverage.TEST_CLASS
             testClasses.isEmpty() -> TestCoverage.NONE
             dedicated || testClasses.size >= WELL_COVERED_FROM -> TestCoverage.GOOD
             else -> TestCoverage.PARTIAL
@@ -67,6 +70,7 @@ class TestUsage(val testClasses: List<String>, val dedicated: Boolean) : Compara
     companion object {
         const val WELL_COVERED_FROM = 3
         val NONE = TestUsage(emptyList(), false)
+        val TEST_CLASS = TestUsage(emptyList(), false, isTest = true)
 
         fun dedicatedNames(className: String) =
             setOf("${className}Test", "${className}Tests", "${className}IT", "${className}Spec", "Test$className")

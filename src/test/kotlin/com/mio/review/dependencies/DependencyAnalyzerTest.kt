@@ -84,6 +84,15 @@ class DependencyAnalyzerTest : LightJavaCodeInsightFixtureTestCase() {
         assertEquals(TestCoverage.NONE, byName.getValue("Repository").tests.coverage)
     }
 
+    fun testTestClassIsNotReportedWithoutTests() {
+        val graph = analyze("app.core.ServiceTest", depth = 1)
+        val focus = graph.nodes.single { it.qualifiedName == "app.core.ServiceTest" }
+
+        assertEquals(TestCoverage.TEST_CLASS, focus.tests.coverage)
+        assertFalse(focus.needsAttention)
+        assertEquals(TestCoverage.GOOD, graph.nodes.single { it.name == "Service" }.tests.coverage)
+    }
+
     fun testChangeRisk() {
         val byName = analyze("app.core.Service", depth = 1).nodes.associateBy { it.name }
 

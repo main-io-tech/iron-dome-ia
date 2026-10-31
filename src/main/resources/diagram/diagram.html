@@ -44,7 +44,7 @@
   .badge.MEDIUM, .badge.PARTIAL { background: var(--medium); }
   .badge.HIGH, .badge.NONE { background: var(--high); }
   .badge.changed { background: transparent; border: 1px solid var(--changed); color: var(--changed); }
-  .badge.clean { background: var(--bg); border: 1px solid var(--border); color: var(--muted); font-weight: normal; }
+  .badge.clean, .badge.TEST_CLASS { background: var(--bg); border: 1px solid var(--border); color: var(--muted); font-weight: normal; }
   button.pressed { border-color: var(--changed); color: var(--changed); }
   button:disabled { opacity: .5; cursor: default; }
   #legend .ring { display: inline-block; width: 12px; height: 12px; border-radius: 3px; border: 2px solid var(--changed); vertical-align: middle; margin-right: 6px; }
@@ -250,7 +250,8 @@
       <div class="row"><span class="label">Risco ao alterar</span><span class="badge ${n.risk}">${escapeHtml(n.riskLabel)}</span>${why('risk')}</div>
       <div class="note">${escapeHtml(n.riskReason)}</div>
       <div class="row"><span class="label">Testes</span><span class="badge ${n.coverage}">${escapeHtml(n.coverageLabel)}</span>${why('tests')}</div>
-      <div class="note">${n.tests.length ? `Classes de teste que a usam (${n.tests.length}):` : 'Nenhuma classe de teste usa esta classe diretamente.'}</div>
+      <div class="note">${n.coverage === 'TEST_CLASS' ? 'Esta classe é um teste: ela protege outras classes.'
+        : n.tests.length ? `Classes de teste que a usam (${n.tests.length}):` : 'Nenhuma classe de teste usa esta classe diretamente.'}</div>
       <ul class="tests">${n.tests.length ? listOf(n.tests, simpleName) : ''}</ul>
       ${changeRow(n)}
       <div class="explain" id="explain"></div>

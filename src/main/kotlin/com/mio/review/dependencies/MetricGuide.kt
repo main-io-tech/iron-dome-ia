@@ -37,7 +37,8 @@ object MetricGuide {
             "a alteração quebrar algo, um teste falha antes de o problema chegar ao usuário. Bem coberta: " +
             "existe um teste com o nome dela (por exemplo, ServiceTest) ou ${TestUsage.WELL_COVERED_FROM} " +
             "ou mais classes de teste a usam. Parcial: uma ou duas classes de teste a usam. Sem testes: " +
-            "nenhum teste a usa diretamente. O plugin não executa os testes nem mede quais linhas eles " +
+            "nenhum teste a usa diretamente. Classe de teste: a própria classe é um teste, então a métrica " +
+            "não se aplica. O plugin não executa os testes nem mede quais linhas eles " +
             "percorrem; para isso, use Run with Coverage.",
     )
 
@@ -92,6 +93,7 @@ object MetricGuide {
                 else "Nenhum teste a usa: antes de alterar, escreva testes que garantam o comportamento atual."
             TestCoverage.PARTIAL -> "Poucos testes a usam: confira se eles passam pela parte que você vai mudar e complete se faltar."
             TestCoverage.GOOD -> "Ela tem testes: rode-os depois da alteração, junto com os testes de quem depende dela."
+            TestCoverage.TEST_CLASS -> "Ela é um teste: depois de alterá-la, rode-a e confira se ainda verifica o que deveria."
         }
         return "$impact $protection"
     }

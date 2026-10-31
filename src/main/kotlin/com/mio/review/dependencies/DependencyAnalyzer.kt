@@ -113,6 +113,8 @@ class DependencyAnalyzer(
 
     private fun testsOf(name: String): TestUsage = read {
         val psiClass = findClass(name) ?: return@read null
+        val file = psiClass.navigationElement.containingFile?.virtualFile
+        if (file != null && testScope.contains(file)) return@read TestUsage.TEST_CLASS
         val uClass = psiClass.toUElement() as? UClass ?: return@read null
         val found = sortedSetOf<String>()
         for (target in rootsOf(uClass, psiClass)) {
