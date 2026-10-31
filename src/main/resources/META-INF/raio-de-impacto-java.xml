@@ -6,9 +6,9 @@
     <actions>
         <action id="MioReview.DependencyDiagram"
                 class="com.mio.review.impacto.ShowDependencyDiagramAction"
-                text="Iron Dome IA: Analisar Dependências"
+                text="Iron Dome IA: Calcular Raio de Impacto"
                 description="Calcula o raio de impacto da classe: quem depende dela, de quem ela depende, o risco de alterá-la e os testes que a usam"
-                icon="AllIcons.Graph.Layout">
+                icon="/icons/impacto.svg">
             <add-to-group group-id="EditorPopupMenu" anchor="last"/>
             <add-to-group group-id="EditorTabPopupMenu" anchor="last"/>
             <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>

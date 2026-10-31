@@ -12,21 +12,27 @@ import com.intellij.openapi.wm.ToolWindowFactory
 import com.intellij.ui.content.ContentFactory
 import com.mio.review.radar.CommentsPanel
 import com.mio.review.sentinela.ChangesPanel
+import javax.swing.Icon
+import javax.swing.JComponent
 
 class ReviewToolWindowFactory : ToolWindowFactory, DumbAware {
 
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
-        val factory = ContentFactory.getInstance()
-        val comments = CommentsPanel(project)
-        val changes = ChangesPanel(project)
-        toolWindow.contentManager.addContent(factory.createContent(comments, "Comentários", false).apply { setDisposer(comments) })
-        toolWindow.contentManager.addContent(factory.createContent(changes, "Alterações", false).apply { setDisposer(changes) })
+        add(toolWindow, CommentsPanel(project), "Radar", IronDomeIcons.radar, "Os alvos marcados para a IA: comentários da revisão aberta e o histórico")
+        add(toolWindow, ChangesPanel(project), "Sentinela", IronDomeIcons.sentinela, "O perímetro vigiado: arquivos com alterações ainda não commitadas")
         for (tab in ReviewToolWindowTab.EP_NAME.extensionList) {
-            val component = tab.createComponent(project, toolWindow)
-            toolWindow.contentManager.addContent(
-                factory.createContent(component, tab.title, false).apply { (component as? Disposable)?.let(::setDisposer) },
-            )
+            add(toolWindow, tab.createComponent(project, toolWindow), tab.title, tab.icon, tab.description)
         }
+    }
+
+    private fun add(toolWindow: ToolWindow, component: JComponent, title: String, icon: Icon?, description: String?) {
+        val content = ContentFactory.getInstance().createContent(component, title, false).apply {
+            this.icon = icon
+            this.description = description
+            putUserData(ToolWindow.SHOW_CONTENT_ICON, true)
+            (component as? Disposable)?.let(::setDisposer)
+        }
+        toolWindow.contentManager.addContent(content)
     }
 
     companion object {

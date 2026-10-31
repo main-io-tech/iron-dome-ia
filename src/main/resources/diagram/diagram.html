@@ -72,7 +72,7 @@
   <input id="search" placeholder="Buscar classe" size="16">
   <button id="fit" title="Enquadrar o diagrama">Enquadrar</button>
   <button id="highlightChanges" title="Apaga as demais classes para destacar as que têm alterações não commitadas">Destacar alteradas</button>
-  <button id="helpButton" title="Explica o que cada número e cor significa">Entenda as métricas</button>
+  <button id="helpButton" title="Explica o que cada número e cor significa">Manual de campo</button>
   <span id="summary"></span>
 </div>
 <div id="help" class="panel"></div>
@@ -83,7 +83,7 @@
     <div><span class="swatch" style="border-color: var(--edge)"></span>usa</div>
     <div><span class="swatch" style="border-color: var(--edge); border-top-style: dashed"></span>herda / implementa</div>
     <div><span class="swatch" style="border-color: var(--cycle)"></span>ciclo de dependência</div>
-    <div>Risco ao alterar:<span class="dot" style="background: var(--low)"></span>baixo<span class="dot" style="background: var(--medium)"></span>médio<span class="dot" style="background: var(--high)"></span>alto</div>
+    <div>Raio de impacto:<span class="dot" style="background: var(--low)"></span>baixo<span class="dot" style="background: var(--medium)"></span>médio<span class="dot" style="background: var(--high)"></span>alto</div>
     <div>⚠ risco médio ou alto e sem testes</div>
     <div><span class="ring"></span>alterada e não commitada</div>
   </div>
@@ -197,7 +197,7 @@
   document.getElementById('collapseLegend').addEventListener('click', () => togglePref('legend', legendPanel, 'collapseLegend', 'a legenda'));
 
   const helpPanel = document.getElementById('help');
-  helpPanel.innerHTML = `<h2>Entenda as métricas <button id="closeHelp" title="Fechar">✕</button></h2>` +
+  helpPanel.innerHTML = `<h2>Manual de campo <button id="closeHelp" title="Fechar">✕</button></h2>` +
     DATA.help.map(t => `<h3>${escapeHtml(t.title)}</h3><p>${escapeHtml(t.text)}</p>`).join('');
   document.getElementById('helpButton').addEventListener('click', () => {
     helpPanel.style.display = helpPanel.style.display === 'block' ? 'none' : 'block';

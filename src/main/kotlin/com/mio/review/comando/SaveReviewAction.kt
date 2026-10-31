@@ -34,8 +34,8 @@ class SaveReviewAction : DumbAwareAction() {
         e.presentation.isVisible = current == null || (pending - current).isNotEmpty()
         e.presentation.isEnabled = true
         e.presentation.text = when (pending.size) {
-            0, 1 -> "Salvar Todos"
-            else -> "Salvar Todos (${pending.size} arquivos)"
+            0, 1 -> "Disparar Todos"
+            else -> "Disparar Todos (${pending.size} arquivos)"
         }
         e.presentation.putClientProperty(ActionUtil.SHOW_TEXT_IN_TOOLBAR, true)
     }
@@ -44,7 +44,7 @@ class SaveReviewAction : DumbAwareAction() {
         val project = e.project ?: return
         val written = project.service<ReviewCommentService>().exportAll()
         FileDocumentManager.getInstance().saveAllDocuments()
-        notifySaved(project, written.firstOrNull(), "Ordens de interceptação enviadas: revisão salva em ${ReviewCommentService.REVIEW_DIR}/")
+        notifySaved(project, written.firstOrNull(), "Ordens de interceptação disparadas para ${ReviewCommentService.REVIEW_DIR}/")
     }
 }
 
@@ -69,8 +69,8 @@ class SaveFileReviewAction : DumbAwareAction() {
         FileDocumentManager.getInstance().saveDocument(editor.document)
         val others = service.pendingPaths().size
         val title = buildString {
-            append("Alvos de ${file.name} na mira: comentários salvos")
-            if (others > 0) append(". ${if (others == 1) "1 outro arquivo continua" else "$others outros arquivos continuam"} com comentários não salvos")
+            append("Alvos de ${file.name} disparados")
+            if (others > 0) append(". ${if (others == 1) "1 outro arquivo continua" else "$others outros arquivos continuam"} com alvos não disparados")
         }
         notifySaved(project, written, title)
     }
@@ -79,7 +79,7 @@ class SaveFileReviewAction : DumbAwareAction() {
 private fun notifySaved(project: Project, written: Path?, title: String) {
     val group = NotificationGroupManager.getInstance().getNotificationGroup("Iron Dome IA")
     if (written == null) {
-        group.createNotification("Céu limpo: nenhuma revisão aberta com comentários salvos.", NotificationType.INFORMATION).notify(project)
+        group.createNotification("Céu limpo: nenhum alvo disparado na operação aberta.", NotificationType.INFORMATION).notify(project)
         return
     }
     val notification = group.createNotification(title, written.fileName.toString(), NotificationType.INFORMATION)

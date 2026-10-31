@@ -60,7 +60,7 @@ alvo como resolvido e você vê o resultado em verde no editor.
     </td>
     <td align="center" width="33%">
       <h3>📨 2. Envie as ordens</h3>
-      <b>Salvar Este Arquivo</b> ou <b>Salvar Todos</b> (<kbd>Ctrl</kbd>+<kbd>S</kbd>) gera
+      <b>Disparar Este Arquivo</b> ou <b>Disparar Todos</b> (<kbd>Ctrl</kbd>+<kbd>S</kbd>) gera
       <code>iron-dome/ordem-interceptacao-&lt;id&gt;.md</code> com cada comentário e o trecho de código.
     </td>
     <td align="center" width="33%">
@@ -78,14 +78,14 @@ alvo como resolvido e você vê o resultado em verde no editor.
 | 📡 **Radar** | Detecta e marca os alvos: comentários inline que acompanham o código. |
 | 🎯 **Centro de Comando** | Transforma os alvos em ordens de interceptação em Markdown e evita o fogo amigo. |
 | 💥 **Raio de Impacto** | Mede o estrago que uma mudança pode causar antes de você mexer na classe. |
-| 🛰️ **Sentinela** | Vigia o perímetro: tudo o que ainda não foi commitado, com o diff a um clique. |
+| 👁️ **Sentinela** | Vigia o perímetro: tudo o que ainda não foi commitado, com o diff a um clique. |
 | 🏰 **Base** | O painel lateral onde os mecanismos se reúnem. |
 
 ### 📡 Radar: comentários inline, como num pull request
 
 - 📌 **Acompanham o código:** os comentários se movem quando linhas são inseridas ou removidas.
-- 🎯 **Arquivo ou pacote inteiro:** para pedidos que não cabem numa linha, como *"separe este pacote em dois"*, clique com o botão direito num pacote ou arquivo (na árvore do projeto, na aba do editor ou na aba Alterações) e use **Marcar como Alvo**. O comentário de arquivo aparece no topo do editor, e a árvore do projeto mostra quantos alvos cada pacote e arquivo tem.
-- ✏️ **Ciclo completo:** edite, remova com desfazer e acompanhe o status: não salvo, pendente ou resolvido.
+- 🎯 **Arquivo ou pacote inteiro:** para pedidos que não cabem numa linha, como *"separe este pacote em dois"*, clique com o botão direito num pacote ou arquivo (na árvore do projeto, na aba do editor ou na aba Sentinela) e use **Marcar como Alvo**. O alvo de arquivo aparece no topo do editor, e a árvore do projeto mostra quantos alvos cada pacote e arquivo tem.
+- ✏️ **Ciclo completo:** edite, cancele com desfazer e acompanhe o status: **não disparado**, **na mira** ou **interceptado**.
 - 💾 **Nada se perde:** rascunhos ficam guardados mesmo se você fechar a IDE antes de salvar.
 - 🚦 **Dois modos por comentário:** *Aplicar direto* para o que é óbvio; *Discutir antes de alterar* para a IA apresentar a proposta e esperar a sua autorização de disparo.
 
@@ -147,13 +147,13 @@ Esse cálculo deveria considerar o peso dos itens?
 
 | Aba | O que você encontra |
 | --- | --- |
-| 💬 **Comentários** | A tela do radar: a revisão aberta e o histórico, organizados por arquivo e pacote. Um clique leva ao código, e o botão direito edita ou remove. |
-| 🔄 **Alterações** | O posto da sentinela: os arquivos ainda não commitados, agrupados por pacote em grupos que você expande ou recolhe, quantos comentários cada um tem e botões para **Ver Diff** ou **Abrir Arquivo**. |
-| 📊 **Dependências** | O raio de impacto da classe escolhida, descrito abaixo. |
+| 📡 **Radar** | Os alvos: a revisão aberta e o histórico, organizados por arquivo e pacote. Um clique leva ao código, e o botão direito edita ou remove. |
+| 👁️ **Sentinela** | O perímetro: os arquivos ainda não commitados, agrupados por pacote em grupos que você expande ou recolhe, quantos alvos cada um tem e botões para **Inspecionar Diff** ou **Abrir Arquivo**. |
+| 💥 **Raio de Impacto** | As dependências da classe escolhida, descritas abaixo. |
 
 ### 💥 Raio de Impacto: saiba o estrago antes de mudar
 
-Escolha uma classe Java ou Kotlin pelo menu de contexto (**Iron Dome IA: Analisar Dependências**)
+Escolha uma classe Java ou Kotlin pelo menu de contexto (**Iron Dome IA: Calcular Raio de Impacto**)
 ou na lista **Todas as classes**, sem precisar abrir o arquivo.
 
 ![Diagrama de dependências com os detalhes da classe analisada](docs/images/diagrama.png)
@@ -168,9 +168,9 @@ ou na lista **Todas as classes**, sem precisar abrir o arquivo.
 | 🎯 **O que fazer** | Uma recomendação objetiva antes de mexer na classe. |
 
 ⚠️ marca as classes com risco médio ou alto **e** sem testes: são as que pedem mais
-cuidado. E se você está começando, **Entenda as métricas** explica cada número em linguagem simples.
+cuidado. E se você está começando, o **Manual de campo** explica cada número em linguagem simples.
 
-### 🛰️ Sentinela: alterações não commitadas em destaque
+### 👁️ Sentinela: alterações não commitadas em destaque
 
 Classes com alterações ainda não commitadas ganham um contorno azul. **Destacar alteradas** mostra
 só elas e **Ver alterações** abre o diff: o jeito mais rápido de revisar o que vai para o próximo commit.
@@ -263,10 +263,10 @@ O código fica em `src/main/kotlin/com/mio/review`, com um pacote por mecanismo 
 
 | Pacote | Mecanismo | O que tem |
 | --- | --- | --- |
-| `radar` | 📡 Radar | Comentários, formulário, margem do editor, cartões e a aba Comentários |
+| `radar` | 📡 Radar | Comentários, formulário, margem do editor, cartões e a aba Radar |
 | `comando` | 🎯 Centro de Comando | Geração e leitura do `.md` e as ações de salvar |
 | `impacto` | 💥 Raio de Impacto | Análise de dependências, diagrama e métricas (só com o plugin Java) |
-| `sentinela` | 🛰️ Sentinela | Aba Alterações e o diff dos arquivos não commitados |
+| `sentinela` | 👁️ Sentinela | Aba Sentinela e o diff dos arquivos não commitados |
 | `base` | 🏰 Base | Tool window, abas extras e a barra flutuante do editor |
 
 O diagrama usa o [Cytoscape.js](https://js.cytoscape.org/) (licença MIT).

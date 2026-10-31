@@ -54,7 +54,7 @@ class ReviewCommentRenderer(
     private val headerText =
         if (collapsed) summaryOf(body)
         else if (comment.target == CommentTarget.FILE) "Alvo: arquivo inteiro · ${ReviewCommentService.reviewName(comment.reviewId)}"
-        else "Comentário para a IA · ${ReviewCommentService.reviewName(comment.reviewId)}"
+        else "Alvo para a IA · ${ReviewCommentService.reviewName(comment.reviewId)}"
     private val chevron: Icon? = when {
         !resolved -> null
         collapsed -> AllIcons.General.ArrowRight

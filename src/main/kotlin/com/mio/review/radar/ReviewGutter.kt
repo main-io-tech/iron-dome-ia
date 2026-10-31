@@ -94,7 +94,7 @@ private class AddCommentIconRenderer(
 
     override fun getIcon(): Icon = ReviewIcons.addComment
 
-    override fun getTooltipText(): String = "Marcar alvo: adicionar comentário para a IA"
+    override fun getTooltipText(): String = "Marcar alvo para a IA"
 
     override fun isNavigateAction(): Boolean = true
 
@@ -118,8 +118,8 @@ private class RemoveCommentIconRenderer(
         val removable = ReviewGutter.removableAt(editor, line)
         val ids = removable.joinToString(", ") { it.id }
         val service = editor.project?.service<ReviewCommentService>()
-        return if (service != null && removable.all(service::isDraft)) "Remover comentário $ids"
-        else "Remover comentário $ids ao salvar"
+        return if (service != null && removable.all(service::isDraft)) "Cancelar alvo $ids"
+        else "Cancelar alvo $ids no próximo disparo"
     }
 
     override fun isNavigateAction(): Boolean = true
@@ -141,7 +141,7 @@ private class UndoRemoveIconRenderer(
 
     override fun getTooltipText(): String {
         val ids = ReviewGutter.removableAt(editor, line).joinToString(", ") { it.id }
-        return "Desfazer remoção do comentário $ids"
+        return "Desfazer cancelamento do alvo $ids"
     }
 
     override fun isNavigateAction(): Boolean = true

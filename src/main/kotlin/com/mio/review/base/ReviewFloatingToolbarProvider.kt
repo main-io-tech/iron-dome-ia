@@ -15,8 +15,8 @@ import com.mio.review.radar.ReviewGutter
 import com.mio.review.sentinela.ChangeDiff
 
 /**
- * Barra no canto superior direito do editor: "Ver Diff" quando o arquivo tem alterações não
- * commitadas, e "Salvar Este Arquivo" e "Salvar Todos" enquanto há comentários não salvos. Cada
+ * Barra no canto superior direito do editor: "Inspecionar Diff" quando o arquivo tem alterações não
+ * commitadas, e "Disparar Este Arquivo" e "Disparar Todos" enquanto há alvos não disparados. Cada
  * ação decide se aparece conforme o arquivo aberto.
  */
 class ReviewFloatingToolbarProvider : AbstractFloatingToolbarProvider(ACTION_GROUP) {

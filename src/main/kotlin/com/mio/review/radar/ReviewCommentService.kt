@@ -160,7 +160,7 @@ class ReviewCommentService(private val project: Project) : PersistentStateCompon
     /**
      * Rascunhos, que ainda não estão no `.md`, saem na hora. Os demais continuam no editor, riscados,
      * até o próximo salvamento do arquivo. Resolvidos são ignorados: só saem por [remove], via
-     * "Remover Comentários Resolvidos".
+     * "Limpar Alvos Interceptados".
      */
     fun markForRemoval(comments: Collection<ReviewComment>) {
         val removable = comments.filterNot { it.resolved || it in editing }

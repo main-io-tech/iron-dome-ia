@@ -65,10 +65,10 @@ object CommentForm {
         show(
             editor,
             lines,
-            title = "Novo comentário para a IA · ${ReviewMarkdown.describeLines(lines.first, lines.last)}",
+            title = "Novo alvo para a IA · ${ReviewMarkdown.describeLines(lines.first, lines.last)}",
             initialText = "",
             initialDiscuss = lastDiscuss,
-            submitLabel = "Comentar",
+            submitLabel = "Marcar Alvo",
             editing = null,
             onSubmit = { current, text, discuss ->
                 lastDiscuss = discuss
@@ -88,7 +88,7 @@ object CommentForm {
         show(
             editor,
             lines,
-            title = "Editar comentário ${comment.id} · ${ReviewMarkdown.describeLines(lines.first, lines.last)}",
+            title = "Editar alvo ${comment.id} · ${ReviewMarkdown.describeLines(lines.first, lines.last)}",
             initialText = comment.text,
             initialDiscuss = comment.discuss,
             submitLabel = "Atualizar",

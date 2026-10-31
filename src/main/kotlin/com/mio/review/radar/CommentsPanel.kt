@@ -24,6 +24,7 @@ import com.intellij.ui.PopupHandler
 import com.intellij.ui.ScrollPaneFactory
 import com.intellij.ui.SimpleTextAttributes
 import com.intellij.ui.treeStructure.Tree
+import com.mio.review.base.IronDomeIcons
 import com.mio.review.base.refreshAction
 import com.mio.review.comando.ReviewMarkdown
 import java.awt.event.KeyAdapter
@@ -50,7 +51,7 @@ class CommentsPanel(private val project: Project) : SimpleToolWindowPanel(true, 
         isRootVisible = false
         showsRootHandles = true
         cellRenderer = Renderer()
-        emptyText.text = "Céu limpo: nenhum comentário de revisão"
+        emptyText.text = "Céu limpo: nenhum alvo no radar"
         emptyText.appendSecondaryText("Clique no + da margem do editor para marcar um alvo", SimpleTextAttributes.GRAYED_ATTRIBUTES, null)
         emptyText.appendLine("ou clique com o botão direito num arquivo ou pacote", SimpleTextAttributes.GRAYED_ATTRIBUTES, null)
     }
@@ -196,8 +197,8 @@ class CommentsPanel(private val project: Project) : SimpleToolWindowPanel(true, 
             tree,
             DefaultActionGroup(
                 liveAction("Editar", AllIcons.Actions.Edit, service::isEditable) { TargetComments.edit(project, it) },
-                liveAction("Remover", AllIcons.General.Remove, { !it.resolved && !it.removing }) { service.markForRemoval(listOf(it)) },
-                liveAction("Desfazer Remoção", AllIcons.Actions.Undo, { it.removing }) { service.unmarkForRemoval(listOf(it)) },
+                liveAction("Cancelar Alvo", AllIcons.General.Remove, { !it.resolved && !it.removing }) { service.markForRemoval(listOf(it)) },
+                liveAction("Desfazer Cancelamento", AllIcons.Actions.Undo, { it.removing }) { service.unmarkForRemoval(listOf(it)) },
             ),
             "MioReview.CommentsPopup",
         )
@@ -283,14 +284,17 @@ class CommentsPanel(private val project: Project) : SimpleToolWindowPanel(true, 
             toolTipText = null
             when (val item = (value as? DefaultMutableTreeNode)?.userObject) {
                 is ReviewItem -> {
-                    icon = ReviewIcons.comment
+                    icon = IronDomeIcons.radar
                     append(item.name, SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
-                    val state = when {
-                        item.pending == 0 -> "concluída"
-                        item.active -> "aberta · ${item.pending} de ${item.total} pendentes"
-                        else -> "${item.pending} de ${item.total} pendentes"
+                    when {
+                        item.pending == 0 ->
+                            append("  céu limpo · todos interceptados", SimpleTextAttributes(SimpleTextAttributes.STYLE_PLAIN, CommentStatus.RESOLVED.accent))
+                        item.active -> {
+                            append("  em operação", SimpleTextAttributes(SimpleTextAttributes.STYLE_BOLD, CommentStatus.UNSAVED.accent))
+                            append("  ${item.pending} de ${item.total} na mira", SimpleTextAttributes.GRAYED_ATTRIBUTES)
+                        }
+                        else -> append("  ${item.pending} de ${item.total} na mira", SimpleTextAttributes.GRAYED_ATTRIBUTES)
                     }
-                    append("  $state", SimpleTextAttributes.GRAYED_ATTRIBUTES)
                 }
                 is FileItem -> {
                     val name = item.filePath.substringAfterLast('/')

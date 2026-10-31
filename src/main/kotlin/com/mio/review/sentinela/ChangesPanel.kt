@@ -32,6 +32,7 @@ import com.intellij.ui.ScrollPaneFactory
 import com.intellij.ui.SimpleTextAttributes
 import com.intellij.ui.treeStructure.Tree
 import com.mio.review.base.refreshAction
+import com.mio.review.radar.CommentStatus
 import com.mio.review.radar.ReviewCommentService
 import com.mio.review.radar.ReviewCommentsListener
 import com.mio.review.radar.ReviewIcons
@@ -78,7 +79,7 @@ class ChangesPanel(private val project: Project) : SimpleToolWindowPanel(true, t
     private var refreshQueued = false
 
     private val showDiffAction = selectionAction(
-        "Ver Diff",
+        "Inspecionar Diff",
         "Compara o arquivo selecionado, ou o primeiro do pacote, com a versão do último commit",
         AllIcons.Actions.Diff,
         enabled = { selectedNode() != null },
@@ -278,7 +279,7 @@ class ChangesPanel(private val project: Project) : SimpleToolWindowPanel(true, t
                     icon = if (item.location.root != null) AllIcons.Nodes.Package else AllIcons.Nodes.Folder
                     append(item.location.name)
                     append("  ${if (item.files == 1) "1 arquivo" else "${item.files} arquivos"}", SimpleTextAttributes.GRAYED_ATTRIBUTES)
-                    if (item.comments > 0) append("  ${comments(item.comments)}", SimpleTextAttributes.GRAY_ITALIC_ATTRIBUTES)
+                    if (item.comments > 0) append("  ${targets(item.comments)}", TARGETS_ATTRIBUTES)
                     item.location.root?.let { append("  $it", SimpleTextAttributes.GRAYED_SMALL_ATTRIBUTES) }
                 }
                 is Entry -> {
@@ -286,13 +287,17 @@ class ChangesPanel(private val project: Project) : SimpleToolWindowPanel(true, t
                     icon = FileTypeManager.getInstance().getFileTypeByFileName(item.path.name).icon
                     append(item.path.name, SimpleTextAttributes(SimpleTextAttributes.STYLE_PLAIN, status.color))
                     append("  ${status.text}", SimpleTextAttributes.GRAYED_SMALL_ATTRIBUTES)
-                    if (item.comments > 0) append("  ${comments(item.comments)}", SimpleTextAttributes.GRAY_ITALIC_ATTRIBUTES)
+                    if (item.comments > 0) append("  ${targets(item.comments)}", TARGETS_ATTRIBUTES)
                     toolTipText = item.relativePath
                 }
             }
         }
 
-        private fun comments(count: Int) = if (count == 1) "1 comentário" else "$count comentários"
+        private fun targets(count: Int) = if (count == 1) "◎ 1 alvo" else "◎ $count alvos"
+
+        private companion object {
+            val TARGETS_ATTRIBUTES = SimpleTextAttributes(SimpleTextAttributes.STYLE_BOLD, CommentStatus.PENDING.accent)
+        }
     }
 
     /** Pacote do arquivo, com a raiz de código em [root]; fora das raízes, a pasta e [root] nulo. */

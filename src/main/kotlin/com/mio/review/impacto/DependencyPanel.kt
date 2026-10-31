@@ -41,6 +41,7 @@ import com.intellij.ui.table.JBTable
 import com.intellij.util.ui.HTMLEditorKitBuilder
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
+import com.mio.review.base.IronDomeIcons
 import com.mio.review.sentinela.ChangeDiff
 import java.awt.BorderLayout
 import java.awt.Color
@@ -101,7 +102,7 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
 
     init {
         val actions = DefaultActionGroup(
-            object : DumbAwareAction("Analisar Classe Atual", "Monta o diagrama da classe aberta no editor", AllIcons.Actions.Execute) {
+            object : DumbAwareAction("Mirar Classe Atual", "Calcula o raio de impacto da classe aberta no editor", IronDomeIcons.impacto) {
                 override fun actionPerformed(e: AnActionEvent) = analyzeCurrentEditor()
             },
             object : DumbAwareAction("Todas as Classes", "Lista todas as classes do projeto para analisar sem abrir o arquivo", AllIcons.Nodes.Class) {
@@ -128,7 +129,7 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
                     focus?.let(::analyze)
                 }
             },
-            object : DumbAwareAction("Entenda as Métricas", "Explica o que cada número, cor e coluna significa", AllIcons.Actions.Help) {
+            object : DumbAwareAction("Manual de Campo", "Explica o que cada número, cor e coluna significa", AllIcons.Actions.Help) {
                 override fun actionPerformed(e: AnActionEvent) = showTab(HELP_TAB)
             },
             object : DumbAwareToggleAction("Expandir", "Ocupa toda a janela da IDE", AllIcons.General.ExpandComponent) {
@@ -180,8 +181,8 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
             override fun changeListUpdateDone() = scheduleChangesRefresh()
         })
         diagram.showMessage(
-            "Escolha uma classe na aba Todas as classes, abaixo, clique em Analisar Classe Atual com ela aberta no editor, " +
-                "ou clique com o botão direito numa classe ou arquivo e use Iron Dome IA: Analisar Dependências.",
+            "Escolha uma classe na aba Todas as classes, abaixo, clique em Mirar Classe Atual com ela aberta no editor, " +
+                "ou clique com o botão direito numa classe ou arquivo e use Iron Dome IA: Calcular Raio de Impacto.",
         )
     }
 
@@ -494,7 +495,7 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
         const val DIAGRAM_CLASSES_TAB = 0
         const val ALL_CLASSES_TAB = 1
         const val HELP_TAB = 2
-        val TAB_TITLES = listOf("Classes do diagrama", "Todas as classes", "Entenda as métricas")
+        val TAB_TITLES = listOf("Classes no raio", "Todas as classes", "Manual de campo")
         const val BOTTOM_HIDDEN_KEY = "mio.review.dependencies.bottomHidden"
 
         /** 0 é verde (tranquilo), 1 amarelo e 2 vermelho (pede cuidado). */

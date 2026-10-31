@@ -41,7 +41,7 @@ object TargetComments {
             hint = hintFor(target.isDirectory),
             initialText = "",
             initialDiscuss = CommentForm.lastDiscuss,
-            okText = "Comentar",
+            okText = "Marcar Alvo",
         )
         if (!dialog.showAndGet()) return
         CommentForm.lastDiscuss = dialog.discuss
@@ -59,7 +59,7 @@ object TargetComments {
         val isPackage = comment.target == CommentTarget.PACKAGE
         val dialog = TargetCommentDialog(
             project,
-            title = "Editar comentário ${comment.id}",
+            title = "Editar alvo ${comment.id}",
             subject = if (isPackage) "${comment.filePath}/" else comment.filePath,
             hint = hintFor(isPackage),
             initialText = comment.text,
@@ -85,8 +85,8 @@ object TargetComments {
     }
 
     private fun hintFor(isPackage: Boolean) =
-        if (isPackage) "Vale para todos os arquivos do pacote. Vai para o .md com Salvar Todos (Ctrl+S)."
-        else "Vale para o arquivo todo. Vai para o .md ao salvar o arquivo ou com Salvar Todos (Ctrl+S)."
+        if (isPackage) "Vale para todos os arquivos do pacote. Vai para o .md com Disparar Todos (Ctrl+S)."
+        else "Vale para o arquivo todo. Vai para o .md com Disparar Este Arquivo ou Disparar Todos (Ctrl+S)."
 }
 
 private class TargetCommentDialog(

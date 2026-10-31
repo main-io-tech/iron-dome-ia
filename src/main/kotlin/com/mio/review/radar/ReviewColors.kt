@@ -14,28 +14,28 @@ enum class CommentStatus(
     val badgeForeground: JBColor,
 ) {
     PENDING(
-        "Pendente",
+        "Na mira",
         JBColor(Color(0xD4A72C), Color(0xBB8009)),
         JBColor(Color(0xFFFCF2), Color(0x2B2922)),
         JBColor(Color(0xFFF1C2), Color(0x4A3D12)),
         JBColor(Color(0x7A5A00), Color(0xE3C065)),
     ),
     UNSAVED(
-        "Não salvo",
+        "Não disparado",
         JBColor(Color(0x0969DA), Color(0x2F81F7)),
         JBColor(Color(0xF5FAFF), Color(0x222A33)),
         JBColor(Color(0xDDF4FF), Color(0x12304F)),
         JBColor(Color(0x0550AE), Color(0x79C0FF)),
     ),
     RESOLVED(
-        "Resolvido",
+        "Interceptado",
         JBColor(Color(0x1A7F37), Color(0x3FB950)),
         JBColor(Color(0xF4FBF5), Color(0x222B24)),
         JBColor(Color(0xDAFBE1), Color(0x13361F)),
         JBColor(Color(0x116329), Color(0x56D364)),
     ),
     REMOVING(
-        "Será removido ao salvar",
+        "Cancelado no próximo disparo",
         JBColor(Color(0xCF222E), Color(0xF85149)),
         JBColor(Color(0xFAFAFA), Color(0x2A2A2C)),
         JBColor(Color(0xFFEBE9), Color(0x4A1A1E)),

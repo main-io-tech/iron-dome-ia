@@ -3,6 +3,7 @@ package com.mio.review.base
 import com.intellij.openapi.extensions.ExtensionPointName
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.wm.ToolWindow
+import javax.swing.Icon
 import javax.swing.JComponent
 
 /**
@@ -11,6 +12,8 @@ import javax.swing.JComponent
  */
 interface ReviewToolWindowTab {
     val title: String
+    val icon: Icon? get() = null
+    val description: String? get() = null
 
     fun createComponent(project: Project, toolWindow: ToolWindow): JComponent
 

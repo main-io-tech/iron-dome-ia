@@ -26,7 +26,7 @@
       <li><b>💥 Raio de Impacto:</b> para classes Java e Kotlin, quantas classes dependem de cada uma
         (aferentes), de quantas ela depende (eferentes), o risco de alterá-la e os testes que formam o
         seu escudo, com ciclos e alterações não commitadas destacados.</li>
-      <li><b>🛰️ Sentinela:</b> vigia o perímetro dos arquivos não commitados, agrupados por pacote,
+      <li><b>👁️ Sentinela:</b> vigia o perímetro dos arquivos não commitados, agrupados por pacote,
         com o diff de cada um a um clique.</li>
     </ul>
     ]]></description>
@@ -43,7 +43,9 @@
       <li>As revisões passam a ficar em <code>iron-dome/</code>; a pasta antiga <code>mio-review/</code>
         é movida automaticamente ao abrir o projeto.</li>
       <li>Comentários de arquivo ou pacote inteiro, pelo botão direito na árvore do projeto, na aba do
-        editor ou na aba Alterações.</li>
+        editor ou na aba Sentinela.</li>
+      <li>Abas Radar, Sentinela e Raio de Impacto com ícones coloridos, e ações e status com nomes do
+        tema: Marcar Alvo, Disparar, Na mira, Interceptado.</li>
     </ul>
     ]]></change-notes>
 
@@ -87,18 +89,18 @@
     <actions>
         <action id="MioReview.SaveFileReview"
                 class="com.mio.review.comando.SaveFileReviewAction"
-                text="Salvar Este Arquivo"
+                text="Disparar Este Arquivo"
                 description="Salva o arquivo aberto e envia à IA, no .md de revisão, as ordens de interceptação só dele"
                 icon="/icons/saveReview.svg"/>
         <action id="MioReview.SaveReview"
                 class="com.mio.review.comando.SaveReviewAction"
-                text="Salvar Todos"
+                text="Disparar Todos"
                 description="Salva todos os arquivos e envia à IA, no .md de revisão, as ordens de interceptação de todos eles"
-                icon="AllIcons.Actions.MenuSaveall"/>
+                icon="/icons/fireAll.svg"/>
 
         <action id="MioReview.ShowFileDiff"
                 class="com.mio.review.sentinela.ShowFileDiffAction"
-                text="Ver Diff"
+                text="Inspecionar Diff"
                 description="Compara este arquivo com a versão do último commit"
                 icon="AllIcons.Actions.Diff"/>
 
@@ -110,8 +112,9 @@
 
         <action id="MioReview.AddComment"
                 class="com.mio.review.radar.AddReviewCommentAction"
-                text="Iron Dome IA: Adicionar Comentário"
-                description="Marca a seleção ou a linha atual como alvo para a IA corrigir">
+                text="Iron Dome IA: Marcar Alvo"
+                description="Marca a seleção ou a linha atual como alvo para a IA corrigir"
+                icon="/icons/addComment.svg">
             <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt shift M"/>
         </action>
         <action id="MioReview.MarkTarget"
@@ -125,11 +128,13 @@
         </action>
         <action id="MioReview.RemoveComment"
                 class="com.mio.review.radar.RemoveReviewCommentAction"
-                text="Iron Dome IA: Remover Comentário"
-                description="Remove os comentários não resolvidos da seleção ou da linha atual; os já salvos saem no próximo salvamento"/>
+                text="Iron Dome IA: Cancelar Alvo"
+                description="Cancela os alvos não interceptados da seleção ou da linha atual; os já disparados saem no próximo disparo"
+                icon="/icons/removeComment.svg"/>
         <action id="MioReview.RemoveResolved"
                 class="com.mio.review.radar.RemoveResolvedCommentsAction"
-                text="Iron Dome IA: Remover Comentários Resolvidos"
-                description="Tira do editor os alvos já interceptados, sem alterar o .md da revisão"/>
+                text="Iron Dome IA: Limpar Alvos Interceptados"
+                description="Tira do editor os alvos já interceptados, sem alterar o .md da revisão"
+                icon="/icons/radar.svg"/>
     </actions>
 </idea-plugin>
