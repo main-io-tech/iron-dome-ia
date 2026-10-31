@@ -87,7 +87,14 @@
                 description="Salva todos os arquivos e grava no .md de revisão os comentários de todos eles"
                 icon="AllIcons.Actions.MenuSaveall"/>
 
+        <action id="MioReview.ShowFileDiff"
+                class="com.mio.review.actions.ShowFileDiffAction"
+                text="Ver Diff"
+                description="Compara este arquivo com a versão do último commit"
+                icon="AllIcons.Actions.Diff"/>
+
         <group id="MioReview.FloatingToolbar">
+            <reference ref="MioReview.ShowFileDiff"/>
             <reference ref="MioReview.SaveFileReview"/>
             <reference ref="MioReview.SaveReview"/>
         </group>

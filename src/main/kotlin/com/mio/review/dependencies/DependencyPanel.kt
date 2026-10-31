@@ -9,6 +9,7 @@ import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.components.service
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.progress.ProgressIndicator
@@ -86,7 +87,7 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
     }
     private val projectClasses = ProjectClassesPanel(project, ::analyze).also { Disposer.register(this, it) }
 
-    private val diff = ChangeDiff(project)
+    private val diff = project.service<ChangeDiff>()
 
     private var focus: String? = null
     private var graph: DependencyGraph? = null

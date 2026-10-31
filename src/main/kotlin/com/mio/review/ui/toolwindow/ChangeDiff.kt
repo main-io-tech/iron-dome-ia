@@ -8,6 +8,7 @@ import com.intellij.diff.editor.ChainDiffVirtualFile
 import com.intellij.diff.editor.DiffEditorTabFilesManager
 import com.intellij.diff.requests.DiffRequest
 import com.intellij.diff.requests.SimpleDiffRequest
+import com.intellij.openapi.components.Service
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileTypes.FileTypeManager
 import com.intellij.openapi.progress.ProgressIndicator
@@ -16,13 +17,16 @@ import com.intellij.openapi.util.UserDataHolder
 import com.intellij.openapi.vcs.FilePath
 import com.intellij.openapi.vcs.VcsException
 import com.intellij.openapi.vcs.changes.Change
+import com.intellij.openapi.vcs.changes.ChangeListManager
 import com.intellij.openapi.vcs.changes.CurrentContentRevision
 import com.intellij.openapi.vfs.VirtualFile
+import com.intellij.vcsUtil.VcsUtil
 
 /**
  * Diff de alterações não commitadas contra o último commit, numa aba só: as setas do diff passam
- * pelos demais arquivos e abrir outro diff fecha o anterior.
+ * pelos demais arquivos e abrir outro diff, de qualquer painel ou do editor, fecha o anterior.
  */
+@Service(Service.Level.PROJECT)
 class ChangeDiff(private val project: Project) {
 
     class Item(val change: Change, val path: FilePath, val title: String)
@@ -42,6 +46,12 @@ class ChangeDiff(private val project: Project) {
     companion object {
         /** Arquivos fora do git viram uma alteração sem versão anterior. */
         fun unversioned(path: FilePath) = Change(null, CurrentContentRevision.create(path))
+
+        /** Alteração não commitada do arquivo, pela regra da aba Alterações; nula se ele está igual ao commit. */
+        fun changeOf(project: Project, file: VirtualFile): Change? {
+            val manager = ChangeListManager.getInstance(project)
+            return manager.getChange(file) ?: if (manager.isUnversioned(file)) unversioned(VcsUtil.getFilePath(file)) else null
+        }
     }
 
     /** Roda em segundo plano, chamado pelo diff: ler a versão do commit pode acionar o git. */
