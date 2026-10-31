@@ -2,6 +2,7 @@ package com.mio.irondome.radar
 
 import com.intellij.openapi.util.IconLoader
 import com.intellij.ui.JBColor
+import com.mio.irondome.base.Tone
 import java.awt.Color
 import javax.swing.Icon
 
@@ -40,7 +41,9 @@ enum class CommentStatus(
         JBColor(Color(0xFAFAFA), Color(0x2A2A2C)),
         JBColor(Color(0xFFEBE9), Color(0x4A1A1E)),
         JBColor(Color(0xA40E26), Color(0xFF7B72)),
-    ),
+    );
+
+    val tone: Tone get() = Tone(badgeForeground, badgeBackground, accent)
 }
 
 object ReviewColors {
@@ -49,6 +52,7 @@ object ReviewColors {
     val buttonBackground = JBColor(Color(0xF6F8FA), Color(0x2D333B))
     val discussBadgeBackground = JBColor(Color(0xFBEFFF), Color(0x3A2350))
     val discussBadgeForeground = JBColor(Color(0x8250DF), Color(0xD2A8FF))
+    val discussTone = Tone(discussBadgeForeground, discussBadgeBackground, discussBadgeForeground)
 }
 
 object ReviewIcons {

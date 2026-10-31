@@ -19,21 +19,27 @@ import com.intellij.openapi.ui.SimpleToolWindowPanel
 import com.intellij.openapi.vfs.VirtualFileManager
 import com.intellij.openapi.vfs.newvfs.BulkFileListener
 import com.intellij.openapi.vfs.newvfs.events.VFileEvent
-import com.intellij.ui.ColoredTreeCellRenderer
 import com.intellij.ui.PopupHandler
 import com.intellij.ui.ScrollPaneFactory
 import com.intellij.ui.SimpleTextAttributes
 import com.intellij.ui.treeStructure.Tree
 import com.mio.irondome.base.IronDomeIcons
+import com.mio.irondome.base.RichTreeCellRenderer
+import com.mio.irondome.base.Segment
+import com.mio.irondome.base.Stat
+import com.mio.irondome.base.SummaryHeader
+import com.mio.irondome.base.Tone
+import com.mio.irondome.base.plural
 import com.mio.irondome.base.refreshAction
 import com.mio.irondome.comando.ReviewMarkdown
+import java.awt.BorderLayout
 import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import java.nio.file.Files
 import javax.swing.Icon
-import javax.swing.JTree
+import javax.swing.JPanel
 import javax.swing.SwingUtilities
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.DefaultTreeModel
@@ -50,16 +56,21 @@ class CommentsPanel(private val project: Project) : SimpleToolWindowPanel(true, 
     private val tree = Tree(model).apply {
         isRootVisible = false
         showsRootHandles = true
+        rowHeight = 0
         cellRenderer = Renderer()
         emptyText.text = "Céu limpo: nenhum alvo no radar"
         emptyText.appendSecondaryText("Clique no + da margem do editor para marcar um alvo", SimpleTextAttributes.GRAYED_ATTRIBUTES, null)
         emptyText.appendLine("ou clique com o botão direito num arquivo ou pacote", SimpleTextAttributes.GRAYED_ATTRIBUTES, null)
     }
+    private val header = SummaryHeader(IronDomeIcons.radar)
     private val knownKeys = mutableSetOf<String>()
     private var refreshQueued = false
 
     init {
-        setContent(ScrollPaneFactory.createScrollPane(tree, true))
+        setContent(JPanel(BorderLayout()).apply {
+            add(header, BorderLayout.NORTH)
+            add(ScrollPaneFactory.createScrollPane(tree, true), BorderLayout.CENTER)
+        })
         toolbar = createToolbar()
         installNavigation()
 
@@ -102,8 +113,9 @@ class CommentsPanel(private val project: Project) : SimpleToolWindowPanel(true, 
         val root = DefaultMutableTreeNode()
         val active = activeReviewNode()?.also(root::add)
         val activeId = service.activeReviewId
-        service.savedReviews()
-            .filter { (id, _) -> id != activeId }
+        val history = service.savedReviews().filter { (id, _) -> id != activeId }
+        updateHeader(history.size)
+        history
             .forEach { (id, path) ->
                 val comments = runCatching { ReviewMarkdown.parse(Files.readString(path)) }.getOrDefault(emptyList())
                 if (comments.isNotEmpty()) root.add(reviewNode(id, active = false, comments.map(::savedEntry)))
@@ -118,6 +130,41 @@ class CommentsPanel(private val project: Project) : SimpleToolWindowPanel(true, 
             }
             knownKeys += key
         }
+    }
+
+    /** A revisão aberta em números: quantos alvos em cada status e quantos pedem discussão. */
+    private fun updateHeader(historySize: Int) {
+        val history = if (historySize == 0) null else plural(historySize, "revisão no histórico", "revisões no histórico")
+        val comments = service.activeComments()
+        if (comments.isEmpty()) {
+            header.update(
+                "Céu limpo",
+                CommentStatus.RESOLVED.accent,
+                listOfNotNull("Nenhum alvo na mira", history).joinToString(" · "),
+            )
+            return
+        }
+        val statuses = comments.map(service::statusOf)
+        fun count(status: CommentStatus) = statuses.count { it == status }
+        val files = comments.map { it.filePath }.distinct().size
+        val open = statuses.count { it != CommentStatus.RESOLVED }
+        header.update(
+            title = ReviewCommentService.reviewName(service.activeReviewId),
+            subtitle = listOfNotNull(
+                if (open == 0) "todos interceptados" else "em operação",
+                "${plural(comments.size, "alvo", "alvos")} em ${plural(files, "arquivo", "arquivos")}",
+                history,
+            ).joinToString(" · "),
+            stats = listOf(
+                Stat(count(CommentStatus.UNSAVED), if (count(CommentStatus.UNSAVED) == 1) "não disparado" else "não disparados", CommentStatus.UNSAVED.tone),
+                Stat(count(CommentStatus.PENDING), "na mira", CommentStatus.PENDING.tone),
+                Stat(count(CommentStatus.RESOLVED), if (count(CommentStatus.RESOLVED) == 1) "interceptado" else "interceptados", CommentStatus.RESOLVED.tone),
+                Stat(count(CommentStatus.REMOVING), if (count(CommentStatus.REMOVING) == 1) "cancelado" else "cancelados", CommentStatus.REMOVING.tone),
+                Stat(comments.count { it.discuss && !it.resolved }, "para discutir", ReviewColors.discussTone),
+            ),
+            bar = listOf(CommentStatus.RESOLVED, CommentStatus.PENDING, CommentStatus.UNSAVED, CommentStatus.REMOVING)
+                .map { Segment(count(it), it.accent) },
+        )
     }
 
     private fun keyOf(node: Any): String? = ((node as? DefaultMutableTreeNode)?.userObject as? Item)?.key
@@ -270,54 +317,48 @@ class CommentsPanel(private val project: Project) : SimpleToolWindowPanel(true, 
         override val key get() = "$reviewName/$id"
     }
 
-    private class Renderer : ColoredTreeCellRenderer() {
+    private class Renderer : RichTreeCellRenderer() {
 
-        override fun customizeCellRenderer(
-            tree: JTree,
-            value: Any?,
-            selected: Boolean,
-            expanded: Boolean,
-            leaf: Boolean,
-            row: Int,
-            hasFocus: Boolean,
-        ) {
-            toolTipText = null
+        override fun describe(row: Row, value: Any?) {
             when (val item = (value as? DefaultMutableTreeNode)?.userObject) {
                 is ReviewItem -> {
-                    icon = IronDomeIcons.radar
-                    append(item.name, SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
+                    val resolved = item.total - item.pending
+                    row.icon(IronDomeIcons.radar)
+                    row.text(item.name, SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
                     when {
-                        item.pending == 0 ->
-                            append("  céu limpo · todos interceptados", SimpleTextAttributes(SimpleTextAttributes.STYLE_PLAIN, CommentStatus.RESOLVED.accent))
-                        item.active -> {
-                            append("  em operação", SimpleTextAttributes(SimpleTextAttributes.STYLE_BOLD, CommentStatus.UNSAVED.accent))
-                            append("  ${item.pending} de ${item.total} na mira", SimpleTextAttributes.GRAYED_ATTRIBUTES)
-                        }
-                        else -> append("  ${item.pending} de ${item.total} na mira", SimpleTextAttributes.GRAYED_ATTRIBUTES)
+                        item.pending == 0 -> row.pill("Concluída", CommentStatus.RESOLVED.tone, bold = true)
+                        item.active -> row.pill("Em operação", CommentStatus.UNSAVED.tone, bold = true)
+                        else -> row.pill("Histórico", Tone.GRAY)
                     }
+                    row.bar(listOf(Segment(resolved, CommentStatus.RESOLVED.accent), Segment(item.pending, CommentStatus.PENDING.accent)))
+                    row.text("$resolved/${item.total} interceptados", SimpleTextAttributes.GRAYED_ATTRIBUTES)
                 }
                 is FileItem -> {
                     val name = item.filePath.substringAfterLast('/')
-                    icon = if (item.isPackage) AllIcons.Nodes.Package else FileTypeManager.getInstance().getFileTypeByFileName(name).icon
-                    append(if (item.isPackage) "$name/" else name)
+                    row.icon(if (item.isPackage) AllIcons.Nodes.Package else FileTypeManager.getInstance().getFileTypeByFileName(name).icon)
+                    row.text(if (item.isPackage) "$name/" else name)
                     val dir = item.filePath.substringBeforeLast('/', "")
-                    if (dir.isNotEmpty()) append("  $dir", SimpleTextAttributes.GRAYED_ATTRIBUTES)
-                    append("  ${item.count}", SimpleTextAttributes.GRAYED_SMALL_ATTRIBUTES)
+                    if (dir.isNotEmpty()) row.text(dir, SimpleTextAttributes.GRAYED_SMALL_ATTRIBUTES)
+                    row.pill(plural(item.count, "alvo", "alvos"), Tone.GRAY)
+                    row.tooltip(item.filePath)
                 }
                 is CommentItem -> {
-                    val removing = item.status == CommentStatus.REMOVING
-                    append(item.id, SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
-                    append("  ${ReviewMarkdown.describe(item.target, item.startLine, item.endLine)}  ", SimpleTextAttributes.GRAYED_ATTRIBUTES)
-                    append(item.status.label, SimpleTextAttributes(SimpleTextAttributes.STYLE_BOLD, item.status.accent))
-                    if (item.discuss && item.status != CommentStatus.RESOLVED) {
-                        append("  Discutir antes", SimpleTextAttributes(SimpleTextAttributes.STYLE_PLAIN, ReviewColors.discussBadgeForeground))
-                    }
-                    append(
-                        "  ${summaryOf(item.text)}",
-                        if (removing) SimpleTextAttributes(SimpleTextAttributes.STYLE_STRIKEOUT, null)
-                        else SimpleTextAttributes.REGULAR_ATTRIBUTES,
+                    val resolved = item.status == CommentStatus.RESOLVED
+                    row.icon(ReviewIcons.comment)
+                    row.text(item.id, SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
+                    row.text(ReviewMarkdown.describe(item.target, item.startLine, item.endLine), SimpleTextAttributes.GRAYED_ATTRIBUTES)
+                    row.pill(item.status.label, item.status.tone, bold = true)
+                    if (item.discuss && !resolved) row.pill("Discutir antes", ReviewColors.discussTone)
+                    row.detail(
+                        summaryOf(item.text),
+                        when {
+                            item.status == CommentStatus.REMOVING ->
+                                SimpleTextAttributes(SimpleTextAttributes.STYLE_STRIKEOUT, ReviewColors.mutedForeground)
+                            resolved -> SimpleTextAttributes.GRAYED_ATTRIBUTES
+                            else -> SimpleTextAttributes.REGULAR_ATTRIBUTES
+                        },
                     )
-                    toolTipText = item.text
+                    row.tooltip(item.text)
                 }
             }
         }

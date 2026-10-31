@@ -26,23 +26,30 @@ import com.intellij.openapi.vcs.changes.ChangeListListener
 import com.intellij.openapi.vcs.changes.ChangeListManager
 import com.intellij.openapi.vcs.changes.VcsDirtyScopeManager
 import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.ui.ColoredTreeCellRenderer
 import com.intellij.ui.PopupHandler
 import com.intellij.ui.ScrollPaneFactory
 import com.intellij.ui.SimpleTextAttributes
 import com.intellij.ui.treeStructure.Tree
+import com.mio.irondome.base.IronDomeIcons
+import com.mio.irondome.base.RichTreeCellRenderer
+import com.mio.irondome.base.Segment
+import com.mio.irondome.base.Stat
+import com.mio.irondome.base.SummaryHeader
+import com.mio.irondome.base.Tone
+import com.mio.irondome.base.plural
 import com.mio.irondome.base.refreshAction
 import com.mio.irondome.radar.CommentStatus
 import com.mio.irondome.radar.ReviewCommentService
 import com.mio.irondome.radar.ReviewCommentsListener
 import com.mio.irondome.radar.ReviewIcons
 import com.mio.irondome.radar.TargetComments
+import java.awt.BorderLayout
 import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import javax.swing.Icon
-import javax.swing.JTree
+import javax.swing.JPanel
 import javax.swing.SwingUtilities
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.DefaultTreeModel
@@ -61,7 +68,24 @@ class ChangesPanel(private val project: Project) : SimpleToolWindowPanel(true, t
         val relativePath: String,
         val comments: Int,
         val unversioned: Boolean,
-    )
+    ) {
+        val kind: ChangeKind
+            get() = when {
+                unversioned -> ChangeKind.UNVERSIONED
+                change.fileStatus == FileStatus.ADDED -> ChangeKind.ADDED
+                change.fileStatus == FileStatus.DELETED -> ChangeKind.DELETED
+                change.fileStatus == FileStatus.MODIFIED -> ChangeKind.MODIFIED
+                else -> ChangeKind.OTHER
+            }
+    }
+
+    private enum class ChangeKind(val one: String, val many: String, val tone: Tone) {
+        MODIFIED("modificado", "modificados", Tone.BLUE),
+        ADDED("adicionado", "adicionados", Tone.GREEN),
+        DELETED("removido", "removidos", Tone.GRAY),
+        UNVERSIONED("não versionado", "não versionados", Tone.ORANGE),
+        OTHER("outro", "outros", Tone.PURPLE),
+    }
 
     /** [dir] é nula quando a pasta não existe mais, como a de arquivos apagados. */
     private class Group(val location: Location, val dir: VirtualFile?, val files: Int, val comments: Int)
@@ -71,9 +95,11 @@ class ChangesPanel(private val project: Project) : SimpleToolWindowPanel(true, t
     private val tree = Tree(model).apply {
         isRootVisible = false
         showsRootHandles = true
+        rowHeight = 0
         cellRenderer = Renderer()
         emptyText.text = PERIMETER_CLEAR
     }
+    private val header = SummaryHeader(IronDomeIcons.sentinela)
     private val diff = project.service<ChangeDiff>()
     private val knownGroups = mutableSetOf<String>()
     private var refreshQueued = false
@@ -98,7 +124,10 @@ class ChangesPanel(private val project: Project) : SimpleToolWindowPanel(true, t
     ) { selectedTarget()?.let { TargetComments.mark(project, it) } }
 
     init {
-        setContent(ScrollPaneFactory.createScrollPane(tree, true))
+        setContent(JPanel(BorderLayout()).apply {
+            add(header, BorderLayout.NORTH)
+            add(ScrollPaneFactory.createScrollPane(tree, true), BorderLayout.CENTER)
+        })
         val expander = DefaultTreeExpander(tree)
         toolbar = ActionManager.getInstance().createActionToolbar(
             "IronDome.ChangesToolbar",
@@ -139,6 +168,7 @@ class ChangesPanel(private val project: Project) : SimpleToolWindowPanel(true, t
         if (!ProjectLevelVcsManager.getInstance(project).hasActiveVcss()) {
             model.setRoot(DefaultMutableTreeNode())
             tree.emptyText.text = "Projeto sem controle de versão: a sentinela não tem o que vigiar"
+            header.update("Sem controle de versão", Tone.GRAY.accent, "A sentinela não tem o que vigiar")
             return
         }
         tree.emptyText.text = PERIMETER_CLEAR
@@ -162,8 +192,10 @@ class ChangesPanel(private val project: Project) : SimpleToolWindowPanel(true, t
         val selectedPath = selectedEntry()?.path
         val selectedGroup = (selectedNode()?.userObject as? Group)?.location?.key
 
+        val entries = versioned + unversioned
+        updateHeader(entries, entries.sumOf { it.comments })
         val root = DefaultMutableTreeNode()
-        (versioned + unversioned)
+        entries
             .groupBy { locationOf(it.path) }
             .toSortedMap(compareBy<Location>({ it.root == null }, { it.root }, { it.name }))
             .forEach { (location, entries) ->
@@ -187,6 +219,28 @@ class ChangesPanel(private val project: Project) : SimpleToolWindowPanel(true, t
                 else -> false
             }
         }?.let { tree.selectionPath = TreePath(it.path) }
+    }
+
+    /** O perímetro em números: quantos arquivos de cada tipo de alteração e quantos alvos marcados. */
+    private fun updateHeader(entries: List<Entry>, targets: Int) {
+        if (entries.isEmpty()) {
+            header.update("Perímetro limpo", Tone.GREEN.accent, "Nenhuma alteração não commitada")
+            return
+        }
+        val kinds = entries.groupingBy { it.kind }.eachCount()
+        val packages = entries.map { locationOf(it.path).key }.distinct().size
+        header.update(
+            title = plural(entries.size, "arquivo alterado", "arquivos alterados"),
+            subtitle = listOfNotNull(
+                "em ${plural(packages, "pacote", "pacotes")}",
+                plural(targets, "alvo na mira", "alvos na mira").takeIf { targets > 0 },
+            ).joinToString(" · "),
+            stats = ChangeKind.entries.map { kind ->
+                val count = kinds[kind] ?: 0
+                Stat(count, if (count == 1) kind.one else kind.many, kind.tone)
+            },
+            bar = ChangeKind.entries.map { Segment(kinds[it] ?: 0, it.tone.accent) },
+        )
     }
 
     private fun locationOf(path: FilePath): Location = path.parentPath.let { locationOf(project, it?.path, it?.virtualFile) }
@@ -262,41 +316,26 @@ class ChangesPanel(private val project: Project) : SimpleToolWindowPanel(true, t
         OpenFileDescriptor(project, file).navigate(true)
     }
 
-    private class Renderer : ColoredTreeCellRenderer() {
+    private class Renderer : RichTreeCellRenderer() {
 
-        override fun customizeCellRenderer(
-            tree: JTree,
-            value: Any?,
-            selected: Boolean,
-            expanded: Boolean,
-            leaf: Boolean,
-            row: Int,
-            hasFocus: Boolean,
-        ) {
-            toolTipText = null
+        override fun describe(row: Row, value: Any?) {
             when (val item = (value as? DefaultMutableTreeNode)?.userObject) {
                 is Group -> {
-                    icon = if (item.location.root != null) AllIcons.Nodes.Package else AllIcons.Nodes.Folder
-                    append(item.location.name)
-                    append("  ${if (item.files == 1) "1 arquivo" else "${item.files} arquivos"}", SimpleTextAttributes.GRAYED_ATTRIBUTES)
-                    if (item.comments > 0) append("  ${targets(item.comments)}", TARGETS_ATTRIBUTES)
-                    item.location.root?.let { append("  $it", SimpleTextAttributes.GRAYED_SMALL_ATTRIBUTES) }
+                    row.icon(if (item.location.root != null) AllIcons.Nodes.Package else AllIcons.Nodes.Folder)
+                    row.text(item.location.name, SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
+                    item.location.root?.let { row.text(it, SimpleTextAttributes.GRAYED_SMALL_ATTRIBUTES) }
+                    row.pill(plural(item.files, "arquivo", "arquivos"), Tone.GRAY)
+                    if (item.comments > 0) row.pill("◎ ${plural(item.comments, "alvo", "alvos")}", CommentStatus.PENDING.tone, bold = true)
                 }
                 is Entry -> {
                     val status = if (item.unversioned) FileStatus.UNKNOWN else item.change.fileStatus
-                    icon = FileTypeManager.getInstance().getFileTypeByFileName(item.path.name).icon
-                    append(item.path.name, SimpleTextAttributes(SimpleTextAttributes.STYLE_PLAIN, status.color))
-                    append("  ${status.text}", SimpleTextAttributes.GRAYED_SMALL_ATTRIBUTES)
-                    if (item.comments > 0) append("  ${targets(item.comments)}", TARGETS_ATTRIBUTES)
-                    toolTipText = item.relativePath
+                    row.icon(FileTypeManager.getInstance().getFileTypeByFileName(item.path.name).icon)
+                    row.text(item.path.name, SimpleTextAttributes(SimpleTextAttributes.STYLE_PLAIN, status.color))
+                    row.pill(item.kind.one, item.kind.tone)
+                    if (item.comments > 0) row.pill("◎ ${plural(item.comments, "alvo", "alvos")}", CommentStatus.PENDING.tone, bold = true)
+                    row.tooltip(item.relativePath)
                 }
             }
-        }
-
-        private fun targets(count: Int) = if (count == 1) "◎ 1 alvo" else "◎ $count alvos"
-
-        private companion object {
-            val TARGETS_ATTRIBUTES = SimpleTextAttributes(SimpleTextAttributes.STYLE_BOLD, CommentStatus.PENDING.accent)
         }
     }
 

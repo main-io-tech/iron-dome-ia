@@ -8,4 +8,5 @@ object IronDomeIcons {
     val radar: Icon = IconLoader.getIcon("/icons/radar.svg", IronDomeIcons::class.java)
     val sentinela: Icon = IconLoader.getIcon("/icons/sentinela.svg", IronDomeIcons::class.java)
     val impacto: Icon = IconLoader.getIcon("/icons/impacto.svg", IronDomeIcons::class.java)
+    val escudo: Icon = IconLoader.getIcon("/icons/escudo.svg", IronDomeIcons::class.java)
 }

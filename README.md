@@ -47,6 +47,7 @@ alvo como resolvido e você vê o resultado em verde no editor.
 | A IA altera até o que você só queria discutir | Você escolhe, por comentário: **aplicar direto** ou **discutir antes** |
 | Pedidos que se contradizem viram fogo amigo | A IA é instruída a parar e perguntar quando comentários se contradizem |
 | Você mexe numa classe sem saber o que pode quebrar | O raio de impacto mostra quem depende dela, o risco e os testes antes da mudança |
+| Os testes viram uma lista sem ordem, com nomes de método | O Escudo roda os testes JUnit e os agrupa pela chave do `@DisplayName` de cada classe |
 
 ## ⚡ Como funciona
 
@@ -79,6 +80,7 @@ alvo como resolvido e você vê o resultado em verde no editor.
 | 🎯 **Centro de Comando** | Transforma os alvos em ordens de interceptação em Markdown e evita o fogo amigo. |
 | 💥 **Raio de Impacto** | Mede o estrago que uma mudança pode causar antes de você mexer na classe. |
 | 👁️ **Sentinela** | Vigia o perímetro: tudo o que ainda não foi commitado, com o diff a um clique. |
+| 🛡️ **Escudo** | Põe o escudo à prova: executa os testes JUnit e mostra o que passou, agrupado pela chave do `@DisplayName` de cada classe. |
 | 🏰 **Base** | O painel lateral onde os mecanismos se reúnem. |
 
 ### 📡 Radar: comentários inline, como num pull request
@@ -147,9 +149,15 @@ Esse cálculo deveria considerar o peso dos itens?
 
 | Aba | O que você encontra |
 | --- | --- |
-| 📡 **Radar** | Os alvos: a revisão aberta e o histórico, organizados por arquivo e pacote. Um clique leva ao código, e o botão direito edita ou remove. |
-| 👁️ **Sentinela** | O perímetro: os arquivos ainda não commitados, agrupados por pacote em grupos que você expande ou recolhe, quantos alvos cada um tem e botões para **Inspecionar Diff** ou **Abrir Arquivo**. |
+| 📡 **Radar** | Os alvos: a revisão aberta e o histórico, organizados por arquivo e pacote, cada alvo com a etiqueta de status, a de *Discutir antes* e o texto do comentário logo abaixo. Um clique leva ao código, e o botão direito edita ou remove. |
+| 👁️ **Sentinela** | O perímetro: os arquivos ainda não commitados, agrupados por pacote em grupos que você expande ou recolhe, com etiquetas do tipo de alteração e de quantos alvos cada um tem, e botões para **Inspecionar Diff** ou **Abrir Arquivo**. |
 | 💥 **Raio de Impacto** | As dependências da classe escolhida, descritas abaixo. |
+| 🛡️ **Escudo** | Os testes JUnit do projeto, executados com um clique e agrupados pela chave do `@DisplayName` das classes, descritos abaixo. |
+
+Radar, Sentinela e Escudo abrem com um **cabeçalho de resumo**: o estado em destaque (como *Céu
+limpo*, *Perímetro limpo* ou *Escudo íntegro*), indicadores coloridos com a contagem de cada status,
+uma barra com a proporção entre eles e, quando há algo a corrigir, um aviso. Nas árvores, os status
+viram etiquetas arredondadas nas mesmas cores, para você bater o olho e saber o que pede atenção.
 
 ### 💥 Raio de Impacto: saiba o estrago antes de mudar
 
@@ -179,6 +187,37 @@ só elas e **Ver alterações** abre o diff: o jeito mais rápido de revisar o q
 
 Legenda, detalhes e painel inferior podem ser minimizados para o diagrama ganhar espaço.
 
+### 🛡️ Escudo: os testes JUnit à prova
+
+**Executar Todos os Testes** compila o projeto e roda todos os testes JUnit pela própria IDE (a
+execução também aparece na janela Run, com o console completo). O resultado chega ao vivo:
+
+- 🔑 **Agrupados pela chave:** a convenção é começar o `@DisplayName` da classe de teste com uma chave
+  entre colchetes. As classes com a mesma chave ficam juntas, em ordem alfabética, com as classes
+  `@Nested` dentro da classe que as contém e cada teste com o próprio `@DisplayName`. O nome da classe
+  ou do método aparece em cinza ao lado, para você saber onde está.
+
+  ```java
+  @DisplayName("[Frete] Cálculo do frete")
+  class FreteServiceTest { ... }
+  ```
+
+- ⚠️ **Convenção cobrada:** classes sem `@DisplayName` ou sem chave vão para o grupo **Sem chave**, o
+  topo da aba avisa quantas estão fora da convenção e os detalhes sugerem o `@DisplayName` de cada uma.
+- 🎨 **Chaves coloridas:** cada chave vira uma etiqueta com cor própria, sempre a mesma para a mesma
+  chave, e o grupo **Sem chave** fica em amarelo.
+- ✅ **Passou ou não:** cada chave e cada classe mostram uma minibarra com a proporção de testes que
+  passaram, falharam ou foram ignorados, a contagem (como `2/3`) e quanto tempo levaram. O cabeçalho
+  resume se o escudo está **íntegro** ou **rompido**, com os indicadores e a barra da execução inteira.
+- 🔍 **Falhas em destaque:** as classes com falha se abrem sozinhas, o teste que falhou mostra a
+  primeira linha do erro logo abaixo do nome, **Mostrar Só as Falhas** esconde o resto, e o painel de
+  detalhes traz o motivo e a pilha do erro. Duplo clique abre o teste no editor.
+
+> [!NOTE]
+> Os testes rodam pelo runner JUnit da própria IntelliJ, numa configuração com todos os testes do
+> projeto, e não pelo Gradle. Num projeto em que os testes só funcionam via Gradle, o resultado pode
+> ser diferente do `gradlew test`.
+
 ## 📦 Instalação
 
 1. Baixe o `.zip` do plugin (ou gere com `.\gradlew.bat buildPlugin`).
@@ -186,8 +225,12 @@ Legenda, detalhes e painel inferior podem ser minimizados para o diagrama ganhar
 3. Pronto: o painel **Iron Dome IA** aparece na lateral da IDE.
 
 > [!NOTE]
-> Compatível com IntelliJ IDEA 2025.2 em diante. O diagrama de dependências usa o plugin Java, que já
-> vem no IntelliJ IDEA.
+> Compatível com IntelliJ IDEA 2025.2 em diante. O diagrama de dependências usa o plugin Java, e a aba
+> Escudo, o plugin JUnit; os dois já vêm no IntelliJ IDEA.
+
+> [!WARNING]
+> Vindo de uma versão anterior? O ID do plugin mudou para `com.mio.irondome`, então a IDE trata esta
+> versão como outro plugin. Desinstale a versão antiga antes de instalar esta.
 
 ## 🤖 Configure sua IA
 
@@ -244,6 +287,15 @@ Não. Ela mostra quais classes de teste usam a classe diretamente, sem executar 
 a cobertura de linhas, use o **Run with Coverage** do IntelliJ.
 </details>
 
+<details>
+<summary><b>Por que colocar uma chave no <code>@DisplayName</code> da classe de teste?</b></summary>
+
+A chave, entre colchetes no início do `@DisplayName("[Frete] Cálculo do frete")`, diz de que assunto
+a classe trata. O Escudo agrupa as classes pela chave, então os testes do mesmo assunto ficam juntos
+mesmo em pacotes diferentes. Classes sem `@DisplayName` ou sem chave continuam rodando, mas vão para o
+grupo **Sem chave**, com a sugestão de como corrigir.
+</details>
+
 ## 🛠️ Desenvolvimento
 
 Requer JDK 21+.
@@ -265,7 +317,8 @@ O código fica em `src/main/kotlin/com/mio/irondome`, com um pacote por mecanism
 | `comando` | 🎯 Centro de Comando | Geração e leitura do `.md` e as ações de salvar |
 | `impacto` | 💥 Raio de Impacto | Análise de dependências, diagrama e métricas (só com o plugin Java) |
 | `sentinela` | 👁️ Sentinela | Aba Sentinela e o diff dos arquivos não commitados |
-| `base` | 🏰 Base | Tool window, abas extras e a barra flutuante do editor |
+| `escudo` | 🛡️ Escudo | Execução dos testes JUnit e a aba Escudo (só com o plugin JUnit) |
+| `base` | 🏰 Base | Tool window, abas extras, a barra flutuante do editor e os componentes visuais compartilhados (cabeçalho de resumo, etiquetas, barras e linhas das árvores) |
 
 O diagrama usa o [Cytoscape.js](https://js.cytoscape.org/) (licença MIT).
 

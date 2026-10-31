@@ -29,6 +29,9 @@
         seu escudo, com ciclos e alterações não commitadas destacados.</li>
       <li><b>👁️ Sentinela:</b> vigia o perímetro dos arquivos não commitados, agrupados por pacote,
         com o diff de cada um a um clique.</li>
+      <li><b>🛡️ Escudo:</b> executa todos os testes JUnit do projeto e mostra o que passou ou falhou, com
+        as classes agrupadas pela chave do <code>@DisplayName("[Chave] Descrição")</code>, o aviso das classes
+        fora dessa convenção e o motivo e a pilha de cada falha.</li>
     </ul>
     ]]></description>
 
@@ -45,12 +48,17 @@
         editor ou na aba Sentinela.</li>
       <li>Abas Radar, Sentinela e Raio de Impacto com ícones coloridos, e ações e status com nomes do
         tema: Marcar Alvo, Disparar, Na mira, Interceptado.</li>
+      <li>Aba Escudo: executa os testes JUnit e agrupa o resultado pela chave do <code>@DisplayName</code> das
+        classes, avisando as que estão fora da convenção.</li>
+      <li>Radar, Sentinela e Escudo com cabeçalho de resumo, indicadores e barra de proporção por status, e
+        etiquetas coloridas nas árvores.</li>
     </ul>
     ]]></change-notes>
 
     <depends>com.intellij.modules.platform</depends>
     <depends>com.intellij.modules.vcs</depends>
     <depends optional="true" config-file="raio-de-impacto-java.xml">com.intellij.java</depends>
+    <depends optional="true" config-file="escudo-junit.xml">JUnit</depends>
 
     <extensionPoints>
         <extensionPoint name="toolWindowTab"
