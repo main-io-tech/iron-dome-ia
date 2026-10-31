@@ -137,7 +137,7 @@ Esse cálculo deveria considerar o peso dos itens?
 | Aba | O que você encontra |
 | --- | --- |
 | 💬 **Comentários** | A revisão aberta e o histórico, organizados por arquivo. Um clique leva ao código. |
-| 🔄 **Alterações** | Os arquivos ainda não commitados, quantos comentários cada um tem e botões para **Ver Diff** ou **Abrir Arquivo**. |
+| 🔄 **Alterações** | Os arquivos ainda não commitados, agrupados por pacote em grupos que você expande ou recolhe, quantos comentários cada um tem e botões para **Ver Diff** ou **Abrir Arquivo**. |
 | 📊 **Dependências** | O diagrama de dependências da classe escolhida, descrito abaixo. |
 
 ### 📊 Diagrama de dependências: saiba o impacto antes de mudar
