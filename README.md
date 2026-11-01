@@ -149,7 +149,7 @@ Esse cálculo deveria considerar o peso dos itens?
 
 | Aba | O que você encontra |
 | --- | --- |
-| 📡 **Radar** | Os alvos: a revisão aberta e o histórico, organizados por arquivo e pacote, cada alvo com a etiqueta de status, a de *Discutir antes* e o texto do comentário logo abaixo. Um clique leva ao código, e o botão direito edita ou remove. |
+| 📡 **Radar** | Os alvos: a revisão aberta e o histórico, organizados por arquivo e pacote, cada alvo com a etiqueta de status, a de *Discutir antes* e o texto do comentário logo abaixo. Um clique leva ao código, e o botão direito edita ou remove. Para o histórico não crescer sem fim, **Consolidar Histórico** junta as revisões encerradas em `iron-dome/historico-interceptacoes.md` (sem as instruções para a IA) e apaga os `.md` avulsos, e **Limpar Histórico** apaga tudo isso; a revisão aberta nunca entra. |
 | 👁️ **Sentinela** | O perímetro: os arquivos ainda não commitados, agrupados por pacote em grupos que você expande ou recolhe, com etiquetas do tipo de alteração e de quantos alvos cada um tem, e botões para **Inspecionar Diff** ou **Abrir Arquivo**. |
 | 💥 **Raio de Impacto** | As dependências da classe escolhida, descritas abaixo. |
 | 🛡️ **Escudo** | Os testes JUnit do projeto, executados com um clique e agrupados pela chave do `@DisplayName` das classes, descritos abaixo. |

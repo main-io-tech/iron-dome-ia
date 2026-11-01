@@ -1,5 +1,6 @@
 package com.mio.irondome.radar
 
+import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.components.PersistentStateComponent
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.State
@@ -17,7 +18,9 @@ import com.intellij.openapi.util.TextRange
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VfsUtilCore
 import com.intellij.openapi.vfs.VirtualFile
+import com.mio.irondome.comando.ReviewArchive
 import com.mio.irondome.comando.ReviewMarkdown
+import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.LocalDateTime
@@ -130,6 +133,54 @@ class ReviewCommentService(private val project: Project) : PersistentStateCompon
                 name.matchEntire(file.fileName.toString())?.let { it.groupValues[1].toInt() to file }
             }
         }.sortedByDescending { it.first }
+    }
+
+    /** Revisões encerradas em `.md` avulsos: todas as de `iron-dome/` menos a aberta. */
+    fun historyReviews(): List<Pair<Int, Path>> = savedReviews().filter { it.first != state.activeReviewId }
+
+    fun archiveFile(): Path? = reviewRoot()?.resolve(ReviewArchive.FILE_NAME)
+
+    /** Revisões do histórico consolidado, da mais recente para a mais antiga. */
+    fun archivedReviews(): List<ReviewArchive.Entry> =
+        archiveFile()?.takeIf(Files::exists)
+            ?.let { runCatching { ReviewArchive.entries(Files.readString(it)) }.getOrNull() }
+            .orEmpty()
+
+    /**
+     * Junta as revisões encerradas ao histórico consolidado e apaga os `.md` avulsos delas. A revisão
+     * aberta fica de fora. Devolve o histórico, ou nulo se não havia revisão encerrada.
+     */
+    fun consolidateHistory(): Path? {
+        val history = historyReviews()
+        val target = archiveFile() ?: return null
+        if (history.isEmpty()) return null
+        val entries = history.map { (id, path) -> ReviewArchive.entryOf(reviewName(id), Files.readString(path)) }
+        val existing = target.takeIf(Files::exists)?.let(Files::readString)
+        Files.createDirectories(target.parent)
+        Files.writeString(target, ReviewArchive.render(existing, entries, LocalDateTime.now()))
+        LocalFileSystem.getInstance().refreshNioFiles(listOf(target), false, false, null)
+        delete(history.map { it.second })
+        notifyChanged()
+        return target
+    }
+
+    /** Apaga os `.md` das revisões encerradas e o histórico consolidado; a revisão aberta continua. Devolve quantos arquivos saíram. */
+    fun clearHistory(): Int {
+        val files = historyReviews().map { it.second } + listOfNotNull(archiveFile()?.takeIf(Files::exists))
+        delete(files)
+        notifyChanged()
+        return files.size
+    }
+
+    /** Pela VFS, para a exclusão ficar no Local History da IDE. */
+    private fun delete(paths: List<Path>) {
+        if (paths.isEmpty()) return
+        val fileSystem = LocalFileSystem.getInstance()
+        val (inVfs, outside) = paths.map { it to fileSystem.refreshAndFindFileByNioFile(it) }.partition { it.second != null }
+        WriteCommandAction.writeCommandAction(project).withName("Limpar histórico do Radar").run<IOException> {
+            inVfs.forEach { (_, file) -> file!!.delete(this) }
+        }
+        outside.forEach { (path, _) -> Files.deleteIfExists(path) }
     }
 
     fun findFile(path: String): VirtualFile? = project.guessProjectDir()?.findFileByRelativePath(path)
@@ -378,7 +429,8 @@ class ReviewCommentService(private val project: Project) : PersistentStateCompon
         if (state.activeReviewId == 0) {
             var id = state.nextReviewId
             val root = reviewRoot()
-            while (root != null && Files.exists(root.resolve(reviewFileName(id)))) id++
+            val archived = archivedReviews().mapNotNull { reviewIdOf(it.name) }.toSet()
+            while (root != null && (Files.exists(root.resolve(reviewFileName(id))) || id in archived)) id++
             state.activeReviewId = id
             state.nextReviewId = id + 1
             state.activeReviewCreatedAt = LocalDateTime.now().toString()
@@ -541,5 +593,7 @@ class ReviewCommentService(private val project: Project) : PersistentStateCompon
         fun reviewName(reviewId: Int): String = "$REVIEW_PREFIX$reviewId"
 
         fun reviewFileName(reviewId: Int): String = "${reviewName(reviewId)}.md"
+
+        fun reviewIdOf(name: String): Int? = name.takeIf { it.startsWith(REVIEW_PREFIX) }?.removePrefix(REVIEW_PREFIX)?.toIntOrNull()
     }
 }

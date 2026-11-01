@@ -121,6 +121,87 @@ class ReviewCommentServiceTest : HeavyPlatformTestCase() {
         assertEquals(listOf("C1", "C2", "C3"), ids)
     }
 
+    fun testConsolidateHistoryMergesClosedReviewsAndKeepsTheOpenOne() {
+        comment(first, "primeira revisão")
+        service.addTargetComment(first, "discutir o nome", discuss = true)
+        service.exportAll()
+        val firstReview = reviewFile()
+        resolveAll(firstReview)
+        comment(second, "revisão aberta")
+        service.exportAll()
+        val openReview = reviewFile()
+
+        val archive = service.consolidateHistory()!!
+
+        assertFalse(Files.exists(firstReview))
+        assertTrue(Files.exists(openReview))
+        val markdown = Files.readString(archive)
+        assertTrue(markdown.contains("# Revisão: ${ReviewCommentService.reviewName(1)}"))
+        assertFalse("o histórico não leva as instruções para a IA", markdown.contains("Instruções para a IA"))
+        assertFalse(markdown.contains("IA: discuta antes de alterar"))
+        assertTrue("a contagem vem do [x] marcado pela IA", markdown.contains("Pendentes: 0 de 2."))
+        val entries = service.archivedReviews()
+        assertEquals(listOf(ReviewCommentService.reviewName(1)), entries.map { it.name })
+        assertEquals(
+            setOf("primeira revisão" to true, "discutir o nome" to true),
+            entries.single().comments.map { it.text to it.resolved }.toSet(),
+        )
+        assertTrue(service.historyReviews().isEmpty())
+    }
+
+    fun testConsolidatingAgainKeepsWhatWasAlreadyConsolidated() {
+        comment(first, "um")
+        service.exportAll()
+        resolveAll(reviewFile())
+        service.consolidateHistory()
+        comment(second, "dois")
+        service.exportAll()
+        resolveAll(reviewFile())
+
+        service.consolidateHistory()
+
+        assertEquals(listOf(ReviewCommentService.reviewName(2), ReviewCommentService.reviewName(1)), service.archivedReviews().map { it.name })
+        assertTrue(service.savedReviews().isEmpty())
+    }
+
+    fun testNewReviewSkipsIdsAlreadyConsolidated() {
+        comment(first, "um")
+        service.exportAll()
+        resolveAll(reviewFile())
+        service.consolidateHistory()
+        service.loadState(ReviewState())
+
+        comment(second, "depois de clonar o projeto")
+
+        assertEquals(2, service.activeReviewId)
+    }
+
+    fun testClearHistoryKeepsTheOpenReview() {
+        comment(first, "um")
+        service.exportAll()
+        resolveAll(reviewFile())
+        service.consolidateHistory()
+        comment(second, "dois")
+        service.exportAll()
+        resolveAll(reviewFile())
+        comment(first, "aberta")
+        service.exportAll()
+        val open = reviewFile()
+
+        assertEquals(2, service.clearHistory())
+
+        assertTrue(service.archivedReviews().isEmpty())
+        assertFalse(Files.exists(service.archiveFile()!!))
+        assertEquals(listOf(open), service.savedReviews().map { it.second })
+    }
+
+    /** A IA marcou todos com `[x]`: a revisão se encerra. */
+    private fun resolveAll(file: Path) {
+        Files.writeString(file, Files.readString(file).replace("### [ ]", "### [x]"))
+        service.importStatus(listOf(file.toString()))
+        assertEquals(0, service.activeReviewId)
+    }
+
     private fun comment(file: VirtualFile, text: String): ReviewComment {
         val document = FileDocumentManager.getInstance().getDocument(file)!!
         return service.addComment(file, document, 0..0, text, discuss = false)!!

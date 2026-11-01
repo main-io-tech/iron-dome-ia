@@ -84,6 +84,11 @@ object ReviewMarkdown {
     private const val MODE_LABEL = "**Modo:**"
     private val displayTimestamp = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm:ss")
 
+    /** O aviso para a IA que [render] põe nos comentários de discutir antes de alterar ainda pendentes. */
+    fun isDiscussNotice(line: String) = line == "> $DISCUSS_NOTICE"
+
+    fun pendingLine(pending: Int, total: Int) = "Pendentes: $pending de $total."
+
     fun resolvedIds(markdown: String): Set<String> =
         resolvedHeading.findAll(markdown).map { it.groupValues[1] }.toSet()
 
@@ -159,7 +164,7 @@ object ReviewMarkdown {
         appendLine()
         INSTRUCTIONS.lines().forEach { appendLine(if (it.isEmpty()) ">" else "> $it") }
         appendLine()
-        appendLine("Pendentes: ${comments.count { !it.resolved }} de ${comments.size}.")
+        appendLine(pendingLine(comments.count { !it.resolved }, comments.size))
 
         for ((section, fileComments) in comments.groupBy { it.filePath to (it.target == CommentTarget.PACKAGE) }) {
             val (path, isPackage) = section
