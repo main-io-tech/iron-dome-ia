@@ -17,11 +17,15 @@
 </p>
 
 <p align="center">
-  <a href="#-como-funciona">Como funciona</a> &nbsp;·&nbsp;
-  <a href="#-mecanismos-de-defesa">Mecanismos de defesa</a> &nbsp;·&nbsp;
-  <a href="#-instalação">Instalação</a> &nbsp;·&nbsp;
-  <a href="#-configure-sua-ia">Configure sua IA</a> &nbsp;·&nbsp;
-  <a href="#-perguntas-frequentes">FAQ</a>
+  <a href="#como-funciona">Como funciona</a> &nbsp;·&nbsp;
+  <a href="#radar">Radar</a> &nbsp;·&nbsp;
+  <a href="#centro-de-comando">Centro de Comando</a> &nbsp;·&nbsp;
+  <a href="#raio-de-impacto">Raio de Impacto</a> &nbsp;·&nbsp;
+  <a href="#sentinela">Sentinela</a> &nbsp;·&nbsp;
+  <a href="#escudo">Escudo</a> &nbsp;·&nbsp;
+  <a href="#instalacao">Instalação</a> &nbsp;·&nbsp;
+  <a href="#configure-sua-ia">Configure sua IA</a> &nbsp;·&nbsp;
+  <a href="#faq">FAQ</a>
 </p>
 
 <p align="center">
@@ -46,8 +50,11 @@ alvo como resolvido e você vê o resultado em verde no editor.
 | Você pede cinco ajustes e só três são feitos | Um checklist em Markdown: a IA marca `[x]` em cada item resolvido |
 | A IA altera até o que você só queria discutir | Você escolhe, por comentário: **aplicar direto** ou **discutir antes** |
 | Pedidos que se contradizem viram fogo amigo | A IA é instruída a parar e perguntar quando comentários se contradizem |
-| Você mexe numa classe sem saber o que pode quebrar | O raio de impacto mostra quem depende dela, o risco e os testes antes da mudança |
-| Os testes viram uma lista sem ordem, com nomes de método | O Escudo roda os testes JUnit e os agrupa pela chave do `@DisplayName` de cada classe |
+| As revisões antigas se acumulam na pasta do projeto | Um clique consolida o histórico num único arquivo, ou limpa tudo |
+| Você mexe numa classe sem saber o que pode quebrar | O radar de dependências mostra quem depende dela, o risco e os testes antes da mudança |
+| Os testes viram uma lista sem ordem, com nomes de método | O Escudo agrupa os testes pela chave do `@DisplayName` e destaca cada parte do nome |
+
+<a id="como-funciona"></a>
 
 ## ⚡ Como funciona
 
@@ -74,30 +81,129 @@ alvo como resolvido e você vê o resultado em verde no editor.
 
 ## 🧩 Mecanismos de defesa
 
-| Mecanismo | Missão |
-| --- | --- |
-| 📡 **Radar** | Detecta e marca os alvos: comentários inline que acompanham o código. |
-| 🎯 **Centro de Comando** | Transforma os alvos em ordens de interceptação em Markdown e evita o fogo amigo. |
-| 💥 **Raio de Impacto** | Mede o estrago que uma mudança pode causar antes de você mexer na classe. |
-| 👁️ **Sentinela** | Vigia o perímetro: tudo o que ainda não foi commitado, com o diff a um clique. |
-| 🛡️ **Escudo** | Põe o escudo à prova: executa os testes JUnit e mostra o que passou, agrupado pela chave do `@DisplayName` de cada classe. |
-| 🏰 **Base** | O painel lateral onde os mecanismos se reúnem. |
+Cada mecanismo é independente e tem uma aba própria no painel lateral **Iron Dome IA**.
 
-### 📡 Radar: comentários inline, como num pull request
+| Mecanismo | Missão | Onde fica |
+| --- | --- | --- |
+| 📡 [**Radar**](#radar) | Marca os alvos: comentários inline que acompanham o código, e guarda o histórico de revisões. | Editor e aba Radar |
+| 🎯 [**Centro de Comando**](#centro-de-comando) | Transforma os alvos em ordens de interceptação em Markdown e evita o fogo amigo. | Barra do editor e `iron-dome/` |
+| 💥 [**Raio de Impacto**](#raio-de-impacto) | Mede o estrago que uma mudança pode causar antes de você mexer na classe. | Aba Raio de Impacto |
+| 👁️ [**Sentinela**](#sentinela) | Vigia o perímetro: tudo o que ainda não foi commitado, com o diff a um clique. | Aba Sentinela |
+| 🛡️ [**Escudo**](#escudo) | Executa os testes JUnit e mostra o resultado agrupado e com os nomes formatados. | Aba Escudo |
+| 🏰 [**Base**](#base) | O painel lateral e os componentes visuais que os mecanismos compartilham. | Lateral da IDE |
+
+---
+
+<a id="radar"></a>
+
+## 📡 Radar
+
+O Radar cuida dos alvos de ponta a ponta: no editor, onde você comenta o código, e na aba Radar,
+onde acompanha a revisão aberta e o histórico.
+
+### No editor: comentários inline, como num pull request
 
 - 📌 **Acompanham o código:** os comentários se movem quando linhas são inseridas ou removidas.
-- 🎯 **Arquivo ou pacote inteiro:** para pedidos que não cabem numa linha, como *"separe este pacote em dois"*, clique com o botão direito num pacote ou arquivo (na árvore do projeto, na aba do editor ou na aba Sentinela) e use **Marcar como Alvo**. O alvo de arquivo aparece no topo do editor, e a árvore do projeto mostra quantos alvos cada pacote e arquivo tem.
-- ✏️ **Ciclo completo:** edite, cancele com desfazer e acompanhe o status: **não disparado**, **na mira** ou **interceptado**.
+- 🎯 **Arquivo ou pacote inteiro:** para pedidos que não cabem numa linha, como *"separe este pacote
+  em dois"*, clique com o botão direito num pacote ou arquivo (na árvore do projeto, na aba do editor
+  ou na aba Sentinela) e use **Marcar como Alvo**. O alvo de arquivo aparece no topo do editor, e a
+  árvore do projeto mostra quantos alvos cada pacote e arquivo tem.
+- 🚦 **Dois modos por comentário:** *Aplicar direto* para o que é óbvio; *Discutir antes de alterar*
+  para a IA explicar por que o código está assim, o impacto de manter, alterar ou remover e até 5
+  opções com prévia da alteração, e argumentar com você até a decisão final.
+- ✏️ **Ciclo completo:** edite, cancele com desfazer e acompanhe o status de cada alvo.
 - 💾 **Nada se perde:** rascunhos ficam guardados mesmo se você fechar a IDE antes de salvar.
-- 🚦 **Dois modos por comentário:** *Aplicar direto* para o que é óbvio; *Discutir antes de alterar* para a IA explicar por que o código está assim, o impacto de manter, alterar ou remover e até 5 opções com prévia da alteração, e argumentar com você até a decisão final.
 
-### 🎯 Centro de Comando: ordens que qualquer IA entende
+### Na aba Radar: a revisão aberta e o histórico
+
+<p align="center">
+  <img src="docs/images/radar.png" width="820" alt="Aba Radar com a revisão aberta, uma revisão no histórico e o histórico consolidado">
+</p>
+
+A árvore mostra **revisão > arquivo ou pacote > comentário**. Um clique leva ao código, o duplo clique
+foca o editor e o botão direito edita, cancela ou desfaz o cancelamento. O cabeçalho resume a revisão
+aberta com um indicador por status e a barra de proporção entre eles.
+
+| Etiqueta | Significado |
+| --- | --- |
+| 🔵 **Não disparado** | Comentário novo ou editado que ainda não foi para o `.md`. |
+| 🟡 **Na mira** | Está no `.md`, esperando a IA. |
+| 🟢 **Interceptado** | A IA marcou `[x]`: resolvido. |
+| 🔴 **Cancelado no próximo disparo** | Você removeu; sai do `.md` no próximo salvamento. |
+| 🟣 **Discutir antes** | A IA precisa discutir com você antes de alterar. |
+
+### 🗄️ Histórico: consolidar e limpar
+
+Cada revisão encerrada continua em `iron-dome/` como um `ordem-interceptacao-<id>.md`, e com o tempo a
+lista cresce. Dois botões na barra da aba Radar resolvem isso:
+
+| Botão | O que faz |
+| --- | --- |
+| 🔀 **Consolidar Histórico** | Junta todas as revisões encerradas em **`iron-dome/historico-interceptacoes.md`** e apaga os `.md` avulsos. Nada se perde: cada revisão vira uma seção, com os trechos de código e os comentários. Consolidar de novo acrescenta as novas revisões ao mesmo arquivo. |
+| 🧹 **Limpar Histórico** | Apaga os `.md` das revisões encerradas e o histórico consolidado. Antes, mostra quantos comentários vão sair e avisa se algum ainda está pendente; a mesma janela oferece **Consolidar em Vez Disso**. |
+
+- 🛡️ **A revisão aberta nunca entra:** só as encerradas são consolidadas ou apagadas.
+- ♻️ **Recuperável:** a exclusão passa pela IDE, então os arquivos podem ser recuperados pelo **Local History**.
+- 📚 **Aparece na árvore:** o nó **Histórico consolidado** mostra quantas revisões e comentários ele
+  guarda e expande para cada revisão; duplo clique abre o arquivo.
+- 🔢 **Sem números repetidos:** uma revisão nova não reaproveita um número que já está no consolidado,
+  nem depois de clonar o projeto.
+
+<details>
+<summary><b>👀 Ver um exemplo do histórico consolidado</b></summary>
+
+O histórico guarda o conteúdo das revisões sem as instruções para a IA, com um aviso de que não é uma
+ordem de interceptação e a contagem de pendentes refeita a partir dos `[x]`.
+
+````markdown
+# Histórico de interceptações
+
+> **Arquivo de histórico, não é uma ordem de interceptação.** Reúne as revisões encerradas que o Radar
+> consolidou. IA: não aplique, não discuta e não marque os comentários daqui.
+
+Consolidado em 01/11/2026 15:34:51. 2 revisões, 3 comentários.
+
+| Revisão | Criada em | Comentários | Interceptados | Pendentes |
+| --- | --- | ---: | ---: | ---: |
+| ordem-interceptacao-2 | 01/11/2026 15:34:51 | 1 | 1 | 0 |
+| ordem-interceptacao-1 | 01/11/2026 15:34:50 | 2 | 2 | 0 |
+
+---
+
+# Revisão: ordem-interceptacao-2
+
+Criada em 01/11/2026 15:34:51. Atualizada em 01/11/2026 15:34:51.
+
+Pendentes: 0 de 1.
+
+## `src/Frete.kt`
+
+### [x] C1 — arquivo inteiro
+...
+````
+
+</details>
+
+---
+
+<a id="centro-de-comando"></a>
+
+## 🎯 Centro de Comando
 
 Ao salvar, cada comentário vira uma ordem de interceptação clara, com o modo e o código citado. O
 arquivo traz no topo as regras de engajamento para a IA, então funciona com qualquer assistente, sem
 configuração extra.
 
-- 🤝 **Sem fogo amigo:** a IA é orientada a perguntar antes de aplicar comentários que se contradizem ou se cruzam.
+| Ação | Atalho | O que faz |
+| --- | --- | --- |
+| **Disparar Este Arquivo** | botão na barra do editor | Grava no `.md` só os comentários do arquivo aberto. |
+| **Disparar Todos** | <kbd>Ctrl</kbd>+<kbd>S</kbd> | Salva tudo e grava os comentários de todos os arquivos. |
+
+- 🤝 **Sem fogo amigo:** a IA é orientada a analisar os comentários em conjunto e a perguntar antes de
+  aplicar comentários que se contradizem ou se cruzam.
+- 🔁 **Volta automática:** quando a IA marca `[x]`, o plugin percebe a mudança no `.md` e mostra o
+  comentário como resolvido no editor. Quando todos ficam resolvidos, a revisão se encerra e o próximo
+  comentário abre uma nova.
 
 <details>
 <summary><b>👀 Ver um exemplo do <code>.md</code> gerado</b></summary>
@@ -145,70 +251,150 @@ Esse cálculo deveria considerar o peso dos itens?
 
 </details>
 
-### 🏰 Base: o painel Iron Dome IA
+---
 
-| Aba | O que você encontra |
+<a id="raio-de-impacto"></a>
+
+## 💥 Raio de Impacto
+
+Saiba o estrago antes de mudar. Escolha uma classe Java ou Kotlin pelo menu de contexto
+(**Iron Dome IA: Calcular Raio de Impacto**), com **Mirar Classe Atual** ou na lista **Todas as
+classes**, sem precisar abrir o arquivo.
+
+### O radar de dependências
+
+<p align="center">
+  <img src="docs/images/impacto-radar.png" width="900" alt="Radar de dependências com a classe analisada no centro, anéis por distância e o painel de detalhes">
+</p>
+
+A classe analisada fica no centro do radar, e cada **anel** está um passo de dependência mais longe
+dela; a etiqueta do anel diz quantas classes ele tem.
+
+| Elemento | O que mostra |
 | --- | --- |
-| 📡 **Radar** | Os alvos: a revisão aberta e o histórico, organizados por arquivo e pacote, cada alvo com a etiqueta de status, a de *Discutir antes* e o texto do comentário logo abaixo. Um clique leva ao código, e o botão direito edita ou remove. Para o histórico não crescer sem fim, **Consolidar Histórico** junta as revisões encerradas em `iron-dome/historico-interceptacoes.md` (sem as instruções para a IA) e apaga os `.md` avulsos, e **Limpar Histórico** apaga tudo isso; a revisão aberta nunca entra. |
-| 👁️ **Sentinela** | O perímetro: os arquivos ainda não commitados, agrupados por pacote em grupos que você expande ou recolhe, com etiquetas do tipo de alteração e de quantos alvos cada um tem, e botões para **Inspecionar Diff** ou **Abrir Arquivo**. |
-| 💥 **Raio de Impacto** | As dependências da classe escolhida, descritas abaixo. |
-| 🛡️ **Escudo** | Os testes JUnit do projeto, executados com um clique e agrupados pela chave do `@DisplayName` das classes, descritos abaixo. |
+| 🟢 🟡 🔴 **Cor da classe** | O risco ao alterar: baixo, médio ou alto. As de risco alto ganham um brilho vermelho. |
+| 🅒 🅐 🅘 🅔 **@** **Ícone à esquerda** | O tipo: classe, abstrata, interface, enum ou anotação. |
+| 🛡️ **Escudo à direita** | Os testes: bem coberta (✓), parcial (meio escudo), sem testes (✕) ou classe de teste (frasco). |
+| ⚠️ **Etiqueta vermelha em cima** | Risco médio ou alto **e** nenhum teste: a classe que pede mais cuidado. |
+| 🔵 **Etiqueta azul embaixo** | Alterações ainda não commitadas. |
+| ➡️ **Setas** | Saem de quem usa para quem é usado; tracejadas para herança, vermelhas e curvas nos ciclos. |
 
-Radar, Sentinela e Escudo abrem com um **cabeçalho de resumo**: o estado em destaque (como *Céu
-limpo*, *Perímetro limpo* ou *Escudo íntegro*), indicadores coloridos com a contagem de cada status,
-uma barra com a proporção entre eles e, quando há algo a corrigir, um aviso. Nas árvores, os status
-viram etiquetas arredondadas nas mesmas cores, para você bater o olho e saber o que pede atenção.
-
-### 💥 Raio de Impacto: saiba o estrago antes de mudar
-
-Escolha uma classe Java ou Kotlin pelo menu de contexto (**Iron Dome IA: Calcular Raio de Impacto**)
-ou na lista **Todas as classes**, sem precisar abrir o arquivo.
-
-![Diagrama de dependências com os detalhes da classe analisada](docs/images/diagrama.png)
+O painel à direita detalha a classe selecionada: um **medidor de risco** com o número de dependentes,
+aferentes e eferentes, o **escudo de testes** com as classes de teste que a usam, as alterações e uma
+recomendação de **o que fazer** antes de mexer nela.
 
 | Métrica | O que responde |
 | --- | --- |
 | ⬇️ **Aferentes** | Quantas classes dependem dela: o que pode quebrar se você mudá-la. |
 | ⬆️ **Eferentes** | De quantas classes ela depende: um número alto indica uma classe que faz coisas demais. |
-| 🟢 🟡 🔴 **Risco ao alterar** | Baixo, médio ou alto, conforme quantas classes podem ser atingidas. |
-| 🧪 **Testes** | O escudo da classe: quais testes a usam e se ela está bem coberta. |
+| 🎚️ **Risco ao alterar** | Baixo, médio ou alto, conforme quantas classes podem ser atingidas; estar num ciclo sobe um nível. |
+| 🧪 **Testes** | Quais testes a usam e se ela está bem coberta. |
 | 🔁 **Ciclos** | Dependências circulares destacadas em vermelho. |
-| 🎯 **O que fazer** | Uma recomendação objetiva antes de mexer na classe. |
 
-⚠️ marca as classes com risco médio ou alto **e** sem testes: são as que pedem mais
-cuidado. E se você está começando, o **Manual de campo** explica cada número em linguagem simples.
+### Explorando o diagrama
 
-### 👁️ Sentinela: alterações não commitadas em destaque
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/impacto-hover.png" alt="Hover numa classe acende as ligações dela e mostra um resumo"></td>
+    <td width="50%"><img src="docs/images/impacto-pacotes.png" alt="Bolhas por pacote e minimapa, no tema claro"></td>
+  </tr>
+  <tr>
+    <td><b>🖱️ Passe o mouse</b> numa classe: ela e os vizinhos acendem, o resto apaga e um cartão resume risco, dependentes e testes. Clique para os detalhes; dois cliques abrem o código.</td>
+    <td><b>🫧 Pacotes</b> envolve as classes do mesmo pacote numa bolha colorida, e o botão de <b>mapa</b>, no canto, mostra um minimapa para navegar em diagramas grandes.</td>
+  </tr>
+</table>
 
-Classes com alterações ainda não commitadas ganham um contorno azul. **Destacar alteradas** mostra
-só elas e **Ver alterações** abre o diff: o jeito mais rápido de revisar o que vai para o próximo commit.
+- 🔎 **Busca:** <kbd>/</kbd> foca a busca, <kbd>Enter</kbd> leva à primeira classe encontrada.
+- 🎚️ **Filtro por risco:** clique numa cor da barra de distribuição para destacar só as classes com aquele risco.
+- 🧭 **Navegação:** aproximar, afastar, enquadrar, centralizar na classe analisada e reorganizar os anéis.
+- 📖 **Manual de campo:** explica cada número, cor e ícone em linguagem simples.
 
-![Classes alteradas e não commitadas em destaque](docs/images/alteradas.png)
+### Alterações não commitadas em destaque
+
+<p align="center">
+  <img src="docs/images/impacto-alteradas.png" width="900" alt="Destacar alteradas apaga as demais classes e deixa só as que têm alterações não commitadas">
+</p>
+
+**Destacar alteradas** apaga as demais classes e deixa só as que ainda não foram commitadas, e
+**Ver alterações** abre o diff: o jeito mais rápido de cruzar o que vai para o próximo commit com o
+risco de cada classe.
 
 Legenda, detalhes e painel inferior podem ser minimizados para o diagrama ganhar espaço.
 
-### 🛡️ Escudo: os testes JUnit à prova
+---
+
+<a id="sentinela"></a>
+
+## 👁️ Sentinela
+
+A aba Sentinela vigia o perímetro: os arquivos ainda não commitados, agrupados por pacote em grupos que
+você expande ou recolhe.
+
+- 🏷️ **Etiquetas por arquivo:** o tipo de alteração (modificado, novo, movido, fora do git) e quantos
+  alvos do Radar cada arquivo tem.
+- 🔍 **Inspecionar Diff** abre o diff do arquivo, e **Abrir Arquivo** leva ao editor.
+- 🎯 **Marcar como Alvo** direto da lista, para comentar um arquivo ou pacote inteiro.
+- 🔄 **Sempre em dia:** a lista acompanha commits, edições e reverts sem precisar atualizar.
+
+---
+
+<a id="escudo"></a>
+
+## 🛡️ Escudo
 
 **Executar Todos os Testes** compila o projeto e roda todos os testes JUnit pela própria IDE (a
-execução também aparece na janela Run, com o console completo). O resultado chega ao vivo:
+execução também aparece na janela Run, com o console completo). O resultado chega ao vivo.
 
-- 🔑 **Agrupados pela chave:** a convenção é começar o `@DisplayName` da classe de teste com uma chave
-  entre colchetes. As classes com a mesma chave ficam juntas, em ordem alfabética, com as classes
-  `@Nested` dentro da classe que as contém e cada teste com o próprio `@DisplayName`. O nome da classe
-  ou do método aparece em cinza ao lado, para você saber onde está.
+<p align="center">
+  <img src="docs/images/escudo.png" width="820" alt="Aba Escudo com os testes agrupados por chave e os nomes formatados">
+</p>
 
-  ```java
-  @DisplayName("[Frete] Cálculo do frete")
-  class FreteServiceTest { ... }
-  ```
+### Agrupados pela chave do `@DisplayName`
 
+A convenção é começar o `@DisplayName` da classe de teste com uma chave entre colchetes. As classes com
+a mesma chave ficam juntas, em ordem alfabética, com as classes `@Nested` dentro da classe que as
+contém e cada teste com o próprio `@DisplayName`. O nome da classe ou do método aparece em cinza ao
+lado, para você saber onde está.
+
+```java
+@DisplayName("[Frete] Cálculo do frete")
+class FreteServiceTest { ... }
+```
+
+- 🎨 **Chaves coloridas:** cada chave vira uma etiqueta com cor própria, sempre a mesma para a mesma chave.
 - ⚠️ **Convenção cobrada:** classes sem `@DisplayName` ou sem chave vão para o grupo **Sem chave**, o
   topo da aba avisa quantas estão fora da convenção e os detalhes sugerem o `@DisplayName` de cada uma.
-- 🎨 **Chaves coloridas:** cada chave vira uma etiqueta com cor própria, sempre a mesma para a mesma
-  chave, e o grupo **Sem chave** fica em amarelo.
+
+### Nomes dos testes formatados
+
+O texto do `@DisplayName` de cada teste ganha destaque para você ler o cenário de relance:
+
+| Escrito no `@DisplayName` | Como aparece |
+| --- | --- |
+| `Dado que…`, `quando…`, `então…` (ou `given`, `when`, `then`) | Etiquetas **DADO**, **QUANDO** e **ENTÃO** separando as etapas do cenário |
+| `deve…`, `should…` / `não deve…`, `should not…` | Verbo da expectativa em negrito; o negativo em laranja |
+| `` `código` `` e `"strings"` | Fundo lilás, como trecho de código |
+| `IllegalStateException`, `…Error` | Fundo vermelho |
+| Números e valores: `200`, `R$ 200`, `15%` | Azul em negrito |
+| `soma 2 e 3 -> 5` (`->`, `=>`, `→`) | Seta destacada e o resultado esperado em verde |
+| `[1] cep=01001-000, valor=10.0` (testes parametrizados) | Etiqueta **#1** e cada parâmetro com o valor destacado |
+
+> [!TIP]
+> "Dado" sozinho também quer dizer informação ("valida os dados do cliente"), então ele só vira etapa
+> no início do nome ou na forma "dado que". "Quando" e "então" valem em qualquer posição.
+
+<p align="center">
+  <img src="docs/images/escudo-detalhes.png" width="820" alt="Detalhes de um teste com a seção Cenário e de uma execução parametrizada com os parâmetros">
+</p>
+
+O painel de detalhes repete a formatação no título e, quando o nome tem essa estrutura, mostra o
+**Cenário** em etapas (Dado, Quando, Então) e os **Parâmetros desta execução**, com nome e valor.
+
+### Resultado e falhas
+
 - ✅ **Passou ou não:** cada chave e cada classe mostram uma minibarra com a proporção de testes que
   passaram, falharam ou foram ignorados, a contagem (como `2/3`) e quanto tempo levaram. O cabeçalho
-  resume se o escudo está **íntegro** ou **rompido**, com os indicadores e a barra da execução inteira.
+  resume se o escudo está **íntegro** ou **rompido**.
 - 🔍 **Falhas em destaque:** as classes com falha se abrem sozinhas, o teste que falhou mostra a
   primeira linha do erro logo abaixo do nome, **Mostrar Só as Falhas** esconde o resto, e o painel de
   detalhes traz o motivo e a pilha do erro. Duplo clique abre o teste no editor.
@@ -218,6 +404,27 @@ execução também aparece na janela Run, com o console completo). O resultado c
 > projeto, e não pelo Gradle. Num projeto em que os testes só funcionam via Gradle, o resultado pode
 > ser diferente do `gradlew test`.
 
+---
+
+<a id="base"></a>
+
+## 🏰 Base
+
+O painel lateral **Iron Dome IA** reúne as abas Radar, Sentinela, Raio de Impacto e Escudo. Elas
+compartilham os mesmos componentes visuais, para tudo ter a mesma cara:
+
+- 📊 **Cabeçalho de resumo:** o estado em destaque (como *Céu limpo*, *Perímetro limpo* ou *Escudo
+  íntegro*), indicadores coloridos com a contagem de cada status, uma barra com a proporção entre eles
+  e, quando há algo a corrigir, um aviso.
+- 🏷️ **Etiquetas arredondadas** nas árvores, nas mesmas cores dos indicadores, para você bater o olho e
+  saber o que pede atenção.
+- 🧰 **Barra flutuante do editor**, no canto superior direito: **Inspecionar Diff** quando o arquivo tem
+  alterações não commitadas, e **Disparar Este Arquivo** e **Disparar Todos** enquanto há alvos não disparados.
+
+---
+
+<a id="instalacao"></a>
+
 ## 📦 Instalação
 
 1. Baixe o `.zip` do plugin (ou gere com `.\gradlew.bat buildPlugin`).
@@ -225,12 +432,14 @@ execução também aparece na janela Run, com o console completo). O resultado c
 3. Pronto: o painel **Iron Dome IA** aparece na lateral da IDE.
 
 > [!NOTE]
-> Compatível com IntelliJ IDEA 2025.2 em diante. O diagrama de dependências usa o plugin Java, e a aba
-> Escudo, o plugin JUnit; os dois já vêm no IntelliJ IDEA.
+> Compatível com IntelliJ IDEA 2025.2 em diante. O Raio de Impacto usa o plugin Java, e a aba Escudo,
+> o plugin JUnit; os dois já vêm no IntelliJ IDEA.
 
 > [!WARNING]
 > Vindo de uma versão anterior? O ID do plugin mudou para `com.mio.irondome`, então a IDE trata esta
 > versão como outro plugin. Desinstale a versão antiga antes de instalar esta.
+
+<a id="configure-sua-ia"></a>
 
 ## 🤖 Configure sua IA
 
@@ -252,10 +461,13 @@ sem consulta. Nos de `**Modo:** discutir antes de alterar`, siga o modo de discu
 escreva a análise completa (por que o código está assim, se o apontamento procede e o impacto de
 manter, alterar ou remover), de 2 a 5 opções com prévia da alteração e a sua recomendação, discuta
 com o usuário e só altere depois da decisão final.
+O arquivo `iron-dome/historico-interceptacoes.md` é só histórico: não aplique nem marque nada nele.
 ```
 
 > [!TIP]
 > Depois disso, basta dizer à IA algo como *"aplique a revisão"*.
+
+<a id="faq"></a>
 
 ## ❓ Perguntas frequentes
 
@@ -274,10 +486,18 @@ IDE e no `.md` dentro do seu projeto. O que vai para a IA é decidido por você 
 </details>
 
 <details>
+<summary><b>A pasta <code>iron-dome/</code> vai encher de arquivos?</b></summary>
+
+Não precisa. Na aba Radar, **Consolidar Histórico** junta todas as revisões encerradas num único
+`historico-interceptacoes.md` e apaga os avulsos, e **Limpar Histórico** apaga o histórico de vez. A
+revisão aberta nunca é tocada, e o que for apagado pode ser recuperado pelo Local History da IDE.
+</details>
+
+<details>
 <summary><b>Quais linguagens são suportadas?</b></summary>
 
 Os comentários funcionam em qualquer arquivo de texto: código, specs, documentação, configuração.
-O diagrama de dependências é para classes Java e Kotlin.
+O Raio de Impacto é para classes Java e Kotlin.
 </details>
 
 <details>
@@ -294,6 +514,16 @@ A chave, entre colchetes no início do `@DisplayName("[Frete] Cálculo do frete"
 a classe trata. O Escudo agrupa as classes pela chave, então os testes do mesmo assunto ficam juntos
 mesmo em pacotes diferentes. Classes sem `@DisplayName` ou sem chave continuam rodando, mas vão para o
 grupo **Sem chave**, com a sugestão de como corrigir.
+</details>
+
+<details>
+<summary><b>Como escrever o <code>@DisplayName</code> dos testes para aproveitar a formatação?</b></summary>
+
+Descreva o cenário com as etapas e a expectativa, por exemplo
+`@DisplayName("Dado que o cliente é VIP, quando compra acima de 500 então ganha 15% de desconto")` ou
+`@DisplayName("não deve aceitar cupom vencido")`. Use crases para código (`` `null` ``) e uma seta para o
+resultado esperado (`"soma 2 e 3 -> 5"`). Nada disso é obrigatório: um nome comum continua aparecendo
+normalmente.
 </details>
 
 ## 🛠️ Desenvolvimento
@@ -314,13 +544,15 @@ O código fica em `src/main/kotlin/com/mio/irondome`, com um pacote por mecanism
 | Pacote | Mecanismo | O que tem |
 | --- | --- | --- |
 | `radar` | 📡 Radar | Comentários, formulário, margem do editor, cartões e a aba Radar |
-| `comando` | 🎯 Centro de Comando | Geração e leitura do `.md` e as ações de salvar |
+| `comando` | 🎯 Centro de Comando | Geração e leitura do `.md`, histórico consolidado e as ações de salvar |
 | `impacto` | 💥 Raio de Impacto | Análise de dependências, diagrama e métricas (só com o plugin Java) |
 | `sentinela` | 👁️ Sentinela | Aba Sentinela e o diff dos arquivos não commitados |
-| `escudo` | 🛡️ Escudo | Execução dos testes JUnit e a aba Escudo (só com o plugin JUnit) |
+| `escudo` | 🛡️ Escudo | Execução dos testes JUnit, formatação do `@DisplayName` e a aba Escudo (só com o plugin JUnit) |
 | `base` | 🏰 Base | Tool window, abas extras, a barra flutuante do editor e os componentes visuais compartilhados (cabeçalho de resumo, etiquetas, barras e linhas das árvores) |
 
-O diagrama usa o [AntV G6](https://g6.antv.antgroup.com/) (licença MIT). As licenças de todas as bibliotecas embutidas no `g6.min.js`, todas permissivas e livres para uso comercial, estão em `src/main/resources/diagram/THIRD-PARTY-NOTICES.txt`, que vai junto no plugin.
+O diagrama usa o [AntV G6](https://g6.antv.antgroup.com/) (licença MIT). As licenças de todas as
+bibliotecas embutidas no `g6.min.js`, todas permissivas e livres para uso comercial, estão em
+`src/main/resources/diagram/THIRD-PARTY-NOTICES.txt`, que vai junto no plugin.
 
 ---
 
