@@ -62,11 +62,14 @@ object MetricGuide {
     val reading = Topic(
         "diagram",
         "Como ler o diagrama",
-        "A classe analisada fica no centro, e cada anel em volta está um passo de dependência mais longe " +
-            "dela. Cada caixa é uma classe e a seta sai de quem usa para quem é usado. Seta tracejada indica herança " +
-            "ou implementação de interface. A cor mostra o risco ao alterar: verde é baixo, amarelo é médio " +
-            "e vermelho é alto. O sinal ⚠ marca classes com risco médio ou alto e sem testes, e o contorno " +
-            "azul marca classes com alterações ainda não commitadas. Clique numa classe para ver os detalhes " +
+        "A classe analisada fica no centro do radar, e cada anel tracejado em volta está um passo de dependência " +
+            "mais longe dela; a etiqueta do anel diz quantas classes ele tem e a cor dele acompanha o maior risco ali. " +
+            "Cada caixa é uma classe e a seta sai de quem usa para quem é usado. Seta tracejada indica herança " +
+            "ou implementação de interface. A cor da caixa mostra o risco ao alterar: verde é baixo, amarelo é médio " +
+            "e vermelho é alto, e as de risco alto ganham um brilho. O ícone à esquerda é o tipo (C classe, A abstrata, " +
+            "I interface, E enum, @ anotação) e o escudo à direita mostra os testes. O sinal ⚠ e a borda dupla marcam " +
+            "classes com risco médio ou alto e sem testes, e o contorno azul marca classes com alterações ainda não " +
+            "commitadas. Passe o mouse para ver um resumo e as ligações acesas, clique numa classe para ver os detalhes " +
             "e dê dois cliques para abrir o código.",
     )
 

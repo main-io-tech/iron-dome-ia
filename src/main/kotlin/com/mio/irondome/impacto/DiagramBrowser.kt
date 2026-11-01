@@ -72,11 +72,36 @@ class DiagramBrowser(parent: Disposable, private val onMessage: (String) -> Unit
 
     fun showMessage(text: String) {
         val theme = theme()
+        val accent = theme["accent"]
         browser?.loadHTML(
             """
-            <html><body style="margin:0;height:100vh;display:flex;align-items:center;justify-content:center;
-            background:${theme["bg"]};color:${theme["muted"]};font:13px -apple-system,'Segoe UI',sans-serif;
-            text-align:center;padding:24px;box-sizing:border-box">${Json.escapeHtml(text)}</body></html>
+            <html><head><style>
+              body { margin: 0; height: 100vh; display: flex; flex-direction: column; gap: 18px; align-items: center;
+                justify-content: center; background: radial-gradient(circle, ${accent}14 0%, ${theme["bg"]} 60%), ${theme["bg"]};
+                color: ${theme["muted"]}; font: 13px "Segoe UI", -apple-system, sans-serif; text-align: center;
+                padding: 24px; box-sizing: border-box; }
+              .radar { position: relative; width: 150px; height: 150px; border-radius: 50%;
+                border: 1px solid ${accent}55; box-shadow: 0 0 40px ${accent}22 inset; }
+              .radar::before, .radar::after { content: ''; position: absolute; border-radius: 50%; border: 1px dashed ${accent}44; }
+              .radar::before { inset: 25px; } .radar::after { inset: 52px; }
+              .sweep { position: absolute; inset: 0; border-radius: 50%; animation: spin 4s linear infinite;
+                background: conic-gradient(from 0deg, transparent 0deg 280deg, ${accent}66 360deg); }
+              .core { position: absolute; left: 50%; top: 50%; width: 12px; height: 12px; margin: -6px; border-radius: 50%;
+                background: $accent; box-shadow: 0 0 12px $accent; }
+              .blip { position: absolute; width: 7px; height: 7px; border-radius: 50%; animation: blink 4s infinite; }
+              .text { max-width: 440px; line-height: 1.6; }
+              .title { color: ${theme["fg"]}; font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+              @keyframes spin { to { transform: rotate(360deg); } }
+              @keyframes blink { 0%, 100% { opacity: .15; } 50% { opacity: 1; } }
+              @media (prefers-reduced-motion: reduce) { .sweep, .blip { animation: none; } }
+            </style></head><body>
+              <div class="radar"><div class="sweep"></div><div class="core"></div>
+                <div class="blip" style="left: 104px; top: 34px; background: ${theme["highSolid"]}; animation-delay: .4s"></div>
+                <div class="blip" style="left: 30px; top: 92px; background: ${theme["mediumSolid"]}; animation-delay: 2.2s"></div>
+                <div class="blip" style="left: 96px; top: 112px; background: ${theme["lowSolid"]}; animation-delay: 3.1s"></div>
+              </div>
+              <div class="text"><div class="title">Raio de Impacto</div>${Json.escapeHtml(text)}</div>
+            </body></html>
             """.trimIndent(),
         )
     }
@@ -91,6 +116,7 @@ class DiagramBrowser(parent: Disposable, private val onMessage: (String) -> Unit
         "truncated" to graph.truncated,
         "cycles" to graph.cycleCount,
         "vcs" to vcs,
+        "scale" to Json.raw(Json.obj("medium" to ChangeRisk.MEDIUM_FROM, "high" to ChangeRisk.HIGH_FROM)),
         "changes" to Json.raw(changesJson(changes)),
         "prefs" to Json.raw(Json.obj(PANELS.associateWith { PropertiesComponent.getInstance().getBoolean(prefKey(it)) })),
         "nodes" to graph.nodes.map { node ->
@@ -140,6 +166,12 @@ class DiagramBrowser(parent: Disposable, private val onMessage: (String) -> Unit
             "low" to if (dark) "#2e6b3f" else "#a7e3b5",
             "medium" to if (dark) "#7a6420" else "#f5db8b",
             "high" to if (dark) "#7d2e2e" else "#f4a7a3",
+            "lowEnd" to if (dark) "#1c4529" else "#7fd194",
+            "mediumEnd" to if (dark) "#52420f" else "#efc75a",
+            "highEnd" to if (dark) "#561d1d" else "#ee8a83",
+            "lowSolid" to if (dark) "#3fb950" else "#1a7f37",
+            "mediumSolid" to if (dark) "#d29922" else "#9a6700",
+            "highSolid" to if (dark) "#f85149" else "#cf222e",
             "nodeText" to if (dark) "#e6edf3" else "#1f2328",
             "changed" to hex(FileStatus.MODIFIED.color ?: JBColor.BLUE),
         )

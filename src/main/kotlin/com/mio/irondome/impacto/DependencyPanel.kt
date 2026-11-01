@@ -47,10 +47,14 @@ import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Component
 import java.awt.FlowLayout
+import java.awt.Graphics
+import java.awt.Graphics2D
+import java.awt.RenderingHints
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import java.awt.event.MouseMotionAdapter
 import java.util.concurrent.Callable
+import javax.swing.Icon
 import javax.swing.JComponent
 import javax.swing.JEditorPane
 import javax.swing.JPanel
@@ -406,6 +410,8 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
             super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column)
             val risk = value as? ChangeRisk
             if (!isSelected && risk != null) foreground = colorOf(risk.ordinal)
+            icon = risk?.let { DotIcon(colorOf(it.ordinal)) }
+            iconTextGap = JBUI.scale(6)
             return this
         }
     }
@@ -416,12 +422,28 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
         ): Component {
             super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column)
             val tests = value as? TestUsage
-            if (!isSelected && tests != null && tests.coverage != TestCoverage.TEST_CLASS) {
-                foreground = colorOf(TestCoverage.GOOD.ordinal - tests.coverage.ordinal)
-            }
+            val color = tests?.coverage?.takeIf { it != TestCoverage.TEST_CLASS }?.let { colorOf(TestCoverage.GOOD.ordinal - it.ordinal) }
+            if (!isSelected && color != null) foreground = color
+            icon = if (tests == null) null else DotIcon(color ?: UIUtil.getContextHelpForeground())
+            iconTextGap = JBUI.scale(6)
             toolTipText = tests?.testClasses?.takeIf { it.isNotEmpty() }
                 ?.joinToString("<br>", "<html>Classes de teste que a usam:<br>", "</html>") { DependencyAnalyzer.simpleName(it) }
             return this
+        }
+    }
+
+    private class DotIcon(private val color: Color) : Icon {
+        override fun getIconWidth() = JBUI.scale(9)
+        override fun getIconHeight() = JBUI.scale(9)
+        override fun paintIcon(c: Component?, g: Graphics, x: Int, y: Int) {
+            val g2 = g.create() as Graphics2D
+            try {
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                g2.color = color
+                g2.fillOval(x, y, iconWidth, iconHeight)
+            } finally {
+                g2.dispose()
+            }
         }
     }
 
