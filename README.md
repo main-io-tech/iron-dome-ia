@@ -320,7 +320,7 @@ O código fica em `src/main/kotlin/com/mio/irondome`, com um pacote por mecanism
 | `escudo` | 🛡️ Escudo | Execução dos testes JUnit e a aba Escudo (só com o plugin JUnit) |
 | `base` | 🏰 Base | Tool window, abas extras, a barra flutuante do editor e os componentes visuais compartilhados (cabeçalho de resumo, etiquetas, barras e linhas das árvores) |
 
-O diagrama usa o [Cytoscape.js](https://js.cytoscape.org/) (licença MIT).
+O diagrama usa o [AntV G6](https://g6.antv.antgroup.com/) (licença MIT). As licenças de todas as bibliotecas embutidas no `g6.min.js`, todas permissivas e livres para uso comercial, estão em `src/main/resources/diagram/THIRD-PARTY-NOTICES.txt`, que vai junto no plugin.
 
 ---
 

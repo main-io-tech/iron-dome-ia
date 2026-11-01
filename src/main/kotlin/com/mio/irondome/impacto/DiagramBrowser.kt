@@ -18,7 +18,7 @@ import java.awt.Color
 import javax.swing.JComponent
 
 /**
- * Diagrama desenhado com Cytoscape.js no navegador embutido. Mensagens da página chegam em
+ * Diagrama desenhado com AntV G6 no navegador embutido. Mensagens da página chegam em
  * [onMessage] na EDT, no formato `acao:nomeQualificado`.
  */
 class DiagramBrowser(parent: Disposable, private val onMessage: (String) -> Unit) {
@@ -56,7 +56,7 @@ class DiagramBrowser(parent: Disposable, private val onMessage: (String) -> Unit
             .replace("/*IRON_DOME_THEME_JSON*/", Json.obj(theme()))
             .replace("/*IRON_DOME_BRIDGE*/", query!!.inject("message"))
             .replace("/*IRON_DOME_DATA*/", Json.safeForScript(toJson(graph, changes, vcs)))
-            .replace("/*IRON_DOME_CYTOSCAPE*/", cytoscape)
+            .replace("/*IRON_DOME_G6*/", g6)
         browser.loadHTML(html)
     }
 
@@ -193,7 +193,7 @@ class DiagramBrowser(parent: Disposable, private val onMessage: (String) -> Unit
         fun prefKey(panel: String) = "irondome.diagram.collapsed.$panel"
 
         val template: String by lazy { resource("/diagram/diagram.html") }
-        val cytoscape: String by lazy { resource("/diagram/cytoscape.min.js") }
+        val g6: String by lazy { resource("/diagram/g6.min.js") }
 
         fun resource(path: String): String =
             DiagramBrowser::class.java.getResourceAsStream(path)!!.use { it.readBytes().toString(Charsets.UTF_8) }

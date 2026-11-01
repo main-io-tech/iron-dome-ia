@@ -10,8 +10,10 @@
   body::before { content: ''; position: absolute; inset: 0; pointer-events: none;
     background-image: radial-gradient(color-mix(in srgb, var(--fg) 10%, transparent) 1px, transparent 1.3px);
     background-size: 22px 22px; }
-  #rings, #cy { position: absolute; inset: 0; }
+  #rings, #graph { position: absolute; inset: 0; }
   #rings { width: 100%; height: 100%; pointer-events: none; opacity: 0; transition: opacity .7s ease; }
+  #graph { opacity: 0; transition: opacity .35s ease; }
+  #graph.ready { opacity: 1; }
   #radar { position: absolute; left: 0; top: 0; width: 0; height: 0; pointer-events: none; opacity: 0; transition: opacity .7s ease; }
   #rings.ready, #radar.ready { opacity: 1; }
   #sweep { position: absolute; border-radius: 50%; animation: spin 9s linear infinite; }
@@ -37,7 +39,8 @@
   button:disabled:hover { border-color: var(--border); background: color-mix(in srgb, var(--fg) 5%, transparent); }
   button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   button.primary:hover { background: color-mix(in srgb, var(--accent) 85%, #fff); }
-  button.pressed { border-color: var(--changed); color: var(--changed); background: color-mix(in srgb, var(--changed) 15%, transparent); }
+  button.pressed { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 15%, transparent); }
+  #highlightChanges.pressed { border-color: var(--changed); color: var(--changed); background: color-mix(in srgb, var(--changed) 15%, transparent); }
 
   #toolbar { top: 10px; left: 10px; max-width: calc(100% - 20px); padding: 8px 10px; display: flex; flex-direction: column; gap: 8px; }
   .tb-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
@@ -68,14 +71,18 @@
   .dot.LOW, .seg.LOW { background: var(--lowSolid); }
   .dot.MEDIUM, .seg.MEDIUM { background: var(--mediumSolid); }
   .dot.HIGH, .seg.HIGH { background: var(--highSolid); }
-  .dot.glow { box-shadow: 0 0 6px currentColor; }
 
   #zoom { right: 10px; bottom: 10px; display: flex; gap: 2px; padding: 4px; }
   #zoom button { width: 30px; height: 30px; justify-content: center; padding: 0; border-color: transparent; background: transparent; color: var(--muted); }
   #zoom button:hover { color: var(--fg); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+  #zoom button.pressed { color: var(--accent); background: color-mix(in srgb, var(--accent) 15%, transparent); }
   #zoom .sep { width: 1px; margin: 4px 2px; background: var(--border); }
+  #minimap { right: 10px; bottom: 56px; width: 214px; height: 144px; padding: 6px; display: none; overflow: hidden; }
+  body.with-minimap #minimap { display: block; animation: rise .2s ease-out; }
+  #minimapBox { width: 200px; height: 130px; border-radius: 8px; overflow: hidden; }
 
   #info { top: 10px; right: 10px; width: 350px; max-height: calc(100% - 66px); overflow: auto; padding: 12px; display: none; animation: rise .22s ease-out; }
+  body.with-minimap #info { max-height: calc(100% - 216px); }
   #info::-webkit-scrollbar, #help::-webkit-scrollbar, #legend::-webkit-scrollbar { width: 8px; }
   #info::-webkit-scrollbar-thumb, #help::-webkit-scrollbar-thumb, #legend::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--fg) 18%, transparent); border-radius: 8px; }
   .panel-head { display: flex; align-items: center; gap: 8px; }
@@ -165,9 +172,11 @@
   .lg-item.wide { grid-column: span 2; }
   .swatch-node { width: 20px; height: 12px; border-radius: 4px; border: 1.5px solid; flex: none; }
   .swatch-edge { width: 26px; height: 0; border-top: 2px solid var(--edge); flex: none; position: relative; }
-  .swatch-ring { width: 12px; height: 12px; border-radius: 4px; border: 2px solid var(--changed); flex: none; }
   .swatch-orbit { width: 14px; height: 14px; border-radius: 50%; border: 1.5px dashed var(--muted); flex: none; }
   .swatch-glow { width: 14px; height: 10px; border-radius: 3px; background: var(--high); box-shadow: 0 0 6px 2px var(--highSolid); flex: none; }
+  .swatch-badge { padding: 0 5px; border-radius: 6px; font-size: 9px; font-weight: 600; color: #fff; flex: none; line-height: 14px; }
+  .swatch-bubble { width: 18px; height: 12px; border-radius: 7px; flex: none; border: 1.2px solid var(--accent);
+    background: color-mix(in srgb, var(--accent) 15%, transparent); }
 
   #helpBackdrop { position: absolute; inset: 0; z-index: 20; display: none; align-items: center; justify-content: center;
     background: rgba(0, 0, 0, .35); backdrop-filter: blur(2px); }
@@ -201,11 +210,12 @@
 <body>
 <canvas id="rings"></canvas>
 <div id="radar"><div id="sweep"></div><div class="pulse"></div><div class="pulse late"></div></div>
-<div id="cy"></div>
+<div id="graph"></div>
 <div id="toolbar" class="panel">
   <div class="tb-row">
     <label class="search"><span data-icon="search"></span><input id="search" placeholder="Buscar classe  ( / )"><span id="matches"></span></label>
     <button id="highlightChanges"><span data-icon="git"></span>Destacar alteradas</button>
+    <button id="packages" title="Envolve as classes do mesmo pacote numa bolha colorida"><span data-icon="bubbles"></span>Pacotes</button>
     <button id="helpButton" title="Explica o que cada número, cor e ícone significa"><span data-icon="book"></span>Manual de campo</button>
   </div>
   <div class="tb-row" id="chips"></div>
@@ -214,6 +224,7 @@
     <div class="risk-keys" id="riskKeys"></div>
   </div>
 </div>
+<div id="minimap" class="panel"><div id="minimapBox"></div></div>
 <div id="zoom" class="panel">
   <button id="zoomIn" title="Aproximar"><span data-icon="plus"></span></button>
   <button id="zoomOut" title="Afastar"><span data-icon="minus"></span></button>
@@ -221,12 +232,13 @@
   <button id="fit" title="Enquadrar o diagrama"><span data-icon="frame"></span></button>
   <button id="centerFocus" title="Centralizar na classe analisada"><span data-icon="target"></span></button>
   <button id="relayout" title="Reorganizar os anéis"><span data-icon="radar"></span></button>
+  <button id="minimapToggle" title="Mostrar o minimapa"><span data-icon="map"></span></button>
 </div>
 <div id="info" class="panel"></div>
 <div id="legend" class="panel"></div>
 <div id="tip" class="panel"></div>
 <div id="helpBackdrop"><div id="help" class="panel"></div></div>
-<script>/*IRON_DOME_CYTOSCAPE*/</script>
+<script>/*IRON_DOME_G6*/</script>
 <script>
   const THEME = /*IRON_DOME_THEME_JSON*/;
   const DATA = /*IRON_DOME_DATA*/;
@@ -234,6 +246,7 @@
 
   const FONT = '"Segoe UI", "Inter", -apple-system, sans-serif';
   const REDUCED_MOTION = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const DARK = (() => { const v = parseInt(THEME.bg.slice(1, 7), 16); return ((v >> 16) * 299 + ((v >> 8) & 255) * 587 + (v & 255) * 114) / 1000 < 128; })();
   const byId = new Map(DATA.nodes.map(n => [n.id, n]));
   const help = new Map(DATA.help.map(t => [t.id, t]));
   const maxLevel = Math.max(0, ...DATA.nodes.map(n => n.level));
@@ -259,6 +272,7 @@
     NONE: { color: THEME.highSolid, name: 'Sem testes' },
     TEST_CLASS: { color: '#7d8590', name: 'Classe de teste' },
   };
+  const PACKAGE_COLORS = ['#3b82f6', '#a855f7', '#14b8a6', '#f97316', '#ec4899', '#84cc16', '#06b6d4', '#eab308'];
 
   const ICONS = {
     search: '<circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/>',
@@ -284,6 +298,8 @@
     list: '<path d="M6 4h8M6 8h8M6 12h8M2.5 4h.1M2.5 8h.1M2.5 12h.1"/>',
     gauge: '<path d="M2 11.5a6 6 0 0 1 12 0"/><path d="M8 11.5l3-4"/>',
     eye: '<path d="M1 8s2.5-4.5 7-4.5S15 8 15 8s-2.5 4.5-7 4.5S1 8 1 8z"/><circle cx="8" cy="8" r="2"/>',
+    map: '<path d="M1.5 3.5 5.5 2l5 1.5 4-1.5v10.5l-4 1.5-5-1.5-4 1.5z"/><path d="M5.5 2v10.5M10.5 3.5V14"/>',
+    bubbles: '<circle cx="5.5" cy="6" r="4"/><circle cx="11" cy="10.5" r="3.5"/>',
   };
   const HELP_ICONS = { diagram: 'radar', afferent: 'arrowIn', efferent: 'arrowOut', risk: 'gauge', tests: 'shield', changes: 'git', cycle: 'cycle' };
 
@@ -332,109 +348,178 @@
   const measure = document.createElement('canvas').getContext('2d');
   function nodeData(n) {
     const focus = n.id === DATA.focus;
-    const label = (n.attention ? '⚠ ' : '') + n.name;
     measure.font = `${focus ? 700 : 600} ${focus ? 12.5 : 11}px ${FONT}`;
     const kindSize = focus ? 22 : 18, shieldSize = focus ? 18 : 15, h = focus ? 40 : 30;
     const left = 9 + kindSize + 7, right = 7 + shieldSize + 9;
-    const w = Math.ceil(measure.measureText(label).width) + left + right;
+    const w = Math.ceil(measure.measureText(n.name).width) + left + right;
     const image = svg(w, h, `0 0 ${w} ${h}`,
       `<g transform="translate(9 ${(h - kindSize) / 2}) scale(${kindSize / 18})">${kindBody(n.kind)}</g>` +
       `<g transform="translate(${w - 9 - shieldSize} ${(h - shieldSize) / 2}) scale(${shieldSize / 16})">${shieldBody(n.coverage)}</g>`);
-    return { ...n, label, w, h, mx: (left - right) / 2, image: dataUri(image) };
+    return { ...n, focus, w, h, mx: (left - right) / 2, image: dataUri(image) };
   }
+  const nodeInfo = new Map(DATA.nodes.map(n => [n.id, nodeData(n)]));
 
-  const edgeFaint = rgba(THEME.edge, .25), cycleFaint = rgba(THEME.cycle, .35), accentFaint = rgba(THEME.accent, .35);
-  const cy = cytoscape({
-    container: document.getElementById('cy'),
-    wheelSensitivity: 0.25,
-    minZoom: 0.15,
-    maxZoom: 3.5,
-    elements: [
-      ...DATA.nodes.map(n => ({
-        data: nodeData(n),
-        position: { x: 0, y: 0 },
-        classes: [n.id === DATA.focus ? 'focus' : '', n.kind === 'abstrata' || n.kind === 'interface' ? 'abstract' : '',
-          n.attention ? 'attention' : ''].join(' ') })),
-      ...DATA.edges.map((e, i) => ({ data: { id: 'e' + i, source: e.source, target: e.target },
-        classes: [e.kind === 'INHERITANCE' ? 'inheritance' : '', e.cycle ? 'cycle' : ''].join(' ') })),
-    ],
-    style: [
-      { selector: 'node', style: {
-        'shape': 'round-rectangle', 'corner-radius': 9, 'width': 'data(w)', 'height': 'data(h)',
-        'label': 'data(label)', 'font-family': FONT, 'font-size': 11, 'font-weight': 600, 'color': THEME.nodeText,
-        'text-valign': 'center', 'text-halign': 'center', 'text-margin-x': 'data(mx)',
-        'background-fill': 'linear-gradient', 'background-gradient-direction': 'to-bottom',
-        'background-gradient-stop-colors': ele => RISK[ele.data('risk')].fill,
-        'background-image': 'data(image)', 'background-fit': 'none', 'background-image-smoothing': 'yes',
-        'border-width': 1.5, 'border-color': ele => RISK[ele.data('risk')].solid, 'border-opacity': .85,
-        'underlay-shape': 'round-rectangle', 'underlay-corner-radius': 12, 'underlay-padding': 5,
-        'underlay-color': ele => RISK[ele.data('risk')].solid, 'underlay-opacity': ele => ele.data('risk') === 'HIGH' ? .22 : 0,
-        'transition-property': 'opacity, underlay-opacity, underlay-padding, border-width', 'transition-duration': 180 } },
-      { selector: 'node.abstract', style: { 'font-style': 'italic' } },
-      { selector: 'node.attention', style: { 'border-style': 'double', 'border-width': 3 } },
-      { selector: 'node.focus', style: {
-        'font-size': 12.5, 'font-weight': 700, 'border-width': 3, 'border-color': THEME.accent, 'border-opacity': 1,
-        'underlay-color': THEME.accent, 'underlay-opacity': .28, 'underlay-padding': 8, 'z-index': 20 } },
-      { selector: 'node.hover', style: { 'underlay-color': THEME.accent, 'underlay-opacity': .3, 'underlay-padding': 7, 'z-index': 30 } },
-      { selector: 'node:selected', style: {
-        'border-width': 3, 'border-color': THEME.accent, 'border-style': 'solid', 'border-opacity': 1, 'overlay-opacity': 0,
-        'underlay-color': THEME.accent, 'underlay-opacity': .4, 'underlay-padding': 8 } },
-      { selector: 'node.match', style: { 'border-width': 3, 'border-color': THEME.match, 'border-style': 'solid',
-        'underlay-color': THEME.match, 'underlay-opacity': .45, 'underlay-padding': 9 } },
-      { selector: 'node.changed', style: { 'outline-width': 2.5, 'outline-color': THEME.changed, 'outline-offset': 4, 'outline-opacity': 1 } },
-      { selector: 'edge', style: {
-        'width': 1.6, 'curve-style': 'bezier', 'line-fill': 'linear-gradient', 'line-gradient-stop-colors': [edgeFaint, THEME.edge],
-        'target-arrow-shape': 'triangle', 'target-arrow-color': THEME.edge, 'arrow-scale': .95,
-        'source-distance-from-node': 2, 'target-distance-from-node': 3, 'opacity': .85,
-        'transition-property': 'opacity, width', 'transition-duration': 180 } },
-      { selector: 'edge.inheritance', style: { 'line-style': 'dashed', 'line-dash-pattern': [6, 4], 'target-arrow-fill': 'hollow' } },
-      { selector: 'edge.cycle', style: {
-        'line-gradient-stop-colors': [cycleFaint, THEME.cycle], 'target-arrow-color': THEME.cycle, 'width': 2.4, 'opacity': 1 } },
-      { selector: 'edge.highlight', style: {
-        'width': 2.6, 'opacity': 1, 'z-index': 25, 'line-style': 'dashed', 'line-dash-pattern': [10, 4],
-        'line-gradient-stop-colors': [accentFaint, THEME.accent], 'target-arrow-color': THEME.accent } },
-      { selector: 'edge.highlight.inheritance', style: { 'line-dash-pattern': [5, 4] } },
-      { selector: 'edge.highlight.cycle', style: { 'line-gradient-stop-colors': [cycleFaint, THEME.cycle], 'target-arrow-color': THEME.cycle } },
-      { selector: '.faded, .dimmed', style: { 'opacity': .1 } },
+  /**
+   * Radar: a classe analisada no centro e um anel por passo de dependência. Em cada anel as classes ficam
+   * no ângulo médio dos vizinhos do anel de dentro, o que reduz o cruzamento das setas.
+   */
+  function radarLayout() {
+    const neighbors = new Map(DATA.nodes.map(n => [n.id, []]));
+    DATA.edges.forEach(e => { neighbors.get(e.source)?.push(e.target); neighbors.get(e.target)?.push(e.source); });
+    const levels = new Map();
+    DATA.nodes.forEach(n => levels.set(n.level, [...(levels.get(n.level) || []), n]));
+    const positions = new Map(), ringList = [];
+    let radius = 0;
+    [...levels.keys()].sort((a, b) => a - b).forEach(level => {
+      const nodes = levels.get(level);
+      if (level === 0) { nodes.forEach(n => positions.set(n.id, { x: 0, y: 0, angle: null })); return; }
+      const span = nodes.reduce((sum, n) => sum + nodeInfo.get(n.id).w + 44, 0);
+      radius = Math.max(radius + (level === 1 ? 200 : 175), span / (2 * Math.PI));
+      const preferred = nodes.map(n => {
+        const placed = neighbors.get(n.id).map(id => positions.get(id)).filter(p => p && p.angle !== null);
+        if (!placed.length) return { n, angle: null };
+        return { n, angle: Math.atan2(placed.reduce((s, p) => s + Math.sin(p.angle), 0), placed.reduce((s, p) => s + Math.cos(p.angle), 0)) };
+      });
+      const known = preferred.filter(p => p.angle !== null).sort((a, b) => a.angle - b.angle);
+      const ordered = [...known, ...preferred.filter(p => p.angle === null).sort((a, b) => a.n.name.localeCompare(b.n.name))];
+      const step = Math.PI * 2 / ordered.length;
+      let offset = -Math.PI / 2;
+      if (known.length) {
+        offset = Math.atan2(known.reduce((s, p, i) => s + Math.sin(p.angle - i * step), 0), known.reduce((s, p, i) => s + Math.cos(p.angle - i * step), 0));
+      }
+      ordered.forEach((p, i) => {
+        const angle = offset + i * step;
+        positions.set(p.n.id, { x: Math.cos(angle) * radius, y: Math.sin(angle) * radius, angle });
+      });
+      const bottom = Math.PI / 2, gaps = ordered.length === 1 ? [offset + Math.PI] : ordered.map((_, i) => offset + (i + .5) * step);
+      const labelAngle = gaps.reduce((best, a) => angularDistance(a, bottom) < angularDistance(best, bottom) ? a : best, gaps[0]);
+      const counts = { LOW: 0, MEDIUM: 0, HIGH: 0 };
+      nodes.forEach(n => counts[n.risk]++);
+      ringList.push({ level, radius, labelAngle, count: nodes.length, color: RISK[RISK_KEYS.filter(k => counts[k]).pop()].solid });
+    });
+    return { positions, rings: ringList };
+  }
+  function angularDistance(a, b) { const d = Math.abs(a - b) % (Math.PI * 2); return d > Math.PI ? Math.PI * 2 - d : d; }
+  const layout = radarLayout();
+  const rings = layout.rings;
+  let center = { x: 0, y: 0 };
+
+  let changes = DATA.changes, vcs = DATA.vcs, highlighting = false, riskFilter = null, infoId = null, selectedId = null;
+  let matchIds = new Set();
+
+  const nodeStyle = key => d => nodeInfo.get(d.id)[key];
+  const riskOf = d => RISK[nodeInfo.get(d.id).risk];
+  const edgeColor = d => d.data.cycle ? THEME.cycle : THEME.edge;
+  const edgeActiveColor = d => d.data.cycle ? THEME.cycle : THEME.accent;
+  const graph = new G6.Graph({
+    container: 'graph',
+    autoResize: true,
+    background: 'transparent',
+    theme: DARK ? 'dark' : 'light',
+    padding: 70,
+    zoomRange: [0.15, 3.5],
+    animation: false,
+    data: {
+      nodes: DATA.nodes.map(n => ({ id: n.id, data: { changeLabel: changes[n.id]?.label || null }, style: { x: layout.positions.get(n.id).x, y: layout.positions.get(n.id).y } })),
+      edges: DATA.edges.map((e, i) => ({ id: 'e' + i, source: e.source, target: e.target,
+        data: { cycle: e.cycle, kind: e.kind, mutual: DATA.edges.some(o => o.source === e.target && o.target === e.source) } })),
+    },
+    node: {
+      type: 'rect',
+      style: {
+        size: d => [nodeInfo.get(d.id).w, nodeInfo.get(d.id).h],
+        radius: d => nodeInfo.get(d.id).focus ? 12 : 9,
+        fill: d => `linear-gradient(180deg, ${riskOf(d).fill[0]} 0%, ${riskOf(d).fill[1]} 100%)`,
+        fillOpacity: 1,
+        stroke: d => nodeInfo.get(d.id).focus ? THEME.accent : riskOf(d).solid,
+        strokeOpacity: 1,
+        lineWidth: d => nodeInfo.get(d.id).focus ? 3 : 1.5,
+        shadowColor: DARK ? 'rgba(0,0,0,0.45)' : 'rgba(31,35,40,0.18)',
+        shadowBlur: 12,
+        shadowOffsetY: 4,
+        halo: d => nodeInfo.get(d.id).focus || nodeInfo.get(d.id).risk === 'HIGH',
+        haloStroke: d => nodeInfo.get(d.id).focus ? THEME.accent : THEME.highSolid,
+        haloLineWidth: d => nodeInfo.get(d.id).focus ? 16 : 10,
+        haloStrokeOpacity: d => nodeInfo.get(d.id).focus ? .3 : .2,
+        iconSrc: nodeStyle('image'),
+        iconWidth: nodeStyle('w'),
+        iconHeight: nodeStyle('h'),
+        iconOpacity: 1,
+        labelText: nodeStyle('name'),
+        labelPlacement: 'center',
+        labelOffsetX: nodeStyle('mx'),
+        labelOffsetY: 0,
+        labelFontFamily: FONT,
+        labelFontSize: d => nodeInfo.get(d.id).focus ? 12.5 : 11,
+        labelFontWeight: d => nodeInfo.get(d.id).focus ? 700 : 600,
+        labelFontStyle: d => ['abstrata', 'interface'].includes(nodeInfo.get(d.id).kind) ? 'italic' : 'normal',
+        labelFill: THEME.nodeText,
+        labelFillOpacity: 1,
+        badge: true,
+        badges: d => [
+          nodeInfo.get(d.id).attention && { text: '⚠ sem testes', placement: 'top', offsetY: -7, backgroundFill: THEME.highSolid },
+          d.data.changeLabel && { text: '● ' + d.data.changeLabel.toLowerCase(), placement: 'bottom', offsetY: 7, backgroundFill: THEME.changed },
+        ].filter(Boolean),
+        badgeFill: '#fff',
+        badgeFontFamily: FONT,
+        badgeFontSize: 9,
+        badgeFontWeight: 600,
+        badgePadding: [1, 6],
+        badgeBackgroundRadius: 6,
+        cursor: 'pointer',
+        zIndex: d => nodeInfo.get(d.id).focus ? 5 : 2,
+      },
+      state: {
+        active: { halo: true, haloStroke: THEME.accent, haloLineWidth: 14, haloStrokeOpacity: .28 },
+        selected: { halo: true, haloStroke: THEME.accent, haloLineWidth: 20, haloStrokeOpacity: .4, stroke: THEME.accent, lineWidth: 3 },
+        match: { halo: true, haloStroke: THEME.match, haloLineWidth: 20, haloStrokeOpacity: .45, stroke: THEME.match, lineWidth: 3 },
+        inactive: { opacity: .13, halo: false, shadowBlur: 0 },
+        dimmed: { opacity: .13, halo: false, shadowBlur: 0 },
+      },
+    },
+    edge: {
+      type: d => d.data.mutual ? 'quadratic' : 'line',
+      style: {
+        curveOffset: 34,
+        stroke: edgeColor,
+        strokeOpacity: d => d.data.cycle ? .95 : .7,
+        lineWidth: d => d.data.cycle ? 2.2 : 1.4,
+        lineDash: d => d.data.kind === 'INHERITANCE' ? [6, 4] : 0,
+        endArrow: true,
+        endArrowType: d => d.data.kind === 'INHERITANCE' ? 'triangle' : 'vee',
+        endArrowSize: d => d.data.kind === 'INHERITANCE' ? 11 : 9,
+        endArrowFill: d => d.data.kind === 'INHERITANCE' ? THEME.bg : edgeColor(d),
+        endArrowStroke: edgeColor,
+        endArrowLineWidth: 1.3,
+        increasedLineWidthForHitTesting: 6,
+      },
+      state: {
+        active: {
+          stroke: edgeActiveColor, strokeOpacity: 1, lineWidth: 2.6, halo: true, haloStroke: edgeActiveColor, haloStrokeOpacity: .18,
+          haloLineWidth: 9, endArrowStroke: edgeActiveColor, endArrowFill: d => d.data.kind === 'INHERITANCE' ? THEME.bg : edgeActiveColor(d), zIndex: 3,
+        },
+        inactive: { strokeOpacity: .05, endArrowFillOpacity: .05, endArrowStrokeOpacity: .05 },
+        dimmed: { strokeOpacity: .05, endArrowFillOpacity: .05, endArrowStrokeOpacity: .05 },
+      },
+    },
+    behaviors: [
+      'drag-canvas',
+      { type: 'zoom-canvas', sensitivity: 1.2 },
+      'drag-element',
+      { type: 'hover-activate', key: 'hover', degree: 1, state: 'active', inactiveState: 'inactive', animation: false,
+        enable: e => e.targetType === 'node' },
     ],
   });
 
-  /** Anéis concêntricos atrás do grafo: a classe analisada é o centro e cada anel fica um passo de dependência mais longe. */
+  /** Anéis desenhados atrás do grafo; acompanham o viewport a cada quadro enquanto ele anima. */
   const ringsCanvas = document.getElementById('rings'), ringsCtx = ringsCanvas.getContext('2d');
   const radar = document.getElementById('radar'), sweep = document.getElementById('sweep');
-  let rings = [], center = null;
-
-  function computeRings() {
-    const focusNode = cy.getElementById(DATA.focus);
-    if (focusNode.empty()) { rings = []; center = null; return; }
-    center = { ...focusNode.position() };
-    const byLevel = new Map();
-    cy.nodes().forEach(node => {
-      const level = node.data('level');
-      if (level > 0) byLevel.set(level, [...(byLevel.get(level) || []), node]);
-    });
-    rings = [...byLevel.entries()].sort((a, b) => a[0] - b[0]).map(([level, nodes]) => {
-      const offsets = nodes.map(node => ({ x: node.position('x') - center.x, y: node.position('y') - center.y }));
-      const radius = offsets.reduce((sum, p) => sum + Math.hypot(p.x, p.y), 0) / offsets.length;
-      const angles = offsets.map(p => Math.atan2(p.y, p.x)).sort((a, b) => a - b);
-      let labelAngle = angles[0] + Math.PI, widest = -1;
-      if (angles.length > 1) angles.forEach((angle, i) => {
-        const next = i + 1 < angles.length ? angles[i + 1] : angles[0] + Math.PI * 2;
-        if (next - angle > widest) { widest = next - angle; labelAngle = angle + (next - angle) / 2; }
-      });
-      const counts = { LOW: 0, MEDIUM: 0, HIGH: 0 };
-      nodes.forEach(node => counts[node.data('risk')]++);
-      const worst = RISK_KEYS.filter(key => counts[key]).pop();
-      return { level, radius, labelAngle, count: nodes.length, counts, color: RISK[worst].solid };
-    });
-  }
-
+  let rendered = false;
   function roundRect(ctx, x, y, w, h, r) {
     ctx.beginPath();
     ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
     ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
   }
-
   function drawRings() {
     const dpr = window.devicePixelRatio || 1, width = ringsCanvas.clientWidth, height = ringsCanvas.clientHeight;
     if (ringsCanvas.width !== Math.round(width * dpr) || ringsCanvas.height !== Math.round(height * dpr)) {
@@ -443,10 +528,10 @@
     const ctx = ringsCtx;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, width, height);
-    if (!center) return;
-    const zoom = cy.zoom(), pan = cy.pan();
-    const cx = center.x * zoom + pan.x, cy0 = center.y * zoom + pan.y;
-    const focusNode = cy.getElementById(DATA.focus), focusRisk = RISK[byId.get(DATA.focus).risk];
+    if (!rendered || !byId.has(DATA.focus)) return;
+    const zoom = graph.getZoom();
+    const [cx, cy0] = graph.getViewportByCanvas([center.x, center.y]);
+    const focusRisk = RISK[byId.get(DATA.focus).risk];
     const outer = (rings.length ? rings[rings.length - 1].radius + 70 : 110) * zoom;
 
     const glow = ctx.createRadialGradient(cx, cy0, 0, cx, cy0, outer);
@@ -508,48 +593,101 @@
     const sweepSize = (rings.length ? rings[rings.length - 1].radius + 40 : 90) * zoom * 2;
     Object.assign(sweep.style, { width: sweepSize + 'px', height: sweepSize + 'px', left: -sweepSize / 2 + 'px', top: -sweepSize / 2 + 'px',
       background: `conic-gradient(from 0deg, transparent 0deg 285deg, ${rgba(focusRisk.solid, .2)} 360deg)` });
-    const pulseSize = Math.max(40, focusNode.nonempty() ? focusNode.renderedOuterWidth() * 1.1 : 60);
+    const focus = nodeInfo.get(DATA.focus);
+    const pulseSize = Math.max(40, focus.w * zoom * 1.1);
     radar.querySelectorAll('.pulse').forEach(pulse => Object.assign(pulse.style, {
       width: pulseSize + 'px', height: pulseSize + 'px', left: -pulseSize / 2 + 'px', top: -pulseSize / 2 + 'px' }));
   }
-
-  function runLayout() {
-    ringsCanvas.classList.remove('ready'); radar.classList.remove('ready');
-    const layout = cy.layout({ name: 'concentric', animate: !REDUCED_MOTION, animationDuration: 750, animationEasing: 'ease-out-cubic',
-      fit: true, padding: 80, concentric: n => maxLevel - n.data('level'), levelWidth: () => 1, minNodeSpacing: 34 });
-    layout.one('layoutstop', () => {
-      computeRings(); drawRings();
-      ringsCanvas.classList.add('ready'); radar.classList.add('ready');
-    });
-    layout.run();
+  let animations = 0, syncFrame = 0, syncUntil = 0;
+  function followViewport(ms = 900) {
+    syncUntil = Math.max(syncUntil, performance.now() + ms);
+    if (syncFrame) return;
+    const step = () => {
+      drawRings();
+      syncFrame = animations > 0 || performance.now() < syncUntil ? requestAnimationFrame(step) : 0;
+    };
+    syncFrame = requestAnimationFrame(step);
   }
-  cy.on('viewport resize', drawRings);
-  window.addEventListener('resize', drawRings);
-  cy.on('drag', 'node.focus', e => { center = { ...e.target.position() }; drawRings(); });
-
-  document.getElementById('fit').addEventListener('click', () => cy.animate({ fit: { padding: 80 } }, { duration: 350, easing: 'ease-out-cubic' }));
-  document.getElementById('zoomIn').addEventListener('click', () => zoomBy(1.25));
-  document.getElementById('zoomOut').addEventListener('click', () => zoomBy(.8));
-  document.getElementById('centerFocus').addEventListener('click', () => {
-    const node = cy.getElementById(DATA.focus);
-    if (node.nonempty()) cy.animate({ center: { eles: node }, zoom: Math.max(cy.zoom(), 1) }, { duration: 350, easing: 'ease-out-cubic' });
+  graph.on('beforeanimate', () => { animations++; followViewport(); });
+  graph.on('afteranimate', () => { animations = Math.max(0, animations - 1); drawRings(); });
+  graph.on('aftertransform', () => { drawRings(); hideTip(); });
+  graph.on('node:drag', e => {
+    hideTip();
+    if (e.target.id !== DATA.focus) return;
+    const [x, y] = graph.getElementPosition(DATA.focus);
+    center = { x, y };
+    drawRings();
   });
-  document.getElementById('relayout').addEventListener('click', runLayout);
-  function zoomBy(factor) {
-    const level = Math.min(cy.maxZoom(), Math.max(cy.minZoom(), cy.zoom() * factor));
-    cy.animate({ zoom: { level, renderedPosition: { x: cy.width() / 2, y: cy.height() / 2 } } }, { duration: 200 });
+  window.addEventListener('resize', () => followViewport(300));
+
+  /** Os elementos guardam os estados do hover (active/inactive) e os nossos; aqui só mexemos nos nossos. */
+  const OWN_STATES = ['selected', 'match', 'dimmed'];
+  function applyStates() {
+    const isDimmed = id => (highlighting && !changes[id]) || (riskFilter && byId.get(id).risk !== riskFilter);
+    const states = {};
+    DATA.nodes.forEach(n => {
+      const own = [n.id === selectedId && 'selected', matchIds.has(n.id) && 'match', isDimmed(n.id) && 'dimmed'].filter(Boolean);
+      states[n.id] = [...graph.getElementState(n.id).filter(s => !OWN_STATES.includes(s)), ...own];
+    });
+    DATA.edges.forEach((e, i) => {
+      const own = isDimmed(e.source) && isDimmed(e.target) ? ['dimmed'] : [];
+      states['e' + i] = [...graph.getElementState('e' + i).filter(s => !OWN_STATES.includes(s)), ...own];
+    });
+    graph.setElementState(states, false);
   }
+
+  document.getElementById('fit').addEventListener('click', () => graph.fitView({ when: 'always', direction: 'both' }, { duration: 400, easing: 'ease-out' }));
+  document.getElementById('zoomIn').addEventListener('click', () => graph.zoomBy(1.25, { duration: 200 }));
+  document.getElementById('zoomOut').addEventListener('click', () => graph.zoomBy(.8, { duration: 200 }));
+  document.getElementById('centerFocus').addEventListener('click', () => { if (byId.has(DATA.focus)) graph.focusElement(DATA.focus, { duration: 400, easing: 'ease-out' }); });
+  document.getElementById('relayout').addEventListener('click', () => enter());
+
+  const minimapToggle = document.getElementById('minimapToggle');
+  minimapToggle.addEventListener('click', () => {
+    const on = !document.body.classList.contains('with-minimap');
+    document.body.classList.toggle('with-minimap', on);
+    minimapToggle.classList.toggle('pressed', on);
+    minimapToggle.title = on ? 'Esconder o minimapa' : 'Mostrar o minimapa';
+    graph.setPlugins(plugins => [...plugins.filter(p => p.key !== 'minimap'), ...(on ? [{
+      type: 'minimap', key: 'minimap', container: document.getElementById('minimapBox'), size: [200, 130], padding: 8, delay: 80,
+      containerStyle: { border: 'none', background: 'transparent' },
+      maskStyle: { border: `1.5px solid ${THEME.accent}`, background: rgba(THEME.accent, .12), borderRadius: '4px' },
+    }] : [])]);
+    graph.render();
+  });
+
+  /** Bolhas por pacote: só pacotes com duas ou mais classes no diagrama, os maiores primeiro. */
+  const packagesButton = document.getElementById('packages');
+  const packageGroups = (() => {
+    const groups = new Map();
+    DATA.nodes.forEach(n => groups.set(n.pkg || '(padrão)', [...(groups.get(n.pkg || '(padrão)') || []), n.id]));
+    return [...groups.entries()].filter(([, ids]) => ids.length > 1).sort((a, b) => b[1].length - a[1].length).slice(0, PACKAGE_COLORS.length);
+  })();
+  let showPackages = false;
+  packagesButton.disabled = !packageGroups.length;
+  if (!packageGroups.length) packagesButton.title = 'Nenhum pacote tem duas ou mais classes no diagrama';
+  packagesButton.addEventListener('click', () => {
+    showPackages = !showPackages;
+    packagesButton.classList.toggle('pressed', showPackages);
+    graph.setPlugins(plugins => [...plugins.filter(p => !String(p.key || '').startsWith('pkg-')), ...(showPackages ? packageGroups.map(([pkg, ids], i) => ({
+      type: 'bubble-sets', key: 'pkg-' + i, members: ids,
+      fill: PACKAGE_COLORS[i], fillOpacity: .09, stroke: PACKAGE_COLORS[i], strokeOpacity: .55, lineWidth: 1.2,
+      label: true, labelText: pkg.substring(pkg.lastIndexOf('.') + 1), labelPlacement: 'bottom', labelCloseToPath: true, labelAutoRotate: false,
+      labelFill: '#fff', labelFontSize: 10.5, labelFontWeight: 600, labelFontFamily: FONT,
+      labelBackground: true, labelBackgroundFill: PACKAGE_COLORS[i], labelBackgroundRadius: 6, labelPadding: [1, 7],
+    })) : [])]);
+    graph.render();
+  });
 
   const search = document.getElementById('search'), matches = document.getElementById('matches');
   search.addEventListener('input', () => {
     const text = search.value.trim().toLowerCase();
-    cy.nodes().removeClass('match');
-    const found = text ? cy.nodes().filter(n => n.data('name').toLowerCase().includes(text)) : cy.collection();
-    found.addClass('match');
-    matches.textContent = text ? (found.length ? `${found.length}` : 'nenhuma') : '';
+    matchIds = new Set(text ? DATA.nodes.filter(n => n.name.toLowerCase().includes(text)).map(n => n.id) : []);
+    matches.textContent = text ? (matchIds.size ? `${matchIds.size}` : 'nenhuma') : '';
+    applyStates();
   });
   search.addEventListener('keydown', e => {
-    if (e.key === 'Enter') { const first = cy.nodes('.match').first(); if (first.nonempty()) select(first.id()); }
+    if (e.key === 'Enter') { const first = [...matchIds][0]; if (first) select(first); }
     if (e.key === 'Escape') { search.value = ''; search.dispatchEvent(new Event('input')); search.blur(); }
   });
   document.addEventListener('keydown', e => {
@@ -557,9 +695,7 @@
     if (e.key === 'Escape') closeHelp();
   });
 
-  let changes = DATA.changes, vcs = DATA.vcs, highlighting = false, riskFilter = null, infoId = null;
   const highlightButton = document.getElementById('highlightChanges');
-
   function changedCount() { return DATA.nodes.filter(n => changes[n.id]).length; }
   function chip(iconName, value, text, cls = '', title = '') {
     return `<span class="chip ${cls}" title="${escapeHtml(title)}">${icon(iconName, 12)}<b>${value}</b>${text}</span>`;
@@ -588,30 +724,21 @@
       `title="Destacar as classes com risco ${RISK[key].name}"><span class="dot ${key}"></span><b>${counts[key]}</b>${RISK[key].name}</span>`).join('');
     document.querySelectorAll('#riskbar [data-risk], #riskKeys [data-risk]').forEach(el => el.addEventListener('click', () => {
       riskFilter = riskFilter === el.dataset.risk ? null : el.dataset.risk;
-      renderDistribution(); renderHighlight();
+      renderDistribution(); applyStates();
     }));
   }
-  function renderHighlight() {
-    cy.batch(() => {
-      cy.elements().removeClass('dimmed');
-      cy.nodes().filter(n => (highlighting && !n.hasClass('changed')) || (riskFilter && n.data('risk') !== riskFilter)).addClass('dimmed');
-      cy.edges().filter(e => e.source().hasClass('dimmed') && e.target().hasClass('dimmed')).addClass('dimmed');
-    });
-    highlightButton.classList.toggle('pressed', highlighting);
-  }
   function applyChanges() {
-    cy.nodes().forEach(node => node.toggleClass('changed', !!changes[node.id()]));
     const changed = changedCount();
     if (!changed) highlighting = false;
     highlightButton.disabled = !changed;
+    highlightButton.classList.toggle('pressed', highlighting);
     highlightButton.title = changed
       ? 'Apaga as demais classes para destacar as que têm alterações não commitadas'
       : (vcs ? 'Nenhuma classe do diagrama tem alterações não commitadas' : 'O projeto não usa controle de versão');
-    renderHighlight();
     renderSummary();
     if (infoId && document.getElementById('info').style.display === 'block') showInfo(infoId);
   }
-  highlightButton.addEventListener('click', () => { highlighting = !highlighting; renderHighlight(); });
+  highlightButton.addEventListener('click', () => { highlighting = !highlighting; highlightButton.classList.toggle('pressed', highlighting); applyStates(); });
 
   /** Painéis minimizados ficam só com o título; a escolha é lembrada pela IDE. */
   const prefs = { legend: !!DATA.prefs.legend, info: !!DATA.prefs.info };
@@ -648,9 +775,10 @@
         ${legendItem('<span class="swatch-edge" style="border-color: var(--cycle)"></span>', 'ciclo')}
       </div></div>
       <div class="lg-section"><div class="lg-title">Marcas</div><div class="lg-grid">
-        ${legendItem('<span class="swatch-node" style="border: 3px double var(--highSolid)"></span>', '⚠ risco médio ou alto sem testes', true)}
-        ${legendItem('<span class="swatch-ring"></span>', 'alterada, sem commit')}
+        ${legendItem(`<span class="swatch-badge" style="background: var(--highSolid)">⚠</span>`, 'risco médio ou alto sem testes', true)}
+        ${legendItem(`<span class="swatch-badge" style="background: var(--changed)">●</span>`, 'alterada, sem commit')}
         ${legendItem('<span class="swatch-orbit"></span>', 'anel: 1 passo a mais')}
+        ${legendItem('<span class="swatch-bubble"></span>', 'bolha: mesmo pacote', true)}
       </div></div>
     </div>`;
   renderCollapsed(legendPanel, 'collapseLegend', prefs.legend, 'a legenda');
@@ -668,23 +796,9 @@
   document.getElementById('closeHelp').addEventListener('click', closeHelp);
   helpBackdrop.addEventListener('click', e => { if (e.target === helpBackdrop) closeHelp(); });
 
-  /** Ao passar o mouse, a vizinhança fica acesa e as setas correm no sentido da dependência. */
   const tip = document.getElementById('tip');
-  let flowFrame = 0, flowEdges = null, flowOffset = 0;
-  function startFlow(edges) {
-    stopFlow();
-    flowEdges = edges;
-    if (REDUCED_MOTION || edges.empty()) return;
-    const step = () => { flowOffset -= .7; flowEdges.style('line-dash-offset', flowOffset); flowFrame = requestAnimationFrame(step); };
-    flowFrame = requestAnimationFrame(step);
-  }
-  function stopFlow() {
-    cancelAnimationFrame(flowFrame);
-    if (flowEdges) flowEdges.removeStyle('line-dash-offset');
-    flowEdges = null;
-  }
-  function showTip(node) {
-    const n = byId.get(node.id()), change = changes[n.id];
+  function showTip(id) {
+    const n = byId.get(id), change = changes[id];
     tip.innerHTML = `
       <div class="tip-head">${kindBadge(n.kind, 16)}<span>${escapeHtml(n.name)}</span></div>
       <div class="tip-grid"><span>${icon('arrowIn', 12)}<b>${n.afferent}</b> dependem</span><span>${icon('arrowOut', 12)}<b>${n.efferent}</b> usa</span></div>
@@ -692,34 +806,21 @@
         <span class="badge ${n.coverage}">${shieldBadge(n.coverage, 12)}${escapeHtml(n.coverageLabel)}</span>
         ${change ? `<span class="badge changed">${icon('git', 11)}${escapeHtml(change.label)}</span>` : ''}</div>
       <div class="tip-hint">Clique para detalhes · dois cliques abre o código</div>`;
-    const p = node.renderedPosition(), half = node.renderedOuterHeight() / 2;
-    const below = p.y - half < 150;
+    const [x, y] = graph.getViewportByCanvas(graph.getElementPosition(id));
+    const half = nodeInfo.get(id).h / 2 * graph.getZoom() + 8;
+    const below = y - half < 150;
     tip.classList.toggle('below', below);
-    tip.style.left = Math.min(Math.max(p.x, 110), cy.width() - 110) + 'px';
-    tip.style.top = (below ? p.y + half : p.y - half) + 'px';
+    tip.style.left = Math.min(Math.max(x, 110), window.innerWidth - 110) + 'px';
+    tip.style.top = (below ? y + half : y - half) + 'px';
     tip.classList.add('show');
   }
   function hideTip() { tip.classList.remove('show'); }
 
-  cy.on('mouseover', 'node', e => {
-    const hood = e.target.closedNeighborhood();
-    cy.batch(() => {
-      cy.elements().not(hood).addClass('faded');
-      hood.edges().addClass('highlight');
-      e.target.addClass('hover');
-    });
-    startFlow(hood.edges());
-    showTip(e.target);
-  });
-  cy.on('mouseout', 'node', () => {
-    stopFlow();
-    cy.elements().removeClass('faded highlight hover');
-    hideTip();
-  });
-  cy.on('viewport drag', hideTip);
-  cy.on('tap', 'node', e => { hideTip(); showInfo(e.target.id()); ironDomeSend('select:' + e.target.id()); });
-  cy.on('dbltap', 'node', e => ironDomeSend('open:' + e.target.id()));
-  cy.on('tap', e => { if (e.target === cy) document.getElementById('info').style.display = 'none'; });
+  graph.on('node:pointerenter', e => showTip(e.target.id));
+  graph.on('node:pointerleave', hideTip);
+  graph.on('node:click', e => { hideTip(); select(e.target.id, false); ironDomeSend('select:' + e.target.id); });
+  graph.on('node:dblclick', e => ironDomeSend('open:' + e.target.id));
+  graph.on('canvas:click', () => { document.getElementById('info').style.display = 'none'; selectedId = null; applyStates(); });
 
   function why(topic) { return `<button class="why" data-topic="${topic}" title="O que é isso?">?</button>`; }
   function nodeList(ids) {
@@ -775,8 +876,9 @@
   }
   function showInfo(id) {
     infoId = id;
-    const n = byId.get(id), node = cy.getElementById(id), risk = RISK[n.risk];
-    const uses = node.outgoers('node').map(o => o.id()), usedBy = node.incomers('node').map(o => o.id());
+    const n = byId.get(id), risk = RISK[n.risk];
+    const uses = DATA.edges.filter(e => e.source === id).map(e => e.target).filter((v, i, a) => a.indexOf(v) === i);
+    const usedBy = DATA.edges.filter(e => e.target === id).map(e => e.source).filter((v, i, a) => a.indexOf(v) === i);
     const info = document.getElementById('info');
     info.style.setProperty('--risk', risk.solid);
     info.innerHTML = `
@@ -847,21 +949,47 @@
     if (!open) box.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }
 
-  function select(id) {
-    const node = cy.getElementById(id);
-    if (node.empty()) return;
-    cy.nodes().unselect();
-    node.select();
-    cy.animate({ center: { eles: node }, zoom: Math.max(cy.zoom(), 1) }, { duration: 350, easing: 'ease-out-cubic' });
+  function select(id, recenter = true) {
+    if (!byId.has(id)) return;
+    selectedId = id;
+    applyStates();
+    if (recenter) graph.focusElement(id, { duration: 400, easing: 'ease-out' });
     showInfo(id);
   }
-  function setChanges(next, nextVcs) { changes = next; vcs = nextVcs; applyChanges(); }
+  function setChanges(next, nextVcs) {
+    changes = next; vcs = nextVcs;
+    graph.updateNodeData(DATA.nodes.map(n => ({ id: n.id, data: { changeLabel: changes[n.id]?.label || null } })));
+    graph.draw().then(applyStates);
+    applyChanges();
+  }
   window.ironDome = { select, setChanges };
 
-  applyChanges();
-  renderDistribution();
-  runLayout();
-  if (byId.has(DATA.focus)) showInfo(DATA.focus);
+  /** Entrada: as classes saem do centro do radar e se espalham até os anéis. Se a animação não terminar, elas vão direto para o lugar. */
+  async function enter() {
+    const final = Object.fromEntries([...layout.positions].map(([id, p]) => [id, [p.x, p.y]]));
+    center = { x: 0, y: 0 };
+    if (REDUCED_MOTION) { await graph.translateElementTo(final, false); drawRings(); return; }
+    await graph.translateElementTo(Object.fromEntries(Object.keys(final).map(id => [id, [0, 0]])), false);
+    followViewport(900);
+    const finished = await Promise.race([graph.translateElementTo(final, true).then(() => true), new Promise(done => setTimeout(() => done(false), 1500))]);
+    if (!finished) await graph.translateElementTo(final, false);
+    drawRings();
+  }
+
+  (async () => {
+    await graph.render();
+    if (!REDUCED_MOTION) graph.setOptions({ animation: { duration: 650, easing: 'ease-out' } });
+    await graph.fitView({ when: 'always', direction: 'both' }, false);
+    rendered = true;
+    drawRings();
+    document.getElementById('graph').classList.add('ready');
+    document.getElementById('rings').classList.add('ready');
+    radar.classList.add('ready');
+    applyChanges();
+    renderDistribution();
+    if (byId.has(DATA.focus)) select(DATA.focus, false);
+    await enter();
+  })();
 </script>
 </body>
 </html>

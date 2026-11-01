@@ -54,7 +54,7 @@ object MetricGuide {
         "changes",
         "Alterações não commitadas",
         "Classes cujo arquivo foi mexido e ainda não entrou num commit do git, as mesmas da aba Alterações: " +
-            "modificadas, movidas, novas ou ainda fora do git. No diagrama elas ganham um contorno azul. São " +
+            "modificadas, movidas, novas ou ainda fora do git. No diagrama elas ganham uma etiqueta azul embaixo. São " +
             "essas mudanças que vão para o próximo commit, então junte com o risco: uma classe alterada com " +
             "risco médio ou alto merece uma revisão cuidadosa do diff e os testes rodando antes do commit.",
     )
@@ -67,9 +67,10 @@ object MetricGuide {
             "Cada caixa é uma classe e a seta sai de quem usa para quem é usado. Seta tracejada indica herança " +
             "ou implementação de interface. A cor da caixa mostra o risco ao alterar: verde é baixo, amarelo é médio " +
             "e vermelho é alto, e as de risco alto ganham um brilho. O ícone à esquerda é o tipo (C classe, A abstrata, " +
-            "I interface, E enum, @ anotação) e o escudo à direita mostra os testes. O sinal ⚠ e a borda dupla marcam " +
-            "classes com risco médio ou alto e sem testes, e o contorno azul marca classes com alterações ainda não " +
-            "commitadas. Passe o mouse para ver um resumo e as ligações acesas, clique numa classe para ver os detalhes " +
+            "I interface, E enum, @ anotação) e o escudo à direita mostra os testes. A etiqueta vermelha ⚠ em cima marca " +
+            "classes com risco médio ou alto e sem testes, e a etiqueta azul embaixo marca classes com alterações ainda não " +
+            "commitadas. O botão Pacotes envolve as classes do mesmo pacote numa bolha colorida e o botão do mapa, no canto, " +
+            "mostra um minimapa. Passe o mouse para ver um resumo e as ligações acesas, clique numa classe para ver os detalhes " +
             "e dê dois cliques para abrir o código.",
     )
 
