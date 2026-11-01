@@ -65,6 +65,12 @@ abstract class RichTreeCellRenderer : TreeCellRenderer {
             line.add(coloredText().apply { append(text, attributes) })
         }
 
+        /** Trechos com estilos diferentes num texto só, sem o espaço que fica entre componentes. */
+        fun styled(fragments: List<Pair<String, SimpleTextAttributes>>) {
+            if (fragments.isEmpty()) return
+            line.add(coloredText().apply { fragments.forEach { (text, attributes) -> append(text, attributes) } })
+        }
+
         fun pill(text: String, tone: Tone, bold: Boolean = false) {
             line.add(Pill(text, tone, bold))
         }

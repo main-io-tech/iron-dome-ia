@@ -337,13 +337,15 @@ class TestsPanel(private val project: Project) : SimpleToolWindowPanel(true, tru
     }
 
     private fun detailsOf(item: TestNode): String = buildString {
-        val title = if (item.kind == TestKind.KEY) item.classKey?.let { "[$it]" } ?: TestResults.NO_KEY else item.label
-        append("<h2 style='margin: 0 0 6px 0'>${escape(title)}</h2>")
+        val name = if (item.kind == TestKind.KEY) null else DisplayNameFormat.parse(item.label)
+        val title = name?.let(::nameHtml) ?: escape(item.classKey?.let { "[$it]" } ?: TestResults.NO_KEY)
+        append("<h2 style='margin: 0 0 6px 0'>$title</h2>")
         append("<p>${pill("${symbolOf(item.outcome)} ${item.outcome.label}", toneOf(item.outcome))}")
         TestResults.formatDuration(item.durationMillis)?.let { append("&nbsp;&nbsp;${gray(it)}") }
         item.convention?.problem?.let { append("&nbsp;&nbsp;${pill("⚠ $it", Tone.YELLOW)}") }
         append("</p>")
         item.codeReference?.let { append("<p>${gray("<code>${escape(it)}</code>")}</p>") }
+        name?.takeIf { it.structured }?.let { appendScenario(it) }
         if (item.kind == TestKind.TEST) {
             item.errorMessage?.let { append(section("Motivo")).append("<p>${escape(it).replace("\n", "<br>")}</p>") }
             item.stacktrace?.let { trace ->
@@ -364,6 +366,26 @@ class TestsPanel(private val project: Project) : SimpleToolWindowPanel(true, tru
                 append("</li>")
             }
             append("</ul>")
+        }
+    }
+
+    /** As etapas dado/quando/então numa tabela e os parâmetros da execução, cada um com o seu valor. */
+    private fun StringBuilder.appendScenario(name: DisplayNameParts) {
+        if (name.steps.any { it.role != null }) {
+            append(section("Cenário")).append("<table cellpadding='3' cellspacing='0'>")
+            for (step in name.steps) {
+                val label = step.role?.let { pill(it.label.uppercase(), toneOf(it)) }.orEmpty()
+                append("<tr><td valign='top' nowrap>$label</td><td>${fragmentsHtml(step.fragments)}</td></tr>")
+            }
+            append("</table>")
+        }
+        if (name.parameters.isNotEmpty()) {
+            append(section("Parâmetros desta execução")).append("<table cellpadding='3' cellspacing='0'>")
+            name.parameters.forEachIndexed { i, parameter ->
+                val label = parameter.name ?: "argumento ${i + 1}"
+                append("<tr><td valign='top' nowrap>${gray("<b>${escape(label)}</b>")}</td><td>${codeSpan(parameter.value, Tone.PURPLE)}</td></tr>")
+            }
+            append("</table>")
         }
     }
 
@@ -453,19 +475,19 @@ class TestsPanel(private val project: Project) : SimpleToolWindowPanel(true, tru
                 }
                 TestKind.CLASS -> {
                     row.icon(iconOf(item.outcome))
-                    row.text(item.label, if (failed) FAILED_BOLD else SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
+                    name(row, item.label, if (failed) FAILED_BOLD else SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
                     item.codeName?.let { row.text(it, SimpleTextAttributes.GRAYED_SMALL_ATTRIBUTES) }
                     item.convention?.problem?.let { row.pill("⚠ $it", Tone.YELLOW) }
                     progress(row, item)
                 }
                 TestKind.GROUP -> {
                     row.icon(iconOf(item.outcome))
-                    row.text(item.label, if (failed) FAILED_PLAIN else SimpleTextAttributes.REGULAR_ATTRIBUTES)
+                    name(row, item.label, if (failed) FAILED_PLAIN else SimpleTextAttributes.REGULAR_ATTRIBUTES)
                     progress(row, item)
                 }
                 TestKind.TEST -> {
                     row.icon(iconOf(item.outcome))
-                    row.text(item.label, if (failed) FAILED_PLAIN else SimpleTextAttributes.REGULAR_ATTRIBUTES)
+                    name(row, item.label, if (failed) FAILED_PLAIN else SimpleTextAttributes.REGULAR_ATTRIBUTES)
                     item.codeName?.let { row.text(it, SimpleTextAttributes.GRAYED_SMALL_ATTRIBUTES) }
                     if (item.outcome == TestOutcome.IGNORED) row.pill("ignorado", Tone.YELLOW)
                     TestResults.formatDuration(item.durationMillis)?.let { row.text(it, SimpleTextAttributes.GRAYED_SMALL_ATTRIBUTES) }
@@ -473,6 +495,29 @@ class TestsPanel(private val project: Project) : SimpleToolWindowPanel(true, tru
                 }
             }
             row.tooltip(item.errorMessage?.lineSequence()?.firstOrNull() ?: item.codeReference)
+        }
+
+        /**
+         * O nome com as partes destacadas: número da execução, chave, etiquetas das etapas dado/quando/então e,
+         * no texto, verbo de expectativa, código, números, exceções e o resultado depois da seta.
+         */
+        private fun name(row: Row, label: String, base: SimpleTextAttributes) {
+            val name = DisplayNameFormat.parse(label)
+            name.index?.let { row.pill("#$it", Tone.GRAY, bold = true) }
+            name.key?.let { row.pill(it, Tone.forKey(it), bold = true) }
+            for (step in name.steps) {
+                step.role?.let { row.pill(step.keyword.orEmpty().uppercase(), toneOf(it), bold = true) }
+                row.styled(step.fragments.map { fragmentText(it) to attributesOf(it.style, base) })
+            }
+            row.styled(
+                name.parameters.flatMapIndexed { i, parameter ->
+                    listOfNotNull(
+                        ("  ·  " to SimpleTextAttributes.GRAYED_ATTRIBUTES).takeIf { i > 0 },
+                        parameter.name?.let { "$it = " to SimpleTextAttributes.GRAYED_ATTRIBUTES },
+                        padded(parameter.value) to attributesOf(FragmentStyle.CODE, base),
+                    )
+                },
+            )
         }
 
         /** Barra com a proporção de cada resultado, quantos passaram e os destaques de falhas e ignorados. */
@@ -534,6 +579,64 @@ class TestsPanel(private val project: Project) : SimpleToolWindowPanel(true, tru
             TestOutcome.PASSED -> AllIcons.RunConfigurations.TestPassed
             TestOutcome.NOT_RUN -> AllIcons.RunConfigurations.TestNotRan
         }
+
+        fun toneOf(role: StepRole): Tone = when (role) {
+            StepRole.GIVEN -> Tone.BLUE
+            StepRole.WHEN -> Tone.PURPLE
+            StepRole.THEN -> Tone.TEAL
+        }
+
+        fun attributesOf(style: FragmentStyle, base: SimpleTextAttributes): SimpleTextAttributes {
+            val bold = base.style or SimpleTextAttributes.STYLE_BOLD
+            return when (style) {
+                FragmentStyle.TEXT -> base
+                FragmentStyle.VERB -> base.derive(bold, null, null, null)
+                FragmentStyle.NEGATION -> SimpleTextAttributes(bold, Tone.ORANGE.foreground)
+                FragmentStyle.CODE -> SimpleTextAttributes(Tone.PURPLE.background, Tone.PURPLE.foreground, null, base.style or SimpleTextAttributes.STYLE_OPAQUE)
+                FragmentStyle.ERROR -> SimpleTextAttributes(Tone.RED.background, Tone.RED.foreground, null, base.style or SimpleTextAttributes.STYLE_OPAQUE)
+                FragmentStyle.NUMBER -> SimpleTextAttributes(bold, Tone.BLUE.foreground)
+                FragmentStyle.ARROW -> SimpleTextAttributes(bold, Tone.GRAY.accent)
+                FragmentStyle.RESULT -> SimpleTextAttributes(bold, Tone.GREEN.foreground)
+            }
+        }
+
+        /** Código e exceções ganham um respiro dentro do fundo colorido. */
+        fun fragmentText(fragment: Fragment) =
+            if (fragment.style == FragmentStyle.CODE || fragment.style == FragmentStyle.ERROR) padded(fragment.text) else fragment.text
+
+        fun padded(text: String) = "\u2009$text\u2009"
+
+        fun nameHtml(name: DisplayNameParts): String = buildString {
+            name.index?.let { append(pill("#$it", Tone.GRAY)).append("&nbsp;") }
+            name.key?.let { append(pill(it, Tone.forKey(it))).append("&nbsp;") }
+            name.steps.forEachIndexed { i, step ->
+                if (i > 0) append(" ")
+                step.role?.let { append(pill(step.keyword.orEmpty().uppercase(), toneOf(it))).append("&nbsp;") }
+                append(fragmentsHtml(step.fragments))
+            }
+            name.parameters.forEachIndexed { i, parameter ->
+                if (i > 0) append(gray(" · "))
+                parameter.name?.let { append(gray("${escape(it)} = ")) }
+                append(codeSpan(parameter.value, Tone.PURPLE))
+            }
+        }
+
+        fun fragmentsHtml(fragments: List<Fragment>): String = fragments.joinToString("") { fragment ->
+            val text = escape(fragment.text)
+            when (fragment.style) {
+                FragmentStyle.TEXT -> text
+                FragmentStyle.VERB -> "<b>$text</b>"
+                FragmentStyle.NEGATION -> color(Tone.ORANGE.foreground, "<b>$text</b>")
+                FragmentStyle.CODE -> codeSpan(fragment.text, Tone.PURPLE)
+                FragmentStyle.ERROR -> codeSpan(fragment.text, Tone.RED)
+                FragmentStyle.NUMBER -> color(Tone.BLUE.foreground, "<b>$text</b>")
+                FragmentStyle.ARROW -> color(Tone.GRAY.accent, "<b>&nbsp;→&nbsp;</b>")
+                FragmentStyle.RESULT -> color(Tone.GREEN.foreground, "<b>$text</b>")
+            }
+        }
+
+        fun codeSpan(text: String, tone: Tone) =
+            "<span style='background-color:${hex(tone.background)}; color:${hex(tone.foreground)}; font-family: monospace'>&nbsp;${escape(text)}&nbsp;</span>"
 
         fun toneOf(outcome: TestOutcome): Tone = when (outcome) {
             TestOutcome.PASSED -> Tone.GREEN
