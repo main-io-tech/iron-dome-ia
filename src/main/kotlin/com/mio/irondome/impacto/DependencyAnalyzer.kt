@@ -4,7 +4,6 @@ import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.project.guessProjectDir
 import com.intellij.openapi.vfs.VfsUtilCore
 import com.intellij.psi.JavaPsiFacade
 import com.intellij.psi.PsiClass
@@ -17,6 +16,7 @@ import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.psi.search.GlobalSearchScopesCore
 import com.intellij.psi.search.searches.ReferencesSearch
 import com.intellij.util.Processor
+import com.mio.irondome.base.rootDir
 import org.jetbrains.uast.UClass
 import org.jetbrains.uast.UFile
 import org.jetbrains.uast.UMethod
@@ -204,7 +204,7 @@ class DependencyAnalyzer(
 
     private fun relativePath(psiClass: PsiClass): String? {
         val file = psiClass.navigationElement.containingFile?.virtualFile ?: return null
-        val base = project.guessProjectDir() ?: return file.path
+        val base = project.rootDir() ?: return file.path
         return VfsUtilCore.getRelativePath(file, base) ?: file.path
     }
 

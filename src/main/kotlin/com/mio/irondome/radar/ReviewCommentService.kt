@@ -13,11 +13,11 @@ import com.intellij.openapi.editor.EditorKind
 import com.intellij.openapi.editor.RangeMarker
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.project.guessProjectDir
 import com.intellij.openapi.util.TextRange
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VfsUtilCore
 import com.intellij.openapi.vfs.VirtualFile
+import com.mio.irondome.base.rootDir
 import com.mio.irondome.comando.ReviewArchive
 import com.mio.irondome.comando.ReviewMarkdown
 import java.io.IOException
@@ -77,7 +77,7 @@ class ReviewCommentService(private val project: Project) : PersistentStateCompon
 
     fun relativePath(file: VirtualFile): String? {
         if (!file.isInLocalFileSystem) return null
-        val baseDir = project.guessProjectDir() ?: return null
+        val baseDir = project.rootDir() ?: return null
         return VfsUtilCore.getRelativePath(file, baseDir)
     }
 
@@ -183,7 +183,7 @@ class ReviewCommentService(private val project: Project) : PersistentStateCompon
         outside.forEach { (path, _) -> Files.deleteIfExists(path) }
     }
 
-    fun findFile(path: String): VirtualFile? = project.guessProjectDir()?.findFileByRelativePath(path)
+    fun findFile(path: String): VirtualFile? = project.rootDir()?.findFileByRelativePath(path)
 
     /**
      * Rascunhos, que ainda não estão no `.md`, saem na hora. Os demais continuam no editor, riscados,
