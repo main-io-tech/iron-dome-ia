@@ -202,9 +202,74 @@ class ReviewCommentServiceTest : HeavyPlatformTestCase() {
         assertEquals(0, service.activeReviewId)
     }
 
-    private fun comment(file: VirtualFile, text: String): ReviewComment {
+    fun testHiddenResolvedCommentsCanBeShownAgainAfterTheReviewEnds() {
+        val resolved = comment(first, "interceptado")
+        service.exportAll()
+        val file = reviewFile()
+        resolveAll(file)
+
+        service.hide(listOf(resolved))
+        comment(second, "abre a próxima revisão")
+
+        assertTrue("ocultar não tira do estado", resolved in service.hiddenComments())
+        assertTrue(service.resolvedComments().isEmpty())
+        service.show(service.hiddenComments())
+        assertFalse(resolved.dismissed)
+        assertEquals(listOf(resolved), service.resolvedComments())
+    }
+
+    fun testRestoreBringsBackResolvedCommentsThatLeftTheState() {
+        val resolved = comment(first, "interceptado")
+        service.exportAll()
+        val file = reviewFile()
+        resolveAll(file)
+        val saved = ReviewMarkdown.parse(Files.readString(file))
+        service.remove(listOf(resolved))
+
+        service.restore(1, saved)
+        service.restore(1, saved)
+
+        val restored = service.findComment(1, resolved.id)!!
+        assertTrue(restored.resolved)
+        assertEquals("interceptado", restored.text)
+        assertEquals("restaurar de novo não duplica", 1, service.resolvedComments().size)
+    }
+
+    fun testPullRequestCommentsStayOutOfTheAiReview() {
+        val forAi = comment(first, "para a IA")
+        service.startPullRequestReview(12)
+        val forPr = comment(second, "para o PR")
+        service.stopPullRequestReview()
+
+        service.exportAll()
+
+        assertEquals(12, forPr.pullRequest)
+        assertEquals(0, forPr.reviewId)
+        assertTrue(forPr.id.startsWith("P"))
+        assertEquals(listOf(forAi), service.activeComments())
+        assertEquals(listOf(forPr), service.pullRequestComments(12))
+        assertFalse(Files.readString(reviewFile()).contains("para o PR"))
+        assertTrue("rascunho de PR não pede disparo para a IA", service.pendingPaths().isEmpty())
+    }
+
+    fun testOnlyPullRequestCommentsKeepSuggestedCode() {
+        val forAi = comment(first, "para a IA", suggestion = "val a = 10")
+        service.startPullRequestReview(12)
+        val forPr = comment(second, "para o PR", suggestion = "val c = 30\n")
+        val unchanged = comment(second, "sem mudança", suggestion = "val c = 3")
+
+        assertEquals("", forAi.suggestion)
+        assertEquals("val c = 30", forPr.suggestion)
+        assertEquals("sugestão igual ao trecho não sugere nada", "", unchanged.suggestion)
+
+        service.update(forPr, "para o PR", discuss = false, suggestion = "")
+        assertEquals("", forPr.suggestion)
+        service.stopPullRequestReview()
+    }
+
+    private fun comment(file: VirtualFile, text: String, suggestion: String = ""): ReviewComment {
         val document = FileDocumentManager.getInstance().getDocument(file)!!
-        return service.addComment(file, document, 0..0, text, discuss = false)!!
+        return service.addComment(file, document, 0..0, text, discuss = false, suggestion = suggestion)!!
     }
 
     private fun reviewFile(): Path =

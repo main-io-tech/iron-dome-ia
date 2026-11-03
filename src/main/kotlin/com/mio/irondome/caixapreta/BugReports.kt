@@ -21,7 +21,9 @@ import com.intellij.openapi.util.SystemInfo
 import com.intellij.openapi.vcs.ProjectLevelVcsManager
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.wm.ToolWindowManager
+import com.intellij.ui.jcef.JBCefApp
 import com.mio.irondome.base.ReviewToolWindowFactory
+import com.mio.irondome.base.TabFailures
 import java.awt.image.BufferedImage
 import java.nio.file.Files
 import java.nio.file.Path
@@ -55,18 +57,15 @@ internal class BugContext(val activeTab: Mechanism?, val entries: List<Pair<Stri
                     "Sistema operacional" to "${SystemInfo.OS_NAME} ${SystemInfo.OS_VERSION} (${SystemInfo.OS_ARCH})",
                     "Java" to "${SystemInfo.JAVA_RUNTIME_VERSION} (${SystemInfo.JAVA_VENDOR})",
                     "Plugins opcionais" to listOf("com.intellij.java" to "Java", "JUnit" to "JUnit")
-                        .joinToString { (id, name) -> "$name ${if (enabled(id)) "ativo" else "inativo"}" },
+                        .joinToString { (id, name) -> "$name ${if (Compatibility.pluginEnabled(id)) "ativo" else "inativo"}" },
+                    "Navegador embutido (JCEF)" to if (runCatching { JBCefApp.isSupported() }.getOrDefault(false)) "disponível" else "indisponível",
+                    "Abas que não abriram" to TabFailures.all.entries.joinToString("; ") { (title, error) -> "$title ($error)" }.ifEmpty { "nenhuma" },
                     "Controle de versão" to ProjectLevelVcsManager.getInstance(project).allActiveVcss
                         .joinToString { it.displayName }.ifEmpty { "nenhum" },
                     "Aba ativa do Iron Dome IA" to (tab ?: "painel fechado"),
                     "Arquivo aberto" to openFile,
                 ),
             )
-        }
-
-        private fun enabled(id: String): Boolean {
-            val pluginId = PluginId.getId(id)
-            return PluginManagerCore.getPlugin(pluginId) != null && !PluginManagerCore.isDisabled(pluginId)
         }
     }
 }

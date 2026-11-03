@@ -1,14 +1,16 @@
 package com.mio.irondome.radar
 
 import com.intellij.icons.AllIcons
+import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.EditorCustomElementRenderer
 import com.intellij.openapi.editor.Inlay
+import com.intellij.openapi.editor.colors.EditorFontType
 import com.intellij.openapi.editor.markup.TextAttributes
 import com.intellij.util.ui.JBFont
 import com.intellij.util.ui.JBUI
+import com.mio.irondome.base.IronDomeIcons
 import java.awt.BasicStroke
 import java.awt.Color
-import java.awt.Component
 import java.awt.Font
 import java.awt.FontMetrics
 import java.awt.Graphics
@@ -22,7 +24,8 @@ import javax.swing.Icon
 /**
  * Cartão do comentário, desenhado abaixo das linhas comentadas, como no review do GitHub, ou no
  * topo do arquivo, quando o alvo é o arquivo inteiro.
- * Resolvidos aparecem recolhidos numa barra de uma linha; o cabeçalho alterna e o OK dispensa.
+ * Resolvidos aparecem recolhidos numa barra de uma linha; o cabeçalho alterna e o Ocultar tira do editor,
+ * de forma reversível pela aba Radar.
  * Pendentes e não salvos têm o botão Editar.
  */
 class ReviewCommentRenderer(
@@ -32,7 +35,7 @@ class ReviewCommentRenderer(
     private val indentPx: Int,
 ) : EditorCustomElementRenderer {
 
-    enum class Hit { NONE, TOGGLE, DISMISS, EDIT }
+    enum class Hit { NONE, TOGGLE, HIDE, EDIT }
 
     private val status = when {
         markedForRemoval -> CommentStatus.REMOVING
@@ -43,7 +46,7 @@ class ReviewCommentRenderer(
     private val resolved = status == CommentStatus.RESOLVED
     private val editable = status == CommentStatus.PENDING || status == CommentStatus.UNSAVED
     private val buttonLabel: String? = when {
-        resolved -> OK_LABEL
+        resolved -> HIDE_LABEL
         editable -> EDIT_LABEL
         else -> null
     }
@@ -53,61 +56,80 @@ class ReviewCommentRenderer(
     private val body = comment.text.trim().lines()
     private val headerText =
         if (collapsed) summaryOf(body)
+        else if (comment.pullRequest != 0) "Pedido para o PR #${comment.pullRequest}${if (comment.target == CommentTarget.FILE) " · arquivo inteiro" else ""}"
         else if (comment.target == CommentTarget.FILE) "Alvo: arquivo inteiro · ${ReviewCommentService.reviewName(comment.reviewId)}"
         else "Alvo para a IA · ${ReviewCommentService.reviewName(comment.reviewId)}"
+    private val unsentToPullRequest = comment.pullRequest != 0 && status == CommentStatus.UNSAVED
+    private val statusLabel = if (unsentToPullRequest) PULL_REQUEST_UNSENT else status.label
+    private val accent: Color = if (unsentToPullRequest) ReviewColors.pullRequestAccent else status.accent
+    private val background: Color = if (unsentToPullRequest) ReviewColors.pullRequestBackground else status.background
+    private val badgeBackground: Color = if (unsentToPullRequest) ReviewColors.pullRequestBadgeBackground else status.badgeBackground
+    private val badgeForeground: Color = if (unsentToPullRequest) ReviewColors.pullRequestBadgeForeground else status.badgeForeground
+    private val icon: Icon = if (comment.pullRequest != 0) IronDomeIcons.patrulha else ReviewIcons.comment
+    private val suggestion: List<String> =
+        if (comment.pullRequest != 0 && comment.suggestion.isNotBlank()) comment.suggestion.trimEnd().lines() else emptyList()
     private val chevron: Icon? = when {
         !resolved -> null
         collapsed -> AllIcons.General.ArrowRight
         else -> AllIcons.General.ArrowDown
     }
 
-    private class Fonts(component: Component) {
+    private class Fonts(editor: Editor) {
+        private val component = editor.contentComponent
         val title: Font = JBFont.label().asBold()
         val subtitle: Font = JBFont.label()
         val badge: Font = JBFont.small().asBold()
         val button: Font = JBFont.small().asBold()
         val body: Font = JBFont.label()
+        val code: Font = editor.colorsScheme.getFont(EditorFontType.PLAIN)
         val titleMetrics: FontMetrics = component.getFontMetrics(title)
         val subtitleMetrics: FontMetrics = component.getFontMetrics(subtitle)
         val badgeMetrics: FontMetrics = component.getFontMetrics(badge)
         val buttonMetrics: FontMetrics = component.getFontMetrics(button)
         val bodyMetrics: FontMetrics = component.getFontMetrics(body)
+        val codeMetrics: FontMetrics = component.getFontMetrics(code)
 
         val badgeHeight = badgeMetrics.height + JBUI.scale(2)
         val buttonHeight = buttonMetrics.height + JBUI.scale(4)
         val headerHeight = maxOf(ReviewIcons.comment.iconHeight, titleMetrics.height, badgeHeight, buttonHeight)
         val bodyLineHeight = bodyMetrics.height + JBUI.scale(2)
+        val codeLineHeight = codeMetrics.height
     }
 
     private class Geometry(val card: Rectangle, val header: Rectangle, val headerCenter: Int, val button: Rectangle?)
 
     override fun calcWidthInPixels(inlay: Inlay<*>): Int {
-        val fonts = Fonts(inlay.editor.contentComponent)
+        val fonts = Fonts(inlay.editor)
         val header = (chevron?.let { it.iconWidth + gap() } ?: 0) +
-            ReviewIcons.comment.iconWidth + gap() +
+            icon.iconWidth + gap() +
             fonts.titleMetrics.stringWidth(title) + gap() +
             fonts.subtitleMetrics.stringWidth(headerText) + 2 * gap() +
-            badgeWidth(fonts, status.label) +
+            badgeWidth(fonts, statusLabel) +
             (modeLabel?.let { gap() + badgeWidth(fonts, it) } ?: 0) +
             (if (buttonLabel != null) 2 * gap() + buttonWidth(fonts, buttonLabel) else 0)
         val text = if (collapsed) 0 else body.maxOfOrNull { fonts.bodyMetrics.stringWidth(it) } ?: 0
-        return indentPx + accentWidth() + 2 * padding() + maxOf(header, text, JBUI.scale(320))
+        val code = suggestion.maxOfOrNull { fonts.codeMetrics.stringWidth(it.expandTabs()) }?.let { it + 2 * padding() } ?: 0
+        return indentPx + accentWidth() + 2 * padding() + maxOf(header, text, code, JBUI.scale(320))
     }
 
     override fun calcHeightInPixels(inlay: Inlay<*>): Int {
-        val fonts = Fonts(inlay.editor.contentComponent)
+        val fonts = Fonts(inlay.editor)
         if (collapsed) return 2 * margin() + 2 * verticalPadding() + fonts.headerHeight
         return 2 * margin() + 2 * padding() + fonts.headerHeight + 2 * separatorGap() + 1 +
-            body.size * fonts.bodyLineHeight
+            body.size * fonts.bodyLineHeight + suggestionHeight(fonts)
     }
+
+    private fun suggestionHeight(fonts: Fonts): Int =
+        if (suggestion.isEmpty()) 0
+        else separatorGap() + fonts.bodyLineHeight + gap() + 2 * codePadding() + suggestion.size * fonts.codeLineHeight
 
     /** [point] em coordenadas do `contentComponent` do editor, como [Inlay.getBounds]. */
     fun hitTest(inlay: Inlay<*>, point: Point): Hit {
         if (buttonLabel == null) return Hit.NONE
         val bounds = inlay.bounds ?: return Hit.NONE
-        val geometry = geometry(bounds, Fonts(inlay.editor.contentComponent))
+        val geometry = geometry(bounds, Fonts(inlay.editor))
         return when {
-            geometry.button?.contains(point) == true -> if (resolved) Hit.DISMISS else Hit.EDIT
+            geometry.button?.contains(point) == true -> if (resolved) Hit.HIDE else Hit.EDIT
             resolved && geometry.header.contains(point) -> Hit.TOGGLE
             else -> Hit.NONE
         }
@@ -115,7 +137,7 @@ class ReviewCommentRenderer(
 
     override fun paint(inlay: Inlay<*>, g: Graphics, targetRegion: Rectangle, textAttributes: TextAttributes) {
         val editor = inlay.editor
-        val fonts = Fonts(editor.contentComponent)
+        val fonts = Fonts(editor)
         val geometry = geometry(targetRegion, fonts)
         val g2 = g.create() as Graphics2D
         try {
@@ -131,9 +153,9 @@ class ReviewCommentRenderer(
 
             val oldClip = g2.clip
             g2.clip(card)
-            g2.color = status.background
+            g2.color = background
             g2.fill(card)
-            g2.color = status.accent
+            g2.color = accent
             g2.fillRect(x, y, accentWidth(), height + 1)
             g2.clip = oldClip
 
@@ -141,7 +163,7 @@ class ReviewCommentRenderer(
             if (status == CommentStatus.UNSAVED) {
                 val dash = JBUI.scale(4).toFloat()
                 g2.stroke = BasicStroke(1f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_ROUND, 10f, floatArrayOf(dash, dash), 0f)
-                g2.color = status.accent
+                g2.color = accent
             }
             g2.draw(card)
             g2.stroke = BasicStroke()
@@ -155,7 +177,6 @@ class ReviewCommentRenderer(
                 cursor += it.iconWidth + gap()
             }
 
-            val icon = ReviewIcons.comment
             icon.paintIcon(editor.contentComponent, g2, cursor, headerCenter - icon.iconHeight / 2)
             cursor += icon.iconWidth + gap()
 
@@ -169,8 +190,8 @@ class ReviewCommentRenderer(
             g2.drawString(headerText, cursor, baselineFor(headerCenter, fonts.subtitleMetrics))
             cursor += fonts.subtitleMetrics.stringWidth(headerText) + 2 * gap()
 
-            paintBadge(g2, fonts, cursor, headerCenter, status.label, status.badgeBackground, status.badgeForeground)
-            cursor += badgeWidth(fonts, status.label) + gap()
+            paintBadge(g2, fonts, cursor, headerCenter, statusLabel, badgeBackground, badgeForeground)
+            cursor += badgeWidth(fonts, statusLabel) + gap()
             modeLabel?.let {
                 paintBadge(
                     g2, fonts, cursor, headerCenter, it,
@@ -200,6 +221,7 @@ class ReviewCommentRenderer(
                 }
                 lineTop += fonts.bodyLineHeight
             }
+            if (suggestion.isNotEmpty()) paintSuggestion(g2, fonts, editor, left, lineTop + separatorGap(), x + width - padding() - left)
         } finally {
             g2.dispose()
         }
@@ -223,6 +245,29 @@ class ReviewCommentRenderer(
         }
         return Geometry(card, header, headerCenter, button)
     }
+
+    private fun paintSuggestion(g2: Graphics2D, fonts: Fonts, editor: Editor, left: Int, top: Int, width: Int) {
+        g2.font = fonts.subtitle
+        g2.color = ReviewColors.mutedForeground
+        val label = if (comment.target == CommentTarget.LINES) SUGGESTION_LABEL else EXAMPLE_LABEL
+        g2.drawString(label, left, top + (fonts.bodyLineHeight - fonts.subtitleMetrics.height) / 2 + fonts.subtitleMetrics.ascent)
+        val boxTop = top + fonts.bodyLineHeight + gap()
+        val boxHeight = 2 * codePadding() + suggestion.size * fonts.codeLineHeight
+        val arc = JBUI.scale(6)
+        g2.color = ReviewColors.codeBackground
+        g2.fillRoundRect(left, boxTop, width, boxHeight, arc, arc)
+        g2.color = ReviewColors.cardBorder
+        g2.drawRoundRect(left, boxTop, width, boxHeight, arc, arc)
+        g2.font = fonts.code
+        g2.color = editor.colorsScheme.defaultForeground
+        var baseline = boxTop + codePadding() + fonts.codeMetrics.ascent
+        for (line in suggestion) {
+            g2.drawString(line.expandTabs(), left + padding(), baseline)
+            baseline += fonts.codeLineHeight
+        }
+    }
+
+    private fun String.expandTabs() = replace("\t", "    ")
 
     private fun paintBadge(
         g2: Graphics2D,
@@ -275,10 +320,15 @@ class ReviewCommentRenderer(
 
     private fun margin() = JBUI.scale(4)
 
+    private fun codePadding() = JBUI.scale(6)
+
     private companion object {
-        const val OK_LABEL = "OK"
+        const val HIDE_LABEL = "Ocultar"
         const val EDIT_LABEL = "Editar"
         const val DISCUSS_LABEL = "Discutir antes"
+        const val PULL_REQUEST_UNSENT = "Não enviado"
+        const val SUGGESTION_LABEL = "Código sugerido (substitui as linhas comentadas):"
+        const val EXAMPLE_LABEL = "Código de exemplo:"
         const val SUMMARY_MAX = 80
 
         fun summaryOf(body: List<String>): String {

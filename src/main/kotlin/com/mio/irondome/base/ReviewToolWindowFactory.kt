@@ -5,6 +5,9 @@ import com.intellij.openapi.Disposable
 import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.actionSystem.DefaultActionGroup
+import com.intellij.openapi.diagnostic.ControlFlowException
+import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.DumbAware
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
@@ -19,15 +22,34 @@ import javax.swing.JComponent
 class ReviewToolWindowFactory : ToolWindowFactory, DumbAware {
 
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
-        add(toolWindow, CommentsPanel(project), "Radar", IronDomeIcons.radar, "Os alvos marcados para a IA: comentários da revisão aberta e o histórico")
-        add(toolWindow, ChangesPanel(project), "Sentinela", IronDomeIcons.sentinela, "O perímetro vigiado: arquivos com alterações ainda não commitadas")
-        for (tab in ReviewToolWindowTab.EP_NAME.extensionList) {
-            add(toolWindow, tab.createComponent(project, toolWindow), tab.title, tab.icon, tab.description)
+        val actions = ActionManager.getInstance()
+        actions.getAction(TabErrorPanel.REPORT_BUG_ACTION)?.let { toolWindow.setTitleActions(listOf(it)) }
+        val gear = listOf(TabErrorPanel.COMPATIBILITY_ACTION, TabErrorPanel.ERROR_LOG_ACTION).mapNotNull(actions::getAction)
+        if (gear.isNotEmpty()) toolWindow.setAdditionalGearActions(DefaultActionGroup(gear))
+        add(toolWindow, "Radar", IronDomeIcons.radar, "Os alvos marcados para a IA: comentários da revisão aberta e o histórico") {
+            CommentsPanel(project)
         }
-        ActionManager.getInstance().getAction(REPORT_BUG_ACTION)?.let { toolWindow.setTitleActions(listOf(it)) }
+        add(toolWindow, "Sentinela", IronDomeIcons.sentinela, "O perímetro vigiado: arquivos com alterações ainda não commitadas") {
+            ChangesPanel(project)
+        }
+        for (tab in ReviewToolWindowTab.EP_NAME.extensionList) {
+            add(toolWindow, tab.title, tab.icon, tab.description) { tab.createComponent(project, toolWindow) }
+        }
     }
 
-    private fun add(toolWindow: ToolWindow, component: JComponent, title: String, icon: Icon?, description: String?) {
+    /** Uma aba que não abre não pode levar as outras junto: o erro vai para o log e para o lugar dela. */
+    private fun add(toolWindow: ToolWindow, title: String, icon: Icon?, description: String?, create: () -> JComponent) {
+        val missing = IdeSupport.missing[title]
+        val component = if (missing != null) {
+            UnavailableTabPanel(title, missing)
+        } else try {
+            create().also { TabFailures.clear(title) }
+        } catch (error: Throwable) {
+            if (error is ControlFlowException || error is VirtualMachineError) throw error
+            LOG.warn("A aba $title do Iron Dome IA não pôde ser aberta", error)
+            TabFailures.record(title, error)
+            TabErrorPanel(title, error)
+        }
         val content = ContentFactory.getInstance().createContent(component, title, false).apply {
             this.icon = icon
             this.description = description
@@ -39,7 +61,7 @@ class ReviewToolWindowFactory : ToolWindowFactory, DumbAware {
 
     companion object {
         const val ID = "Iron Dome IA"
-        private const val REPORT_BUG_ACTION = "IronDome.ReportBug"
+        private val LOG = logger<ReviewToolWindowFactory>()
     }
 }
 

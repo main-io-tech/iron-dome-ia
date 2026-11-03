@@ -95,7 +95,7 @@ class ReviewCommentService(private val project: Project) : PersistentStateCompon
 
     /** Arquivos com comentários adicionados, editados ou marcados para remoção desde o último salvamento. */
     fun pendingPaths(): Set<String> =
-        state.comments.filter { isUnsaved(it) || it.removing }.map { it.filePath }.toSet()
+        state.comments.filter { it.pullRequest == 0 && (isUnsaved(it) || it.removing) }.map { it.filePath }.toSet()
 
     fun isMarkedForRemoval(comment: ReviewComment): Boolean = comment.removing
 
@@ -116,6 +116,26 @@ class ReviewCommentService(private val project: Project) : PersistentStateCompon
 
     /** 0 quando não há revisão aberta. */
     val activeReviewId: Int get() = state.activeReviewId
+
+    /** PR em revisão pela Patrulha, ou 0: enquanto houver um, os comentários novos vão para ele. */
+    val activePullRequest: Int get() = state.activePullRequest
+
+    fun startPullRequestReview(number: Int) {
+        state.activePullRequest = number
+        notifyChanged()
+    }
+
+    fun stopPullRequestReview() {
+        state.activePullRequest = 0
+        notifyChanged()
+    }
+
+    /** Comentários ainda não enviados ao PR [number], com a posição atual do código. */
+    fun pullRequestComments(number: Int): List<ReviewComment> {
+        val comments = state.comments.filter { it.pullRequest == number }
+        comments.map { it.filePath }.distinct().forEach { path -> documentOf(path)?.let { syncFromMarkers(path, it) } }
+        return comments.sortedWith(ReviewComment.ORDER)
+    }
 
     /** Ordenados por arquivo e linha, inclusive os não salvos e os dispensados. */
     fun activeComments(): List<ReviewComment> {
@@ -187,8 +207,7 @@ class ReviewCommentService(private val project: Project) : PersistentStateCompon
 
     /**
      * Rascunhos, que ainda não estão no `.md`, saem na hora. Os demais continuam no editor, riscados,
-     * até o próximo salvamento do arquivo. Resolvidos são ignorados: só saem por [remove], via
-     * "Limpar Alvos Interceptados".
+     * até o próximo salvamento do arquivo. Resolvidos são ignorados: saem do editor só ocultos, por [hide].
      */
     fun markForRemoval(comments: Collection<ReviewComment>) {
         val removable = comments.filterNot { it.resolved || it in editing }
@@ -218,19 +237,22 @@ class ReviewCommentService(private val project: Project) : PersistentStateCompon
         lines: IntRange,
         text: String,
         discuss: Boolean,
+        suggestion: String = "",
     ): ReviewComment? {
         val path = relativePath(file) ?: return null
-        // Abrir uma revisão nova reinicia a numeração, então precisa vir antes do id.
-        val reviewId = openReview()
+        val (id, reviewId) = nextIdentity()
+        val snippet = linesText(document, lines.first, lines.last)
         val comment = ReviewComment(
-            id = "C${state.nextCommentId++}",
+            id = id,
             reviewId = reviewId,
             filePath = path,
             startLine = lines.first,
             endLine = lines.last,
-            snippet = linesText(document, lines.first, lines.last),
+            snippet = snippet,
             text = text,
             discuss = discuss,
+            pullRequest = state.activePullRequest,
+            suggestion = suggestionFor(state.activePullRequest, suggestion, snippet),
         )
         state.comments += comment
         markers[comment] = createMarker(document, comment)
@@ -240,16 +262,18 @@ class ReviewCommentService(private val project: Project) : PersistentStateCompon
     }
 
     /** Comentário sobre [target] inteiro: um arquivo ou, se for pasta, o pacote. */
-    fun addTargetComment(target: VirtualFile, text: String, discuss: Boolean): ReviewComment? {
+    fun addTargetComment(target: VirtualFile, text: String, discuss: Boolean, suggestion: String = ""): ReviewComment? {
         val path = targetPath(target) ?: return null
-        val reviewId = openReview()
+        val (id, reviewId) = nextIdentity()
         val comment = ReviewComment(
-            id = "C${state.nextCommentId++}",
+            id = id,
             reviewId = reviewId,
             filePath = path,
             text = text,
             discuss = discuss,
             target = if (target.isDirectory) CommentTarget.PACKAGE else CommentTarget.FILE,
+            pullRequest = state.activePullRequest,
+            suggestion = suggestionFor(state.activePullRequest, suggestion, ""),
         )
         state.comments += comment
         refreshEditorsOf(listOf(comment))
@@ -272,14 +296,22 @@ class ReviewCommentService(private val project: Project) : PersistentStateCompon
     }
 
     /** A mudança só vai para o `.md` no próximo salvamento. */
-    fun update(comment: ReviewComment, text: String, discuss: Boolean) {
+    fun update(comment: ReviewComment, text: String, discuss: Boolean, suggestion: String = comment.suggestion) {
         editing.remove(comment)
-        if (isEditable(comment) && (text != comment.text || discuss != comment.discuss)) {
+        val newSuggestion = suggestionFor(comment.pullRequest, suggestion, comment.snippet)
+        if (isEditable(comment) && (text != comment.text || discuss != comment.discuss || newSuggestion != comment.suggestion)) {
             comment.text = text
             comment.discuss = discuss
+            comment.suggestion = newSuggestion
             notifyChanged()
         }
         refreshEditorsOf(listOf(comment))
+    }
+
+    /** Só comentários de PR têm sugestão; igual ao trecho comentado, ela não sugere nada. */
+    private fun suggestionFor(pullRequest: Int, suggestion: String, snippet: String): String {
+        val code = suggestion.trimEnd()
+        return if (pullRequest == 0 || code.isBlank() || code == snippet.trimEnd()) "" else code
     }
 
     fun currentLines(comment: ReviewComment, document: Document): IntRange {
@@ -306,7 +338,15 @@ class ReviewCommentService(private val project: Project) : PersistentStateCompon
         notifyChanged()
     }
 
-    fun resolvedComments(): List<ReviewComment> = state.comments.filter { it.resolved && !it.dismissed }
+    /** Resolvidos que aparecem no editor. */
+    fun resolvedComments(): List<ReviewComment> = state.comments.filter { it.resolved && !it.dismissed && it.pullRequest == 0 }
+
+    /** Resolvidos ocultos do editor, que podem voltar com [show]. */
+    fun hiddenComments(): List<ReviewComment> = state.comments.filter { it.resolved && it.dismissed && it.pullRequest == 0 }
+
+    /** O comentário [id] da revisão [reviewId], se ele ainda estiver no estado do plugin. */
+    fun findComment(reviewId: Int, id: String): ReviewComment? =
+        state.comments.firstOrNull { it.reviewId == reviewId && it.id == id && it.pullRequest == 0 }
 
     fun toggleExpanded(comment: ReviewComment) {
         if (!comment.resolved) return
@@ -314,16 +354,45 @@ class ReviewCommentService(private val project: Project) : PersistentStateCompon
         refreshEditorsOf(listOf(comment))
     }
 
+    /** Tira resolvidos do editor sem mexer no `.md`; continuam no estado para [show] trazê-los de volta. */
+    fun hide(comments: Collection<ReviewComment>) {
+        val hidden = comments.filter { it.resolved && !it.dismissed }
+        if (hidden.isEmpty()) return
+        hidden.forEach { it.dismissed = true }
+        refreshEditorsOf(hidden)
+        notifyChanged()
+    }
+
+    fun show(comments: Collection<ReviewComment>) {
+        val shown = comments.filter { it.resolved && it.dismissed }
+        if (shown.isEmpty()) return
+        shown.forEach { it.dismissed = false }
+        refreshEditorsOf(shown)
+        notifyChanged()
+    }
+
     /**
-     * Tira resolvidos do editor sem mexer no `.md`. Os da revisão aberta ficam no estado, ocultos,
-     * para continuarem no `.md` nos próximos salvamentos.
+     * Traz de volta ao editor resolvidos de revisões encerradas que já saíram do estado (ocultos antes de
+     * ocultar ser reversível), a partir do `.md`. As linhas são as gravadas, sem acompanhar o que o código
+     * mudou depois.
      */
-    fun dismiss(comments: Collection<ReviewComment>) {
-        val dismissed = comments.filter { it.resolved && !it.dismissed }
-        if (dismissed.isEmpty()) return
-        dismissed.forEach { it.dismissed = true }
-        pruneDismissed()
-        refreshEditorsOf(dismissed)
+    fun restore(reviewId: Int, saved: Collection<SavedComment>) {
+        val restored = saved.filter { it.resolved && findComment(reviewId, it.id) == null }.map { comment ->
+            ReviewComment(
+                id = comment.id,
+                reviewId = reviewId,
+                filePath = comment.filePath,
+                startLine = comment.startLine,
+                endLine = comment.endLine,
+                text = comment.text,
+                resolved = true,
+                discuss = comment.discuss,
+                target = comment.target,
+            ).also { it.exported = ExportedVersion.of(it) }
+        }
+        if (restored.isEmpty()) return
+        state.comments += restored
+        refreshEditorsOf(restored)
         notifyChanged()
     }
 
@@ -423,6 +492,14 @@ class ReviewCommentService(private val project: Project) : PersistentStateCompon
         }
     }
 
+    /** Id e revisão do próximo comentário: os de PR têm numeração própria e ficam fora das revisões da IA. */
+    private fun nextIdentity(): Pair<String, Int> {
+        if (state.activePullRequest != 0) return "P${state.nextPullRequestCommentId++}" to 0
+        // Abrir uma revisão nova reinicia a numeração, então precisa vir antes do id.
+        val reviewId = openReview()
+        return "C${state.nextCommentId++}" to reviewId
+    }
+
     private fun openReview(): Int {
         importResolved()
         concludeIfDone()
@@ -450,18 +527,7 @@ class ReviewCommentService(private val project: Project) : PersistentStateCompon
 
     private fun concludeIfDone() {
         val comments = activeComments()
-        if (comments.isNotEmpty() && comments.all { it.resolved }) {
-            state.activeReviewId = 0
-            pruneDismissed()
-        }
-    }
-
-    /** Dispensados fora da revisão aberta não voltam mais ao `.md` e podem sair do estado. */
-    private fun pruneDismissed() {
-        val pruned = state.comments.filter { it.dismissed && it.reviewId != state.activeReviewId }.toSet()
-        if (pruned.isEmpty()) return
-        state.comments.removeAll(pruned)
-        pruned.forEach { markers.remove(it)?.dispose() }
+        if (comments.isNotEmpty() && comments.all { it.resolved }) state.activeReviewId = 0
     }
 
     /**

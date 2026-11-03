@@ -1,6 +1,7 @@
 package com.mio.irondome.radar
 
 import com.intellij.openapi.actionSystem.AnAction
+import com.mio.irondome.base.IdeSupport
 import com.intellij.openapi.components.service
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.EditorKind
@@ -21,7 +22,7 @@ object ReviewGutter {
     fun isCommentable(editor: Editor): Boolean {
         editor.getUserData(commentable)?.let { return it }
         val project = editor.project
-        val result = editor.editorKind == EditorKind.MAIN_EDITOR && project != null && !project.isDisposed &&
+        val result = !IdeSupport.isLimited(RADAR) && editor.editorKind == EditorKind.MAIN_EDITOR && project != null && !project.isDisposed &&
             project.service<ReviewCommentService>().accepts(editor.document)
         editor.putUserData(commentable, result)
         return result
@@ -92,9 +93,12 @@ private class AddCommentIconRenderer(
     private val line: Int,
 ) : GutterIconRenderer(), DumbAware {
 
-    override fun getIcon(): Icon = ReviewIcons.addComment
+    /** Lido ao criar o botão, que é recriado a cada linha sob o mouse. */
+    private val pullRequest = editor.project?.takeIf { !it.isDisposed }?.service<ReviewCommentService>()?.activePullRequest ?: 0
 
-    override fun getTooltipText(): String = "Marcar alvo para a IA"
+    override fun getIcon(): Icon = if (pullRequest != 0) ReviewIcons.addPullRequestComment else ReviewIcons.addComment
+
+    override fun getTooltipText(): String = if (pullRequest != 0) "Comentar no PR #$pullRequest" else "Marcar alvo para a IA"
 
     override fun isNavigateAction(): Boolean = true
 
@@ -118,8 +122,11 @@ private class RemoveCommentIconRenderer(
         val removable = ReviewGutter.removableAt(editor, line)
         val ids = removable.joinToString(", ") { it.id }
         val service = editor.project?.service<ReviewCommentService>()
-        return if (service != null && removable.all(service::isDraft)) "Cancelar alvo $ids"
-        else "Cancelar alvo $ids no próximo disparo"
+        return when {
+            removable.isNotEmpty() && removable.all { it.pullRequest != 0 } -> "Remover o comentário $ids do PR"
+            service != null && removable.all(service::isDraft) -> "Cancelar alvo $ids"
+            else -> "Cancelar alvo $ids no próximo disparo"
+        }
     }
 
     override fun isNavigateAction(): Boolean = true

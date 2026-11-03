@@ -27,6 +27,8 @@ dependencies {
         intellijIdeaCommunity(providers.gradleProperty("platformVersion"))
         bundledPlugin("com.intellij.java")
         bundledPlugin("JUnit")
+        bundledPlugin("Git4Idea")
+        bundledPlugin("org.jetbrains.plugins.github")
         testFramework(TestFrameworkType.Platform)
         testFramework(TestFrameworkType.Plugin.Java)
     }

@@ -44,7 +44,7 @@ class ReviewMouseListener : EditorMouseListener {
             val service = project.service<ReviewCommentService>()
             when (hitOf(e)) {
                 ReviewCommentRenderer.Hit.TOGGLE -> service.toggleExpanded(renderer.comment)
-                ReviewCommentRenderer.Hit.DISMISS -> service.dismiss(listOf(renderer.comment))
+                ReviewCommentRenderer.Hit.HIDE -> service.hide(listOf(renderer.comment))
                 ReviewCommentRenderer.Hit.EDIT -> TargetComments.edit(project, renderer.comment, editor)
                 ReviewCommentRenderer.Hit.NONE -> return
             }

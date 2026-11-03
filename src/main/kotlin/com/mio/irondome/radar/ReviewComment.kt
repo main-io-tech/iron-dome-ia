@@ -22,13 +22,23 @@ class ReviewComment(
     var discuss: Boolean = false,
     /** Só vale para resolvidos, que aparecem recolhidos até o usuário expandir. */
     var expanded: Boolean = false,
-    /** Resolvido que o usuário dispensou com OK: some do editor, mas continua no `.md`. */
+    /** Resolvido oculto do editor pelo usuário: continua no `.md` e no estado, e pode voltar a aparecer. */
     var dismissed: Boolean = false,
     /** Como o comentário está no `.md`; nulo enquanto ele nunca foi salvo (rascunho). */
     var exported: ExportedVersion? = null,
     /** Continua no `.md` até o próximo salvamento do arquivo dele, quando sai. */
     var removing: Boolean = false,
     var target: CommentTarget = CommentTarget.LINES,
+    /**
+     * Número do pull request a que o comentário vai, pela Patrulha; 0 para os que vão para a IA. Os de PR
+     * não entram em revisão do Radar ([reviewId] 0) nem no `.md` da IA.
+     */
+    var pullRequest: Int = 0,
+    /**
+     * Código de exemplo de como deveria ficar, só em comentários de PR. Em [CommentTarget.LINES], substitui
+     * as linhas comentadas, como a sugestão do GitHub.
+     */
+    var suggestion: String = "",
 ) {
     /** O comentário como foi gravado no `.md`, para regravá-lo igual quando outro arquivo é salvo. */
     fun asExported(): ReviewComment? = exported?.let {
@@ -79,6 +89,10 @@ class ReviewState {
     var activeReviewCreatedAt: String = ""
     var nextCommentId: Int = 1
     var comments: MutableList<ReviewComment> = mutableListOf()
+
+    /** PR em revisão pela Patrulha: os comentários novos vão para ele, não para a IA. 0 quando não há. */
+    var activePullRequest: Int = 0
+    var nextPullRequestCommentId: Int = 1
 }
 
 fun interface ReviewCommentsListener {

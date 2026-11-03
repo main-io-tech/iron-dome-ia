@@ -23,6 +23,7 @@
   <a href="#raio-de-impacto">Raio de Impacto</a> &nbsp;·&nbsp;
   <a href="#sentinela">Sentinela</a> &nbsp;·&nbsp;
   <a href="#escudo">Escudo</a> &nbsp;·&nbsp;
+  <a href="#patrulha">Patrulha</a> &nbsp;·&nbsp;
   <a href="#instalacao">Instalação</a> &nbsp;·&nbsp;
   <a href="#configure-sua-ia">Configure sua IA</a> &nbsp;·&nbsp;
   <a href="#faq">FAQ</a>
@@ -90,8 +91,9 @@ Cada mecanismo é independente e tem uma aba própria no painel lateral **Iron D
 | 💥 [**Raio de Impacto**](#raio-de-impacto) | Mede o estrago que uma mudança pode causar antes de você mexer na classe. | Aba Raio de Impacto |
 | 👁️ [**Sentinela**](#sentinela) | Vigia o perímetro: tudo o que ainda não foi commitado, com o diff a um clique. | Aba Sentinela |
 | 🛡️ [**Escudo**](#escudo) | Executa os testes JUnit e mostra o resultado agrupado e com os nomes formatados. | Aba Escudo |
+| 🛰️ [**Patrulha**](#patrulha) | Revisa os pull requests abertos no GitHub com o Radar, envia os pedidos de alteração e confere depois se foram atendidos. | Aba Patrulha |
 | 🏰 [**Base**](#base) | O painel lateral e os componentes visuais que os mecanismos compartilham. | Lateral da IDE |
-| 📦 [**Caixa-Preta**](#caixa-preta) | Reporta bugs do próprio plugin: um `.md` dizendo onde foi o bug, com print, GIF e erros do log, enviado ao Linear. | Topo do painel e menu Help |
+| 📦 [**Caixa-Preta**](#caixa-preta) | Reporta bugs do próprio plugin: um `.md` dizendo onde foi o bug, com print, GIF e erros do log, enviado ao Linear. E confere se a IDE tem o que cada mecanismo precisa. | Topo do painel e menu Help |
 
 ---
 
@@ -113,6 +115,8 @@ onde acompanha a revisão aberta e o histórico.
   para a IA explicar por que o código está assim, o impacto de manter, alterar ou remover e até 5
   opções com prévia da alteração, e argumentar com você até a decisão final.
 - ✏️ **Ciclo completo:** edite, cancele com desfazer e acompanhe o status de cada alvo.
+- 👁️ **Interceptados à vista ou não:** o **Ocultar** do cartão tira do editor um alvo já interceptado, e
+  **Mostrar no Editor**, na aba Radar, traz de volta, inclusive os de revisões encerradas.
 - 💾 **Nada se perde:** rascunhos ficam guardados mesmo se você fechar a IDE antes de salvar.
 
 ### Na aba Radar: a revisão aberta e o histórico
@@ -411,6 +415,51 @@ O painel de detalhes repete a formatação no título e, quando o nome tem essa 
 
 ---
 
+<a id="patrulha"></a>
+
+## 🛰️ Patrulha
+
+A aba Patrulha leva o Radar para os pull requests do GitHub: você comenta o código do PR na IDE, do mesmo
+jeito que comenta para a IA, envia tudo como uma revisão e depois confere se cada pedido foi atendido.
+
+1. **Escolha o PR.** A aba lista os PRs abertos do remote do GitHub, com o autor, as branches e quantos
+   pedidos já foram atendidos. A conta é a que você já usa no IntelliJ (**Settings > Version Control >
+   GitHub**). Se a organização bloquear o login pelo navegador (restrição a OAuth Apps), use **Entrar com
+   Token** na aba, com um token pessoal classic com escopo `repo`.
+2. **Revise.** **Revisar Este PR** traz o código do PR para a branch local `pr-<número>` e liga o Radar
+   ao PR; se você já está no código do PR, só liga. O que não estiver commitado (fora de `iron-dome/` e
+   `.idea/`) vai para o stash, com a lista dos arquivos e a sua aprovação antes. Não há botão de checkout
+   à parte: se o PR receber commits novos, o mesmo botão vira **Atualizar ou Encerrar Revisão**.
+   **Encerrar Revisão** oferece voltar para a branch de antes e devolver o stash. Com a revisão ligada, o formulário de comentário fica roxo, com o título *Comentário para o PR #n*
+   e o botão **Adicionar ao PR**, e os comentários ganham a etiqueta *Pedido para o PR #n · Não enviado*,
+   fora do `.md` da IA. **Sugerir código** abre um editor de verdade sobre uma cópia do arquivo, com o
+   trecho comentado destacado e editável e o resto do arquivo recolhido e só de leitura: Ctrl+Espaço,
+   imports, navegação e erros funcionam como no editor, sem alterar o arquivo. Escreva como gostaria que
+   ficasse: nas linhas do diff, vira uma sugestão do GitHub que o autor aplica com um clique
+   (*Commit suggestion*); fora do diff, vai como código de exemplo.
+3. **Envie.** **Enviar ao GitHub** mostra onde cada comentário vai entrar, escolhe entre **Pedir
+   alterações** e **Só comentar** e publica a revisão. Linhas que o PR altera viram comentários de linha;
+   linhas fora do diff e arquivos inteiros, comentários do arquivo; pacotes e arquivos fora do PR entram no
+   texto geral.
+4. **Verifique.** Os pedidos ficam em `iron-dome/pull-requests/pr-<número>.md`. **Verificar Pedidos**
+   confere cada um de três jeitos:
+
+| Verificação | Como funciona |
+| --- | --- |
+| 🧾 **Código** | Compara o trecho comentado com o arquivo no head atual do PR: *Como sugerido* (o head tem o código sugerido), *Alterado*, *Sem alteração*, *Só mudou de lugar*, *Arquivo removido* ou *Sem commits novos*. |
+| 💬 **Conversa** | Lê a conversa do comentário no PR: *Resolvida*, *Respondida* (com a última resposta do autor) ou *Aberta*. |
+| 🤖 **IA** | **Pedir Parecer da IA** copia um pedido para a sua IA e abre o `.md`; ela marca `[x]` em *Atendido (IA)* e escreve o motivo em *Parecer da IA*, e a aba atualiza sozinha. |
+
+Um pedido conta como atendido quando o código mudou, a conversa foi resolvida ou a IA confirmou; e como
+pendente quando nada disso aconteceu depois de commits novos. A verificação regrava o `.md` sem apagar o
+parecer da IA.
+
+> [!NOTE]
+> A Patrulha usa os plugins Git e GitHub que vêm no IntelliJ IDEA. Sem eles, a aba não aparece, e
+> **Verificar Compatibilidade** mostra o motivo.
+
+---
+
 <a id="base"></a>
 
 ## 🏰 Base
@@ -432,9 +481,9 @@ compartilham os mesmos componentes visuais, para tudo ter a mesma cara:
 
 ## 📦 Caixa-Preta
 
-Achou um bug no Iron Dome IA? O botão de inseto no topo do painel (ou **Help > Reportar Bug do Iron Dome
-IA**) abre um formulário com título, o mecanismo onde aconteceu, o que aconteceu, os passos e o que era
-esperado.
+Achou um bug no Iron Dome IA? O botão da caixa-preta laranja no topo do painel (ou **Help > Reportar Bug do
+Iron Dome IA**) abre um formulário com título, o mecanismo onde aconteceu, o que aconteceu, os passos e o que
+era esperado.
 
 - 📸 **Print:** a janela da IDE é capturada no momento do clique, antes do formulário abrir. Uma miniatura
   mostra o que vai junto, e você pode tirar.
@@ -456,6 +505,30 @@ esperado.
   `~/iron-dome-ia/bugs/`, com atalhos para a `iron-dome/bugs/` do projeto ou outra pasta qualquer. A pasta e o
   destino escolhidos ficam para o próximo relatório. Se o envio ao Linear falhar, a notificação oferece
   **Tentar de Novo**.
+
+### 🩺 Verificar Compatibilidade
+
+Nem toda IDE tem tudo o que os mecanismos precisam: o Raio de Impacto usa o plugin Java e o navegador
+embutido (JCEF), e o Escudo, o plugin JUnit. Ao abrir o projeto, o Iron Dome IA confere isso e, se algum
+mecanismo não vai funcionar, avisa qual e por quê, com **Ver Compatibilidade** e **Não Avisar de Novo**.
+
+- 📜 **Iron Dome IA: Ver Logs de Erro** (menu **Help**, engrenagem do painel, abas que não abriram e
+  Verificar Compatibilidade) lista os erros e avisos do plugin no `idea.log` (e no log anterior), agrupando
+  as repetições, com o mecanismo, a origem no código e a pilha completa. Filtra por mecanismo e por nível e
+  tem **Copiar Erro**, **Copiar Todos** (em Markdown, para colar numa conversa ou issue) e **Reportar Este
+  Erro**, que abre o Reportar Bug com esse erro e o mecanismo dele.
+- 🚨 Quando o plugin lança uma exceção, a janela de erros da própria IDE ganha o botão **Reportar ao Iron
+  Dome IA**, que abre o Reportar Bug com o erro e a nota que você escreveu lá.
+- 🆙 **Versão do IntelliJ:** ao abrir o projeto, o plugin confere se a IDE tem as APIs que cada mecanismo
+  usa (testado com o IntelliJ 2025.2.6 ou mais novo). Se faltar alguma, pergunta: **Atualizar o IntelliJ**
+  (abre a busca de atualizações) ou **Trabalhar Limitado**, que desliga só os mecanismos afetados; as abas
+  deles mostram o que falta e o link para atualizar. A escolha vale até a versão da IDE mudar.
+
+- 🩺 **Iron Dome IA: Verificar Compatibilidade** (menu **Help** ou engrenagem do painel) mostra a situação de
+  cada mecanismo (OK, opcional, limitado ou indisponível), o que fazer para resolver e os erros recentes do
+  plugin no `idea.log`, com **Copiar Diagnóstico**, **Abrir idea.log** e **Reportar Bug**.
+- 🧯 **Uma aba com erro não derruba as outras:** se uma aba não abrir, o lugar dela mostra o erro, com
+  atalhos para a verificação e para o Reportar Bug, e as demais abas e o botão de bug continuam no painel.
 
 ---
 
@@ -518,8 +591,9 @@ Markdown comum, sem depender de ferramentas de um produto específico.
 <summary><b>Meu código é enviado para algum servidor?</b></summary>
 
 Não pelo plugin: nada sai do domo. Os comentários ficam na IDE e no `.md` dentro do seu projeto, e o que
-vai para a IA é decidido por você e pelo assistente que você usa. A única chamada de rede do plugin é o
-envio de um relatório de bug ao Linear, quando você configura o Linear e clica em **Enviar**.
+vai para a IA é decidido por você e pelo assistente que você usa. O plugin só usa a rede em dois casos: o
+envio de um relatório de bug ao Linear, quando você configura o Linear e clica em **Enviar**, e a aba
+Patrulha, que lê e comenta os pull requests do seu repositório no GitHub com a sua conta do IntelliJ.
 </details>
 
 <details>
@@ -585,7 +659,8 @@ O código fica em `src/main/kotlin/com/mio/irondome`, com um pacote por mecanism
 | `impacto` | 💥 Raio de Impacto | Análise de dependências, diagrama e métricas (só com o plugin Java) |
 | `sentinela` | 👁️ Sentinela | Aba Sentinela e o diff dos arquivos não commitados |
 | `escudo` | 🛡️ Escudo | Execução dos testes JUnit, formatação do `@DisplayName` e a aba Escudo (só com o plugin JUnit) |
-| `caixapreta` | 📦 Caixa-Preta | Formulário de bug, print e gravação em GIF, leitura dos erros do plugin no `idea.log`, o `.md` do relatório e o envio ao Linear |
+| `patrulha` | 🛰️ Patrulha | Cliente do GitHub, checkout e revisão dos PRs, os pedidos em `.md` e as verificações de código, conversa e IA (só com os plugins Git e GitHub) |
+| `caixapreta` | 📦 Caixa-Preta | Formulário de bug, print e gravação em GIF, leitura dos erros do plugin no `idea.log`, o `.md` do relatório, o envio ao Linear e a verificação de compatibilidade |
 | `base` | 🏰 Base | Tool window, abas extras, a barra flutuante do editor e os componentes visuais compartilhados (cabeçalho de resumo, etiquetas, barras e linhas das árvores) |
 
 O diagrama usa o [AntV G6](https://g6.antv.antgroup.com/) (licença MIT). As licenças de todas as

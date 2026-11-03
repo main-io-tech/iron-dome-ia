@@ -105,6 +105,9 @@ class CommentsPanel(private val project: Project) : SimpleToolWindowPanel(true, 
             CommonActionsManager.getInstance().createExpandAllAction(DefaultTreeExpander(tree), tree),
             CommonActionsManager.getInstance().createCollapseAllAction(DefaultTreeExpander(tree), tree),
             Separator.getInstance(),
+            ActionManager.getInstance().getAction("IronDome.ShowResolved"),
+            ActionManager.getInstance().getAction("IronDome.RemoveResolved"),
+            Separator.getInstance(),
             historyAction(
                 "Consolidar Histórico",
                 "Junta as revisões encerradas em ${archivePath()} e apaga os .md avulsos; a revisão aberta continua",
@@ -226,7 +229,7 @@ class CommentsPanel(private val project: Project) : SimpleToolWindowPanel(true, 
         history
             .forEach { (id, path) ->
                 val comments = commentsIn(path)
-                if (comments.isNotEmpty()) root.add(reviewNode(id, active = false, comments.map(::savedEntry)))
+                if (comments.isNotEmpty()) root.add(reviewNode(id, active = false, comments.map { savedEntry(id, it) }))
             }
         if (archived.isNotEmpty()) root.add(archiveNode(archived))
         model.setRoot(root)
@@ -293,7 +296,7 @@ class CommentsPanel(private val project: Project) : SimpleToolWindowPanel(true, 
         val node = DefaultMutableTreeNode(ArchiveItem(archived.size, comments.size, comments.count { !it.resolved }))
         for (entry in archived) {
             val id = ReviewCommentService.reviewIdOf(entry.name) ?: continue
-            if (entry.comments.isNotEmpty()) node.add(reviewNode(id, active = false, entry.comments.map(::savedEntry), archived = true))
+            if (entry.comments.isNotEmpty()) node.add(reviewNode(id, active = false, entry.comments.map { savedEntry(id, it) }, archived = true))
         }
         return node
     }
@@ -314,6 +317,7 @@ class CommentsPanel(private val project: Project) : SimpleToolWindowPanel(true, 
 
     private fun liveEntry(comment: ReviewComment) = CommentItem(
         reviewName = "",
+        reviewId = comment.reviewId,
         id = comment.id,
         filePath = comment.filePath,
         startLine = comment.startLine,
@@ -323,20 +327,67 @@ class CommentsPanel(private val project: Project) : SimpleToolWindowPanel(true, 
         status = service.statusOf(comment),
         target = comment.target,
         live = comment,
+        saved = null,
+        inEditor = !comment.dismissed,
     )
 
-    private fun savedEntry(comment: SavedComment) = CommentItem(
-        reviewName = "",
-        id = comment.id,
-        filePath = comment.filePath,
-        startLine = comment.startLine,
-        endLine = comment.endLine,
-        text = comment.text,
-        discuss = comment.discuss,
-        status = if (comment.resolved) CommentStatus.RESOLVED else CommentStatus.PENDING,
-        target = comment.target,
-        live = null,
-    )
+    /** Comentário de revisão encerrada; [CommentItem.live] é a cópia dele no estado, se ainda existir. */
+    private fun savedEntry(reviewId: Int, comment: SavedComment): CommentItem {
+        val live = service.findComment(reviewId, comment.id)
+        return CommentItem(
+            reviewName = "",
+            reviewId = reviewId,
+            id = comment.id,
+            filePath = comment.filePath,
+            startLine = comment.startLine,
+            endLine = comment.endLine,
+            text = comment.text,
+            discuss = comment.discuss,
+            status = if (comment.resolved) CommentStatus.RESOLVED else CommentStatus.PENDING,
+            target = comment.target,
+            live = live,
+            saved = comment,
+            inEditor = live != null && !live.dismissed,
+        )
+    }
+
+    /** Os comentários do nó selecionado: ele mesmo ou todos abaixo de uma revisão ou arquivo. */
+    private fun selectedComments(): List<CommentItem> {
+        val node = tree.lastSelectedPathComponent as? DefaultMutableTreeNode ?: return emptyList()
+        return node.breadthFirstEnumeration().toList().mapNotNull { (it as DefaultMutableTreeNode).userObject as? CommentItem }
+    }
+
+    private fun showInEditor(items: List<CommentItem>) {
+        val hidden = items.filter { it.status == CommentStatus.RESOLVED && !it.inEditor }
+        service.show(hidden.mapNotNull { it.live })
+        hidden.filter { it.live == null && it.saved != null }.groupBy { it.reviewId }
+            .forEach { (reviewId, entries) -> service.restore(reviewId, entries.mapNotNull { it.saved }) }
+    }
+
+    private fun hideInEditor(items: List<CommentItem>) {
+        service.hide(items.filter { it.status == CommentStatus.RESOLVED && it.inEditor }.mapNotNull { it.live })
+    }
+
+    /** Com um comentário selecionado, fala dele; com uma revisão ou arquivo, dos interceptados abaixo. */
+    private fun visibilityAction(show: Boolean) = object : DumbAwareAction(null as String?, null, if (show) AllIcons.Actions.Show else AllIcons.Actions.ToggleVisibility) {
+        override fun getActionUpdateThread() = ActionUpdateThread.EDT
+
+        override fun update(e: AnActionEvent) {
+            val items = selectedComments()
+            val applicable = items.count { it.status == CommentStatus.RESOLVED && it.inEditor != show }
+            val single = (tree.lastSelectedPathComponent as? DefaultMutableTreeNode)?.userObject is CommentItem
+            e.presentation.isEnabledAndVisible = applicable > 0
+            e.presentation.text = when {
+                single -> if (show) "Mostrar no Editor" else "Ocultar no Editor"
+                show -> "Mostrar Interceptados no Editor ($applicable)"
+                else -> "Ocultar Interceptados no Editor ($applicable)"
+            }
+        }
+
+        override fun actionPerformed(e: AnActionEvent) {
+            if (show) showInEditor(selectedComments()) else hideInEditor(selectedComments())
+        }
+    }
 
     private fun installNavigation() {
         tree.addMouseListener(object : MouseAdapter() {
@@ -370,6 +421,9 @@ class CommentsPanel(private val project: Project) : SimpleToolWindowPanel(true, 
                 liveAction("Editar", AllIcons.Actions.Edit, service::isEditable) { TargetComments.edit(project, it) },
                 liveAction("Cancelar Alvo", AllIcons.General.Remove, { !it.resolved && !it.removing }) { service.markForRemoval(listOf(it)) },
                 liveAction("Desfazer Cancelamento", AllIcons.Actions.Undo, { it.removing }) { service.unmarkForRemoval(listOf(it)) },
+                Separator.getInstance(),
+                visibilityAction(show = true),
+                visibilityAction(show = false),
             ),
             "IronDome.CommentsPopup",
         )
@@ -432,6 +486,7 @@ class CommentsPanel(private val project: Project) : SimpleToolWindowPanel(true, 
 
     private data class CommentItem(
         val reviewName: String,
+        val reviewId: Int,
         val id: String,
         val filePath: String,
         val startLine: Int,
@@ -441,6 +496,9 @@ class CommentsPanel(private val project: Project) : SimpleToolWindowPanel(true, 
         val status: CommentStatus,
         val target: CommentTarget,
         val live: ReviewComment?,
+        /** Como está no `.md`, para revisões encerradas: permite trazer de volta ao editor. */
+        val saved: SavedComment?,
+        val inEditor: Boolean,
     ) : Item {
         override val key get() = "$reviewName/$id"
     }
@@ -488,6 +546,7 @@ class CommentsPanel(private val project: Project) : SimpleToolWindowPanel(true, 
                     row.text(ReviewMarkdown.describe(item.target, item.startLine, item.endLine), SimpleTextAttributes.GRAYED_ATTRIBUTES)
                     row.pill(item.status.label, item.status.tone, bold = true)
                     if (item.discuss && !resolved) row.pill("Discutir antes", ReviewColors.discussTone)
+                    if (resolved && !item.inEditor) row.pill("Oculto no editor", Tone.GRAY)
                     row.detail(
                         summaryOf(item.text),
                         when {

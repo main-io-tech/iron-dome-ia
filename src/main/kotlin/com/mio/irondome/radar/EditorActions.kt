@@ -1,12 +1,17 @@
 package com.mio.irondome.radar
 
 import com.intellij.openapi.actionSystem.AnActionEvent
+import com.mio.irondome.base.IdeSupport
 import com.intellij.openapi.actionSystem.CommonDataKeys
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.vfs.VirtualFile
 
+/** Título do Radar no modo limitado do [IdeSupport]. */
+internal const val RADAR = "Radar"
+
 internal fun AnActionEvent.editorAndFile(): Pair<Editor, VirtualFile>? {
+    if (IdeSupport.isLimited(RADAR)) return null
     val editor = getData(CommonDataKeys.EDITOR) ?: return null
     val file = FileDocumentManager.getInstance().getFile(editor.document) ?: return null
     return if (file.isInLocalFileSystem) editor to file else null

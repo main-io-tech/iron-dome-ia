@@ -32,6 +32,9 @@
       <li><b>🛡️ Escudo:</b> executa todos os testes JUnit do projeto e mostra o que passou ou falhou, com
         as classes agrupadas pela chave do <code>@DisplayName("[Chave] Descrição")</code>, o aviso das classes
         fora dessa convenção e o motivo e a pilha de cada falha.</li>
+      <li><b>🛰️ Patrulha:</b> revise os pull requests abertos no GitHub comentando o código como no Radar, envie
+        os pedidos de alteração como revisão e confira depois, no código, nas conversas do PR e com a IA, se
+        cada um foi atendido.</li>
     </ul>
     ]]></description>
 
@@ -55,6 +58,14 @@
       <li>Sentinela agrupada por raiz de código e pacote, só pacote ou tipo de alteração, com busca e filtros.</li>
       <li>Caixa-Preta: Reportar Bug gera um .md com o ponto do plugin onde o bug aconteceu, print e gravação
         em GIF da IDE e os erros do log, e envia ao Linear.</li>
+      <li>Verificar Compatibilidade: ao abrir o projeto, avisa os mecanismos que não vão funcionar nesta IDE e por
+        quê, e mostra os erros recentes do plugin no log. Uma aba que não abre mostra o erro no lugar dela, sem
+        derrubar as outras abas nem o botão de bug.</li>
+      <li>Interceptados podem ser ocultados e mostrados de novo no editor, pelo cartão, pela aba Radar ou pelas
+        ações Ocultar e Mostrar Alvos Interceptados, inclusive os de revisões encerradas.</li>
+      <li>Patrulha: revisa os pull requests abertos no GitHub com o Radar, envia os comentários como revisão com
+        a conta do IntelliJ e guarda os pedidos em iron-dome/pull-requests para verificar no código, nas
+        conversas do PR e com a IA se foram atendidos.</li>
     </ul>
     ]]></change-notes>
 
@@ -62,6 +73,8 @@
     <depends>com.intellij.modules.vcs</depends>
     <depends optional="true" config-file="raio-de-impacto-java.xml">com.intellij.java</depends>
     <depends optional="true" config-file="escudo-junit.xml">JUnit</depends>
+    <depends optional="true" config-file="patrulha-git.xml">Git4Idea</depends>
+    <depends optional="true" config-file="patrulha-github.xml">org.jetbrains.plugins.github</depends>
 
     <extensionPoints>
         <extensionPoint name="toolWindowTab"
@@ -77,6 +90,8 @@
         <projectViewNodeDecorator implementation="com.mio.irondome.radar.TargetDecorator"/>
         <notificationGroup id="Iron Dome IA" displayType="BALLOON"/>
         <notificationGroup id="Iron Dome IA: Gravação" displayType="STICKY_BALLOON"/>
+        <postStartupActivity implementation="com.mio.irondome.caixapreta.CompatibilityStartup"/>
+        <errorHandler implementation="com.mio.irondome.caixapreta.IronDomeErrorSubmitter"/>
         <applicationConfigurable parentId="tools"
                                  instance="com.mio.irondome.caixapreta.LinearConfigurable"
                                  id="com.mio.irondome.settings"
@@ -148,14 +163,33 @@
                 icon="/icons/removeComment.svg"/>
         <action id="IronDome.RemoveResolved"
                 class="com.mio.irondome.radar.RemoveResolvedCommentsAction"
-                text="Iron Dome IA: Limpar Alvos Interceptados"
-                description="Tira do editor os alvos já interceptados, sem alterar o .md da revisão"
-                icon="/icons/radar.svg"/>
+                text="Iron Dome IA: Ocultar Alvos Interceptados"
+                description="Tira do editor os alvos já interceptados, sem alterar o .md da revisão; Mostrar Alvos Interceptados traz de volta"
+                icon="AllIcons.Actions.ToggleVisibility"/>
+        <action id="IronDome.ShowResolved"
+                class="com.mio.irondome.radar.ShowResolvedCommentsAction"
+                text="Iron Dome IA: Mostrar Alvos Interceptados"
+                description="Volta a mostrar no editor os alvos interceptados que foram ocultados"
+                icon="AllIcons.Actions.Show"/>
         <action id="IronDome.ReportBug"
                 class="com.mio.irondome.caixapreta.ReportBugAction"
                 text="Reportar Bug do Iron Dome IA"
                 description="Gera um .md dizendo onde o bug aconteceu no plugin, com print, gravação em GIF e os erros do log, e envia ao Linear"
-                icon="AllIcons.Actions.StartDebugger">
+                icon="/icons/caixaPreta.svg">
+            <add-to-group group-id="HelpMenu" anchor="last"/>
+        </action>
+        <action id="IronDome.CheckCompatibility"
+                class="com.mio.irondome.caixapreta.CheckCompatibilityAction"
+                text="Iron Dome IA: Verificar Compatibilidade"
+                description="Mostra o que cada mecanismo precisa da IDE, o que está faltando e os erros recentes do plugin no log"
+                icon="AllIcons.Nodes.Plugin">
+            <add-to-group group-id="HelpMenu" anchor="last"/>
+        </action>
+        <action id="IronDome.ShowErrorLog"
+                class="com.mio.irondome.caixapreta.ShowErrorLogAction"
+                text="Iron Dome IA: Ver Logs de Erro"
+                description="Lista os erros e avisos do plugin no log da IDE, com a pilha completa, para copiar ou reportar"
+                icon="AllIcons.Actions.ShowAsTree">
             <add-to-group group-id="HelpMenu" anchor="last"/>
         </action>
     </actions>

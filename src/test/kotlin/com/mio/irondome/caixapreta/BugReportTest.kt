@@ -1,5 +1,6 @@
 package com.mio.irondome.caixapreta
 
+import com.intellij.openapi.diagnostic.IdeaLoggingEvent
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -110,6 +111,45 @@ class BugReportTest {
             ),
             BugReportMarkdown.compactStack(stack),
         )
+    }
+
+    @Test
+    fun repeatedErrorsAreGroupedWithTheirCountAndFirstTime() {
+        val repeated = """
+            2026-11-03 07:00:00,000 [  1]  ERROR - #com.mio.irondome.radar.ReviewCommentService - Falha ao salvar
+            java.lang.IllegalStateException: sem arquivo
+            	at com.mio.irondome.radar.ReviewCommentService.export(ReviewCommentService.kt:10)
+            2026-11-03 07:05:00,000 [  2]   WARN - #com.mio.irondome.base.ReviewToolWindowFactory - A aba Patrulha não pôde ser aberta
+            java.lang.NoSuchMethodError: requestReLogin
+            2026-11-03 07:10:00,000 [  3]  ERROR - #com.mio.irondome.radar.ReviewCommentService - Falha ao salvar
+            java.lang.IllegalStateException: sem arquivo
+            	at com.mio.irondome.radar.ReviewCommentService.export(ReviewCommentService.kt:10)
+        """.trimIndent()
+
+        val groups = PluginLog.group(PluginLog.parse(repeated, limit = 10))
+
+        assertEquals(2, groups.size)
+        assertEquals(2, groups[0].count)
+        assertEquals("2026-11-03 07:10:00", groups[0].latest.time)
+        assertEquals("2026-11-03 07:00:00", groups[0].firstTime)
+        assertEquals(Mechanism.RADAR, groups[0].latest.mechanism)
+        assertEquals("pelo logger, sem frame do plugin na pilha", Mechanism.BASE, groups[1].latest.mechanism)
+        assertTrue(PluginLog.describe(groups[0]).startsWith("2026-11-03 07:10:00 · ERROR (2 vezes, desde 2026-11-03 07:00:00)"))
+        val markdown = PluginLog.markdown(groups)
+        assertTrue("### 2026-11-03 07:10:00 · ERROR · Radar (2 vezes, desde 2026-11-03 07:00:00)" in markdown)
+        assertTrue("Origem no plugin: `com.mio.irondome.radar.ReviewCommentService.export(ReviewCommentService.kt:10)`" in markdown)
+    }
+
+    @Test
+    fun ideErrorBecomesAPluginErrorWithTheUsersNote() {
+        val event = IdeaLoggingEvent("Falha ao abrir", IllegalStateException("quebrou"))
+
+        val error = IronDomeErrorSubmitter.errorOf(event, "cliquei em Revisar", LocalDateTime.of(2026, 11, 3, 7, 0))
+
+        assertEquals("2026-11-03 07:00:00", error.time)
+        assertEquals("Falha ao abrir · Nota: cliquei em Revisar", error.message)
+        assertEquals("java.lang.IllegalStateException: quebrou", error.exception)
+        assertTrue(error.stack.size > 1)
     }
 
     @Test

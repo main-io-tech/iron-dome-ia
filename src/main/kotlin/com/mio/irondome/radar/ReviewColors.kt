@@ -53,10 +53,19 @@ object ReviewColors {
     val discussBadgeBackground = JBColor(Color(0xFBEFFF), Color(0x3A2350))
     val discussBadgeForeground = JBColor(Color(0x8250DF), Color(0xD2A8FF))
     val discussTone = Tone(discussBadgeForeground, discussBadgeBackground, discussBadgeForeground)
+
+    /** Comentários que vão para um PR, pela Patrulha, no lugar do azul dos que vão para a IA. */
+    val pullRequestAccent = JBColor(Color(0x8250DF), Color(0xA371F7))
+    val pullRequestBackground = JBColor(Color(0xFBF8FF), Color(0x2A2433))
+    val pullRequestBadgeBackground = JBColor(Color(0xEFE3FF), Color(0x3A2350))
+    val pullRequestBadgeForeground = JBColor(Color(0x6639BA), Color(0xD2A8FF))
+    val codeBackground = JBColor(Color(0xF6F8FA), Color(0x22272E))
 }
 
 object ReviewIcons {
     val addComment: Icon = IconLoader.getIcon("/icons/addComment.svg", ReviewIcons::class.java)
+    /** No lugar do [addComment] enquanto um PR está em revisão pela Patrulha. */
+    val addPullRequestComment: Icon = IconLoader.getIcon("/icons/addPrComment.svg", ReviewIcons::class.java)
     val removeComment: Icon = IconLoader.getIcon("/icons/removeComment.svg", ReviewIcons::class.java)
     val undoRemove: Icon = IconLoader.getIcon("/icons/undoRemove.svg", ReviewIcons::class.java)
     val comment: Icon = IconLoader.getIcon("/icons/comment.svg", ReviewIcons::class.java)

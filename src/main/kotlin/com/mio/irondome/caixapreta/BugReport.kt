@@ -10,6 +10,7 @@ enum class Mechanism(val title: String, val packageName: String, val contents: S
     IMPACTO("Raio de Impacto", "impacto", "análise de dependências, diagrama e métricas"),
     SENTINELA("Sentinela", "sentinela", "aba Sentinela e o diff dos arquivos não commitados"),
     ESCUDO("Escudo", "escudo", "execução dos testes JUnit, formatação do @DisplayName e a aba Escudo"),
+    PATRULHA("Patrulha", "patrulha", "pull requests do GitHub, envio dos pedidos de alteração e a verificação deles"),
     BASE("Base", "base", "tool window, abas extras, barra flutuante do editor e componentes visuais compartilhados"),
     CAIXA_PRETA("Caixa-Preta", "caixapreta", "o próprio Reportar Bug: formulário, capturas e envio ao Linear");
 
@@ -26,15 +27,28 @@ enum class Mechanism(val title: String, val packageName: String, val contents: S
     }
 }
 
-/** Erro ou aviso do log da IDE que passou pelo código do plugin. [stack] traz as linhas depois da mensagem. */
-data class PluginError(val time: String, val level: String, val message: String, val stack: List<String>) {
+/**
+ * Erro ou aviso do log da IDE que passou pelo código do plugin. [stack] traz as linhas depois da mensagem;
+ * [category] é o logger que registrou, como `#com.mio.irondome.base.ReviewToolWindowFactory`.
+ */
+data class PluginError(val time: String, val level: String, val message: String, val stack: List<String>, val category: String = "") {
 
     /** Primeiro frame do plugin na pilha: o ponto mais provável do bug. */
     val origin: String?
         get() = stack.firstNotNullOfOrNull { line ->
             line.trim().removePrefix("at ").takeIf { it.startsWith("${Mechanism.ROOT_PACKAGE}.") }
         }
+
+    /** Pela origem na pilha ou, sem ela, pelo logger que registrou. */
+    val mechanism: Mechanism?
+        get() = origin?.let(Mechanism::ofFrame) ?: Mechanism.ofFrame(category.removePrefix("#"))
+
+    /** A exceção que abre a pilha, como `java.lang.IllegalStateException: comentário sem arquivo`. */
+    val exception: String? get() = stack.firstOrNull { !it.trim().startsWith("at ") }?.trim()
 }
+
+/** Ocorrências do mesmo erro: [latest] é a mais recente; [firstTime], quando ele apareceu pela primeira vez. */
+data class ErrorGroup(val latest: PluginError, val count: Int, val firstTime: String)
 
 /** [errors] vem do mais recente para o mais antigo; [context] são pares de nome e valor do ambiente. */
 data class BugReport(

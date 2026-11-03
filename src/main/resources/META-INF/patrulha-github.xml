@@ -1,0 +1,7 @@
+<idea-plugin>
+    <depends>Git4Idea</depends>
+
+    <extensions defaultExtensionNs="com.mio.irondome">
+        <toolWindowTab implementation="com.mio.irondome.patrulha.PatrulhaTab"/>
+    </extensions>
+</idea-plugin>
