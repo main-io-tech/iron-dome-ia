@@ -52,6 +52,9 @@
         classes, avisando as que estão fora da convenção.</li>
       <li>Radar, Sentinela e Escudo com cabeçalho de resumo, indicadores e barra de proporção por status, e
         etiquetas coloridas nas árvores.</li>
+      <li>Sentinela agrupada por raiz de código e pacote, só pacote ou tipo de alteração, com busca e filtros.</li>
+      <li>Caixa-Preta: Reportar Bug gera um .md com o ponto do plugin onde o bug aconteceu, print e gravação
+        em GIF da IDE e os erros do log, e envia ao Linear.</li>
     </ul>
     ]]></change-notes>
 
@@ -73,6 +76,11 @@
         <editorFloatingToolbarProvider implementation="com.mio.irondome.base.ReviewFloatingToolbarProvider"/>
         <projectViewNodeDecorator implementation="com.mio.irondome.radar.TargetDecorator"/>
         <notificationGroup id="Iron Dome IA" displayType="BALLOON"/>
+        <notificationGroup id="Iron Dome IA: Gravação" displayType="STICKY_BALLOON"/>
+        <applicationConfigurable parentId="tools"
+                                 instance="com.mio.irondome.caixapreta.LinearConfigurable"
+                                 id="com.mio.irondome.settings"
+                                 displayName="Iron Dome IA"/>
         <toolWindow id="Iron Dome IA"
                     anchor="right"
                     icon="/icons/toolWindow.svg"
@@ -143,5 +151,12 @@
                 text="Iron Dome IA: Limpar Alvos Interceptados"
                 description="Tira do editor os alvos já interceptados, sem alterar o .md da revisão"
                 icon="/icons/radar.svg"/>
+        <action id="IronDome.ReportBug"
+                class="com.mio.irondome.caixapreta.ReportBugAction"
+                text="Reportar Bug do Iron Dome IA"
+                description="Gera um .md dizendo onde o bug aconteceu no plugin, com print, gravação em GIF e os erros do log, e envia ao Linear"
+                icon="AllIcons.Actions.StartDebugger">
+            <add-to-group group-id="HelpMenu" anchor="last"/>
+        </action>
     </actions>
 </idea-plugin>

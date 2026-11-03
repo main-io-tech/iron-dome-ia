@@ -2,6 +2,7 @@ package com.mio.irondome.base
 
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.project.DumbAware
@@ -23,6 +24,7 @@ class ReviewToolWindowFactory : ToolWindowFactory, DumbAware {
         for (tab in ReviewToolWindowTab.EP_NAME.extensionList) {
             add(toolWindow, tab.createComponent(project, toolWindow), tab.title, tab.icon, tab.description)
         }
+        ActionManager.getInstance().getAction(REPORT_BUG_ACTION)?.let { toolWindow.setTitleActions(listOf(it)) }
     }
 
     private fun add(toolWindow: ToolWindow, component: JComponent, title: String, icon: Icon?, description: String?) {
@@ -37,6 +39,7 @@ class ReviewToolWindowFactory : ToolWindowFactory, DumbAware {
 
     companion object {
         const val ID = "Iron Dome IA"
+        private const val REPORT_BUG_ACTION = "IronDome.ReportBug"
     }
 }
 

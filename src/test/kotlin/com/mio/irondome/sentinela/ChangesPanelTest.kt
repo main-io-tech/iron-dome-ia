@@ -38,5 +38,30 @@ class ChangesPanelTest : LightJavaCodeInsightFixtureTestCase() {
         assertEquals("(raiz do projeto)", ChangesPanel.locationOf(project, base, null).name)
     }
 
+    fun testFilterSearchesPathAndPackageIgnoringCase() {
+        val filter = ChangesPanel.Filter(text = "RADAR")
+
+        assertTrue(filter.matches("src/main/kotlin/app/radar/Gutter.kt", "app.radar", ChangesPanel.ChangeKind.MODIFIED, 0))
+        assertTrue(filter.matches("src/Gutter.kt", "app.radar", ChangesPanel.ChangeKind.MODIFIED, 0))
+        assertFalse(filter.matches("src/main/kotlin/app/web/Controller.kt", "app.web", ChangesPanel.ChangeKind.MODIFIED, 0))
+    }
+
+    fun testFilterHidesKindsAndFilesWithoutTargets() {
+        val hidden = ChangesPanel.Filter(hiddenKinds = setOf(ChangesPanel.ChangeKind.UNVERSIONED))
+        assertFalse(hidden.matches("a/Novo.kt", "a", ChangesPanel.ChangeKind.UNVERSIONED, 0))
+        assertTrue(hidden.matches("a/Velho.kt", "a", ChangesPanel.ChangeKind.MODIFIED, 0))
+
+        val onlyTargets = ChangesPanel.Filter(onlyTargets = true)
+        assertFalse(onlyTargets.matches("a/Sem.kt", "a", ChangesPanel.ChangeKind.MODIFIED, 0))
+        assertTrue(onlyTargets.matches("a/Com.kt", "a", ChangesPanel.ChangeKind.MODIFIED, 2))
+    }
+
+    fun testEmptyFilterIsInactiveAndShowsEverything() {
+        val filter = ChangesPanel.Filter(text = "   ")
+
+        assertFalse(filter.active)
+        assertTrue(filter.matches("qualquer/Arquivo.kt", "qualquer", ChangesPanel.ChangeKind.OTHER, 0))
+    }
+
     private fun locationOf(dir: VirtualFile) = ChangesPanel.locationOf(project, dir.path, dir)
 }

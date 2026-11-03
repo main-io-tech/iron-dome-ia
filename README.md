@@ -91,6 +91,7 @@ Cada mecanismo é independente e tem uma aba própria no painel lateral **Iron D
 | 👁️ [**Sentinela**](#sentinela) | Vigia o perímetro: tudo o que ainda não foi commitado, com o diff a um clique. | Aba Sentinela |
 | 🛡️ [**Escudo**](#escudo) | Executa os testes JUnit e mostra o resultado agrupado e com os nomes formatados. | Aba Escudo |
 | 🏰 [**Base**](#base) | O painel lateral e os componentes visuais que os mecanismos compartilham. | Lateral da IDE |
+| 📦 [**Caixa-Preta**](#caixa-preta) | Reporta bugs do próprio plugin: um `.md` dizendo onde foi o bug, com print, GIF e erros do log, enviado ao Linear. | Topo do painel e menu Help |
 
 ---
 
@@ -327,9 +328,13 @@ Legenda, detalhes e painel inferior podem ser minimizados para o diagrama ganhar
 
 ## 👁️ Sentinela
 
-A aba Sentinela vigia o perímetro: os arquivos ainda não commitados, agrupados por pacote em grupos que
-você expande ou recolhe.
+A aba Sentinela vigia o perímetro: os arquivos ainda não commitados, em grupos que você expande ou recolhe.
 
+- 🗂️ **Agrupar por:** raiz de código e pacote (como `src/main/kotlin` > `app.pedidos`), só pacote ou
+  tipo de alteração. A escolha fica salva, e com mais de 20 arquivos os grupos de arquivos chegam
+  recolhidos, para a lista não crescer demais.
+- 🔎 **Busca e filtros:** a busca procura no nome, na pasta e no pacote; o botão **Filtrar** mostra só
+  alguns tipos de alteração ou **Só com Alvos**. O cabeçalho avisa quantos arquivos o filtro está mostrando.
 - 🏷️ **Etiquetas por arquivo:** o tipo de alteração (modificado, novo, movido, fora do git) e quantos
   alvos do Radar cada arquivo tem.
 - 🔍 **Inspecionar Diff** abre o diff do arquivo, e **Abrir Arquivo** leva ao editor.
@@ -423,6 +428,37 @@ compartilham os mesmos componentes visuais, para tudo ter a mesma cara:
 
 ---
 
+<a id="caixa-preta"></a>
+
+## 📦 Caixa-Preta
+
+Achou um bug no Iron Dome IA? O botão de inseto no topo do painel (ou **Help > Reportar Bug do Iron Dome
+IA**) abre um formulário com título, o mecanismo onde aconteceu, o que aconteceu, os passos e o que era
+esperado.
+
+- 📸 **Print:** a janela da IDE é capturada no momento do clique, antes do formulário abrir. Uma miniatura
+  mostra o que vai junto, e você pode tirar.
+- 🎥 **Gravação em GIF:** **Gravar GIF** esconde o formulário e grava a janela da IDE por até 30 s enquanto
+  você reproduz o bug. **Parar Gravação**, na notificação, traz o formulário de volta.
+- 🧭 **Onde foi o bug:** o `.md` aponta o pacote e a pasta do código do mecanismo e, se o `idea.log` tiver
+  erros que passaram pelo plugin, a **origem provável**: o primeiro ponto do plugin na pilha do erro mais
+  recente. Os erros vão no fim, com a pilha resumida aos frames que importam.
+- 🧾 **Ambiente:** versões do plugin, da IDE, do Java e do sistema, os plugins Java e JUnit, o controle de
+  versão, a aba ativa e o arquivo aberto.
+- 📨 **Linear:** o relatório vira uma issue `[Bug] <mecanismo>: <título>` no projeto
+  [Iron Dome AI](https://linear.app/mainio/project/iron-dome-ai-f447654e94fc/overview), com o print e o
+  GIF anexados. Basta colocar a sua API key pessoal em **Settings > Tools > Iron Dome IA**. O time vem do
+  próprio projeto, e o projeto pode ser trocado colando outra URL. **Testar Conexão** confere a
+  configuração, e a API key fica no cofre de senhas da IDE.
+- 💾 **Gerar só local:** em **Destino**, escolha entre enviar ao Linear ou **Gerar só local**, que cria o
+  relatório sem rede e abre o `bug.md` no editor. Nos dois casos, cada relatório ganha uma pasta
+  `bug-<data>/`, com o `bug.md`, o `print.png` e o `gravacao.gif`, dentro da **Pasta local**: por padrão
+  `~/iron-dome-ia/bugs/`, com atalhos para a `iron-dome/bugs/` do projeto ou outra pasta qualquer. A pasta e o
+  destino escolhidos ficam para o próximo relatório. Se o envio ao Linear falhar, a notificação oferece
+  **Tentar de Novo**.
+
+---
+
 <a id="instalacao"></a>
 
 ## 📦 Instalação
@@ -481,8 +517,9 @@ Markdown comum, sem depender de ferramentas de um produto específico.
 <details>
 <summary><b>Meu código é enviado para algum servidor?</b></summary>
 
-Não pelo plugin: nada sai do domo. Ele não faz nenhuma chamada de rede, e os comentários ficam na
-IDE e no `.md` dentro do seu projeto. O que vai para a IA é decidido por você e pelo assistente que você usa.
+Não pelo plugin: nada sai do domo. Os comentários ficam na IDE e no `.md` dentro do seu projeto, e o que
+vai para a IA é decidido por você e pelo assistente que você usa. A única chamada de rede do plugin é o
+envio de um relatório de bug ao Linear, quando você configura o Linear e clica em **Enviar**.
 </details>
 
 <details>
@@ -548,6 +585,7 @@ O código fica em `src/main/kotlin/com/mio/irondome`, com um pacote por mecanism
 | `impacto` | 💥 Raio de Impacto | Análise de dependências, diagrama e métricas (só com o plugin Java) |
 | `sentinela` | 👁️ Sentinela | Aba Sentinela e o diff dos arquivos não commitados |
 | `escudo` | 🛡️ Escudo | Execução dos testes JUnit, formatação do `@DisplayName` e a aba Escudo (só com o plugin JUnit) |
+| `caixapreta` | 📦 Caixa-Preta | Formulário de bug, print e gravação em GIF, leitura dos erros do plugin no `idea.log`, o `.md` do relatório e o envio ao Linear |
 | `base` | 🏰 Base | Tool window, abas extras, a barra flutuante do editor e os componentes visuais compartilhados (cabeçalho de resumo, etiquetas, barras e linhas das árvores) |
 
 O diagrama usa o [AntV G6](https://g6.antv.antgroup.com/) (licença MIT). As licenças de todas as
