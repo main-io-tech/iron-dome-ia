@@ -8,6 +8,7 @@ import com.intellij.testFramework.HeavyPlatformTestCase
 import com.intellij.testFramework.VfsTestUtil
 import com.intellij.util.xmlb.XmlSerializer
 import com.mio.irondome.comando.ReviewMarkdown
+import com.mio.irondome.interceptor.FireWithAiAction
 import java.nio.file.Files
 import java.nio.file.Path
 
@@ -100,6 +101,22 @@ class ReviewCommentServiceTest : HeavyPlatformTestCase() {
         assertEquals(CommentTarget.FILE to "src/First.kt", parsed.getValue("C2").let { it.target to it.filePath })
         assertEquals(CommentTarget.PACKAGE to "src", parsed.getValue("C3").let { it.target to it.filePath })
         assertTrue(parsed.getValue("C3").discuss)
+    }
+
+    fun testFiringSelectedTargetsSavesOnlyTheirFiles() {
+        val inFirst = comment(first, "corrigir a")
+        val inSecond = comment(second, "corrigir c")
+
+        service.exportPaths(listOf("src/First.kt"))
+
+        val markdown = Files.readString(reviewFile())
+        assertTrue(markdown.contains("corrigir a"))
+        assertFalse(markdown.contains("corrigir c"))
+        assertFalse(service.isUnsaved(inFirst))
+        assertTrue(service.isUnsaved(inSecond))
+        assertEquals(listOf(inFirst, inSecond), FireWithAiAction.fireable(listOf(inFirst, inSecond, inFirst)))
+        service.markForRemoval(listOf(inFirst))
+        assertEquals(listOf(inSecond), FireWithAiAction.fireable(listOf(inFirst, inSecond)))
     }
 
     fun testEscudoTargetsGoToTheRadarMarkedAsEscudoEvenDuringPullRequestReview() {

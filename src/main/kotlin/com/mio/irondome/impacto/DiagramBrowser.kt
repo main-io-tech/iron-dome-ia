@@ -48,17 +48,80 @@ class DiagramBrowser(parent: Disposable, private val onMessage: (String) -> Unit
         }
     }
 
-    /** [changes]: tipo de alteração não commitada por classe; [vcs] diz se o projeto usa controle de versão. */
-    fun show(graph: DependencyGraph, changes: Map<String, FileChange>, vcs: Boolean) {
+    /**
+     * [changes]: tipo de alteração não commitada por classe; [vcs] diz se o projeto usa controle de versão;
+     * [comments]: comentários pendentes por classe; [impact]: o que a IA apontou, se já analisou.
+     */
+    fun show(
+        graph: DependencyGraph,
+        changes: Map<String, FileChange>,
+        vcs: Boolean,
+        comments: Map<String, List<ImpactComment>> = emptyMap(),
+        impact: ImpactReport? = null,
+    ) {
         val browser = browser ?: return
         val html = template
             .replace("/*IRON_DOME_THEME_CSS*/", theme().entries.joinToString(" ") { (key, value) -> "--$key: $value;" })
             .replace("/*IRON_DOME_THEME_JSON*/", Json.obj(theme()))
             .replace("/*IRON_DOME_BRIDGE*/", query!!.inject("message"))
-            .replace("/*IRON_DOME_DATA*/", Json.safeForScript(toJson(graph, changes, vcs)))
+            .replace("/*IRON_DOME_DATA*/", Json.safeForScript(toJson(graph, changes, vcs, comments, impact)))
             .replace("/*IRON_DOME_G6*/", g6)
         browser.loadHTML(html)
     }
+
+    fun updateComments(comments: Map<String, List<ImpactComment>>) {
+        val cef = browser?.cefBrowser ?: return
+        cef.executeJavaScript("window.ironDome && window.ironDome.setComments(${Json.safeForScript(commentsJson(comments))})", cef.url, 0)
+    }
+
+    /** Nulo apaga as marcas da análise anterior. */
+    fun updateImpact(impact: ImpactReport?) {
+        val cef = browser?.cefBrowser ?: return
+        cef.executeJavaScript("window.ironDome && window.ironDome.setImpact(${Json.safeForScript(impactJson(impact))})", cef.url, 0)
+    }
+
+    /** `analyzing` mostra na página que a IA está analisando o impacto. */
+    fun updateAnalyzing(analyzing: Boolean) {
+        val cef = browser?.cefBrowser ?: return
+        cef.executeJavaScript("window.ironDome && window.ironDome.setAnalyzing($analyzing)", cef.url, 0)
+    }
+
+    private fun commentsJson(comments: Map<String, List<ImpactComment>>): String =
+        Json.obj(
+            comments.mapValues { (_, list) ->
+                list.map { comment ->
+                    Json.raw(
+                        Json.obj(
+                            "id" to comment.id,
+                            "source" to comment.source.name,
+                            "sourceLabel" to comment.source.label,
+                            "where" to "${comment.path.substringAfterLast('/')}, ${comment.location}",
+                            "text" to comment.text,
+                            "sent" to comment.sent,
+                        ),
+                    )
+                }
+            },
+        )
+
+    private fun impactJson(impact: ImpactReport?): String = if (impact == null) "null" else Json.obj(
+        "summary" to impact.summary,
+        "items" to Json.raw(
+            Json.obj(
+                impact.impacts.associate { item ->
+                    item.qualifiedName to Json.raw(
+                        Json.obj(
+                            "level" to item.level.name,
+                            "levelLabel" to item.level.label,
+                            "reason" to item.reason,
+                            "sources" to item.sources,
+                        ),
+                    )
+                },
+            ),
+        ),
+        "order" to impact.impacts.map { it.qualifiedName },
+    )
 
     /** Atualiza só as marcas de alteração, sem refazer o layout. */
     fun updateChanges(changes: Map<String, FileChange>, vcs: Boolean) {
@@ -111,13 +174,21 @@ class DiagramBrowser(parent: Disposable, private val onMessage: (String) -> Unit
         cef.executeJavaScript("window.ironDome && window.ironDome.select(${Json.string(qualifiedName)})", cef.url, 0)
     }
 
-    private fun toJson(graph: DependencyGraph, changes: Map<String, FileChange>, vcs: Boolean): String = Json.obj(
+    private fun toJson(
+        graph: DependencyGraph,
+        changes: Map<String, FileChange>,
+        vcs: Boolean,
+        comments: Map<String, List<ImpactComment>>,
+        impact: ImpactReport?,
+    ): String = Json.obj(
         "focus" to graph.focus,
         "truncated" to graph.truncated,
         "cycles" to graph.cycleCount,
         "vcs" to vcs,
         "scale" to Json.raw(Json.obj("medium" to ChangeRisk.MEDIUM_FROM, "high" to ChangeRisk.HIGH_FROM)),
         "changes" to Json.raw(changesJson(changes)),
+        "comments" to Json.raw(commentsJson(comments)),
+        "impact" to Json.raw(impactJson(impact)),
         "prefs" to Json.raw(Json.obj(PANELS.associateWith { PropertiesComponent.getInstance().getBoolean(prefKey(it)) })),
         "nodes" to graph.nodes.map { node ->
             Json.raw(
@@ -174,6 +245,10 @@ class DiagramBrowser(parent: Disposable, private val onMessage: (String) -> Unit
             "highSolid" to if (dark) "#f85149" else "#cf222e",
             "nodeText" to if (dark) "#e6edf3" else "#1f2328",
             "changed" to hex(FileStatus.MODIFIED.color ?: JBColor.BLUE),
+            "comment" to if (dark) "#58a6ff" else "#0969da",
+            "patrulha" to if (dark) "#a371f7" else "#8250df",
+            "impact" to if (dark) "#f778ba" else "#bf3989",
+            "impactBg" to if (dark) "#3d1d33" else "#ffeff7",
         )
     }
 

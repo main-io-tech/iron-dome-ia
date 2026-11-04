@@ -77,6 +77,7 @@
     <depends optional="true" config-file="escudo-junit.xml">JUnit</depends>
     <depends optional="true" config-file="patrulha-git.xml">Git4Idea</depends>
     <depends optional="true" config-file="patrulha-github.xml">org.jetbrains.plugins.github</depends>
+    <depends optional="true" config-file="interceptador-terminal.xml">org.jetbrains.plugins.terminal</depends>
 
     <extensionPoints>
         <extensionPoint name="toolWindowTab"
@@ -84,6 +85,9 @@
                         dynamic="true"/>
         <extensionPoint name="editorCardProvider"
                         interface="com.mio.irondome.radar.EditorCardProvider"
+                        dynamic="true"/>
+        <extensionPoint name="agentTerminal"
+                        interface="com.mio.irondome.interceptor.AgentTerminal"
                         dynamic="true"/>
     </extensionPoints>
 
@@ -145,7 +149,7 @@
 
         <action id="IronDome.FireWithAi"
                 class="com.mio.irondome.interceptor.FireWithAiAction"
-                text="Disparar com IA"
+                text="Disparar Todos com IA"
                 description="Dispara os alvos e pede à IA configurada que execute a ordem de interceptação"
                 icon="/icons/interceptador.svg"/>
 

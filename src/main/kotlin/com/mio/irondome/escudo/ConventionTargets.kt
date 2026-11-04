@@ -120,7 +120,7 @@ object ConventionTargets {
             if (created > 0) " Dispare a ordem de interceptação para a IA deixar o @DisplayName no padrão." else ""
         val actions = buildList {
             add(NotificationAction.createSimpleExpiring("Abrir Radar") { ReviewToolWindowFactory.showTab(project, ReviewToolWindowFactory.RADAR) })
-            if (created > 0 && AgentSettings.ready) add(NotificationAction.createSimpleExpiring("Disparar com IA") { FireWithAiAction.fire(project) })
+            if (created > 0 && AgentSettings.ready) add(NotificationAction.createSimpleExpiring("Disparar Todos com IA") { FireWithAiAction.fire(project) })
         }
         notify(project, content, type, actions)
     }

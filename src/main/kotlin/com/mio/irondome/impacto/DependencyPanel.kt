@@ -1,5 +1,7 @@
 package com.mio.irondome.impacto
 
+import com.intellij.execution.configurations.GeneralCommandLine
+import com.intellij.execution.util.ExecUtil
 import com.intellij.icons.AllIcons
 import com.intellij.ide.util.PropertiesComponent
 import com.intellij.openapi.Disposable
@@ -37,11 +39,19 @@ import com.intellij.ui.components.ActionLink
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTabbedPane
+import com.intellij.ui.components.panels.VerticalLayout
 import com.intellij.ui.table.JBTable
 import com.intellij.util.ui.HTMLEditorKitBuilder
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
 import com.mio.irondome.base.IronDomeIcons
+import com.mio.irondome.base.rootDir
+import com.mio.irondome.interceptor.AgentProgressPanel
+import com.mio.irondome.interceptor.AgentRunner
+import com.mio.irondome.interceptor.AgentSettings
+import com.mio.irondome.interceptor.AgentTask
+import com.mio.irondome.interceptor.FireWithAiAction
+import com.mio.irondome.radar.ReviewCommentsListener
 import com.mio.irondome.sentinela.ChangeDiff
 import java.awt.BorderLayout
 import java.awt.Color
@@ -53,6 +63,7 @@ import java.awt.RenderingHints
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import java.awt.event.MouseMotionAdapter
+import java.nio.charset.StandardCharsets
 import java.util.concurrent.Callable
 import javax.swing.Icon
 import javax.swing.JComponent
@@ -97,7 +108,11 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
     private var focus: String? = null
     private var graph: DependencyGraph? = null
     private var changes: Map<String, UncommittedChange> = emptyMap()
+    private var comments: Map<String, List<ImpactComment>> = emptyMap()
+    /** A última análise de impacto pela IA; vale só enquanto o diagrama for o da mesma classe. */
+    private var impact: ImpactReport? = null
     private var refreshQueued = false
+    private var commentsQueued = false
     @Volatile
     private var running: ProgressIndicator? = null
     @Volatile
@@ -123,6 +138,22 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
                 override fun getActionUpdateThread() = ActionUpdateThread.EDT
                 override fun isSelected(e: AnActionEvent) = bottomPanel.isVisible
                 override fun setSelected(e: AnActionEvent, state: Boolean) = setBottomVisible(state)
+            },
+            object : DumbAwareAction("Analisar Impacto com IA", null, IronDomeIcons.ia) {
+                override fun getActionUpdateThread() = ActionUpdateThread.EDT
+                override fun update(e: AnActionEvent) {
+                    val busy = AgentRunner.getInstance(project).running != null
+                    val sources = comments.isNotEmpty() || changes.isNotEmpty()
+                    e.presentation.isEnabled = graph != null && sources && !busy && AgentSettings.ready
+                    e.presentation.description = when {
+                        graph == null -> "Calcule o raio de impacto de uma classe primeiro"
+                        !sources -> "Nenhuma classe do diagrama tem comentários do Radar ou da Patrulha nem alterações sem commit"
+                        !AgentSettings.ready -> FireWithAiAction.NOT_READY
+                        else -> "A IA (${AgentSettings.provider.title}) lê os comentários e as alterações das classes do diagrama, " +
+                            "sem alterar nada, e aponta quais classes eles afetam"
+                    }
+                }
+                override fun actionPerformed(e: AnActionEvent) = analyzeImpact()
             },
             object : DumbAwareAction("Atualizar", "Refaz a análise da classe atual do diagrama", AllIcons.Actions.Refresh) {
                 override fun getActionUpdateThread() = ActionUpdateThread.EDT
@@ -175,15 +206,20 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
             firstComponent = diagram.component
             secondComponent = bottomPanel
         }
-        add(controls, BorderLayout.NORTH)
+        add(JPanel(VerticalLayout(0)).apply {
+            add(controls)
+            add(AgentProgressPanel(project, DependencyTab.TITLE, this@DependencyPanel))
+        }, BorderLayout.NORTH)
         add(splitter, BorderLayout.CENTER)
         add(minimizedBar, BorderLayout.SOUTH)
         setBottomVisible(!PropertiesComponent.getInstance().getBoolean(BOTTOM_HIDDEN_KEY))
 
         installTableNavigation()
-        project.messageBus.connect(this).subscribe(ChangeListListener.TOPIC, object : ChangeListListener {
+        val connection = project.messageBus.connect(this)
+        connection.subscribe(ChangeListListener.TOPIC, object : ChangeListListener {
             override fun changeListUpdateDone() = scheduleChangesRefresh()
         })
+        connection.subscribe(ReviewCommentsListener.TOPIC, ReviewCommentsListener { scheduleCommentsRefresh() })
         diagram.showMessage(
             "Escolha uma classe na aba Todas as classes, abaixo, clique em Mirar Classe Atual com ela aberta no editor, " +
                 "ou clique com o botão direito numa classe ou arquivo e use Iron Dome IA: Calcular Raio de Impacto.",
@@ -282,9 +318,85 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
         projectClasses.focus = graph.focus
         this.graph = graph
         changes = uncommitted(graph)
-        diagram.show(graph, changeKinds(), hasVcs())
+        comments = ImpactComments.byClass(graph.nodes, ImpactComments.collect(project))
+        impact = impact?.takeIf { it.focus == graph.focus }
+            ?.let { report -> report.copy(impacts = report.impacts.filter { item -> graph.nodes.any { it.qualifiedName == item.qualifiedName } }) }
+        diagram.show(graph, changeKinds(), hasVcs(), comments, impact)
         classModel.update(graph.nodes, changeKinds())
         updateStatus()
+    }
+
+    /** Os comentários do Radar e da Patrulha mudaram: atualiza as marcas sem refazer a análise. */
+    private fun scheduleCommentsRefresh() {
+        if (commentsQueued) return
+        commentsQueued = true
+        ApplicationManager.getApplication().invokeLater({
+            commentsQueued = false
+            val graph = graph ?: return@invokeLater
+            val next = ImpactComments.byClass(graph.nodes, ImpactComments.collect(project))
+            if (next == comments) return@invokeLater
+            comments = next
+            diagram.updateComments(comments)
+            updateStatus()
+        }, project.disposed)
+    }
+
+    /**
+     * Pede à IA, só para ler, as classes do diagrama afetadas pelos comentários pendentes e pelas alterações sem
+     * commit. O `git diff` das alterações vai junto, lido fora da EDT.
+     */
+    private fun analyzeImpact() {
+        val graph = graph ?: return
+        val snapshot = comments
+        val kinds = changeKinds()
+        val paths = changes.values.map { it.node.filePath }.filter { it.isNotEmpty() }.distinct()
+        val root = project.rootDir()?.path ?: project.basePath ?: return
+        diagram.updateAnalyzing(true)
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val diff = gitDiff(root, paths)
+            ApplicationManager.getApplication().invokeLater({ startImpact(graph, snapshot, kinds, diff) }, project.disposed)
+        }
+    }
+
+    private fun startImpact(graph: DependencyGraph, snapshot: Map<String, List<ImpactComment>>, kinds: Map<String, FileChange>, diff: String) {
+        val runner = AgentRunner.getInstance(project)
+        val name = DependencyAnalyzer.simpleName(graph.focus)
+        val instructions = runner.writeInstructions(ImpactAnalysis.fileName(graph.focus), ImpactAnalysis.instructions(graph, snapshot, kinds, diff))
+        if (instructions == null) {
+            diagram.updateAnalyzing(false)
+            return
+        }
+        val task = AgentTask(
+            "Impacto em $name",
+            "Analise o impacto dos comentários e das alterações descritos em $instructions, seguindo as instruções do arquivo, e responda só com o JSON pedido.",
+            write = false,
+            origin = DependencyTab.TITLE,
+        )
+        runner.run(task) { result ->
+            if (this.graph?.focus == graph.focus) diagram.updateAnalyzing(false)
+            if (!result.ok) return@run
+            val report = ImpactAnalysis.parse(result.answer, graph)
+            if (report == null) {
+                status.text = "A IA não devolveu o JSON pedido: veja a resposta na notificação."
+                return@run
+            }
+            impact = report
+            if (this.graph?.focus == graph.focus) {
+                diagram.updateImpact(report)
+                updateStatus()
+            }
+        }
+        if (runner.running?.title != task.title) diagram.updateAnalyzing(false)
+    }
+
+    private fun gitDiff(root: String, paths: List<String>): String {
+        if (paths.isEmpty() || !hasVcs()) return ""
+        return runCatching {
+            val command = GeneralCommandLine(listOf("git", "diff", "HEAD", "--no-color", "--") + paths)
+                .withWorkDirectory(root)
+                .withCharset(StandardCharsets.UTF_8)
+            ExecUtil.execAndGetOutput(command, GIT_TIMEOUT_MS).takeIf { it.exitCode == 0 && !it.isTimeout }?.stdout.orEmpty()
+        }.getOrDefault("")
     }
 
     private fun updateStatus() {
@@ -296,6 +408,8 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
             }
             append(" · ${graph.nodes.size} classes · ${graph.edges.size} ligações")
             if (changes.isNotEmpty()) append(" · ${changes.size} alterada(s) sem commit")
+            if (comments.isNotEmpty()) append(" · ${comments.size} com comentário(s)")
+            impact?.takeIf { it.focus == graph.focus }?.let { append(" · IA: ${it.impacts.size} impactada(s)") }
             if (graph.cycleCount > 0) append(" · ${graph.cycleCount} ciclo(s)")
             if (graph.truncated) append(" · limite de ${DependencyAnalyzer.MAX_NODES} classes atingido")
         }
@@ -340,6 +454,10 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
             "focus" -> analyze(name)
             "select" -> selectRow(name)
             "diff" -> showDiff(name)
+            "clearImpact" -> {
+                impact = null
+                updateStatus()
+            }
         }
     }
 
@@ -519,6 +637,7 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
         const val HELP_TAB = 2
         val TAB_TITLES = listOf("Classes no raio", "Todas as classes", "Manual de campo")
         const val BOTTOM_HIDDEN_KEY = "irondome.dependencies.bottomHidden"
+        const val GIT_TIMEOUT_MS = 15_000
 
         /** 0 é verde (tranquilo), 1 amarelo e 2 vermelho (pede cuidado). */
         fun colorOf(level: Int): Color = when (level) {

@@ -11,6 +11,7 @@ object IronDomeIcons {
     val escudo: Icon = IconLoader.getIcon("/icons/escudo.svg", IronDomeIcons::class.java)
     val caixaPreta: Icon = IconLoader.getIcon("/icons/caixaPreta.svg", IronDomeIcons::class.java)
     val patrulha: Icon = IconLoader.getIcon("/icons/patrulha.svg", IronDomeIcons::class.java)
+    val toolWindow: Icon = IconLoader.getIcon("/icons/toolWindow.svg", IronDomeIcons::class.java)
     val interceptador: Icon = IconLoader.getIcon("/icons/interceptador.svg", IronDomeIcons::class.java)
 
     /** Os botões que chamam a IA, em qualquer aba. */

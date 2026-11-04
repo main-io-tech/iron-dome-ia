@@ -23,6 +23,7 @@ import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBPasswordField
 import com.intellij.ui.components.JBTextField
+import com.intellij.ui.components.panels.VerticalLayout
 import com.intellij.util.ui.FormBuilder
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
@@ -71,6 +72,18 @@ class InterceptorPanel(private val project: Project) : SimpleToolWindowPanel(tru
         renderer = SimpleListCellRenderer.create("") { "${it.title} CLI (${it.executables.first()})" }
         addActionListener { updateProviderFields() }
     }
+    private val hostLabel = JBLabel("Onde está o CLI:")
+    private val host = ComboBox(AgentHost.entries.toTypedArray()).apply {
+        renderer = SimpleListCellRenderer.create("") { it.label }
+        addActionListener { updateProviderFields() }
+    }
+    private val distroLabel = JBLabel("Distribuição do WSL:")
+    private val distro = ComboBox<String>().apply {
+        isEditable = true
+        addActionListener { updateProviderFields() }
+    }
+    /** O CLI achado em cada distribuição, por `provedor|distribuição`: procurar roda o wsl.exe. */
+    private val wslFound = mutableMapOf<String, String?>()
     private val executable = TextFieldWithBrowseButton().apply {
         addBrowseFolderListener(project, FileChooserDescriptorFactory.createSingleFileNoJarsDescriptor().withTitle("Executável do CLI de IA"))
     }
@@ -87,6 +100,13 @@ class InterceptorPanel(private val project: Project) : SimpleToolWindowPanel(tru
     private val manualLink = ActionLink("") { setManualOpen(!manualOpen) }
     private val manualPanel: JPanel
     private var manualOpen = false
+    private val runMode = ComboBox(AgentRunMode.entries.toTypedArray()).apply {
+        renderer = SimpleListCellRenderer.create("") { it.label }
+        selectedItem = AgentSettings.runMode
+        addActionListener { (selectedItem as? AgentRunMode)?.let { if (it != AgentSettings.runMode) AgentSettings.runMode = it } }
+    }
+    private val terminalButton = JButton("Testar no Terminal", AllIcons.Debugger.Console).apply { addActionListener { testTerminal() } }
+    private val terminalStatus = JBLabel()
     /** Por que a configuração automática não passou, no cabeçalho até a IA ficar pronta. */
     private var autoFailure: String? = null
     private val features = JBLabel()
@@ -100,6 +120,8 @@ class InterceptorPanel(private val project: Project) : SimpleToolWindowPanel(tru
     init {
         manualPanel = FormBuilder.createFormBuilder()
             .addLabeledComponent("CLI:", provider)
+            .addLabeledComponent(hostLabel, host)
+            .addLabeledComponent(distroLabel, distro)
             .addLabeledComponent("Executável:", executable)
             .addComponentToRightColumn(found)
             .addLabeledComponent("Modelo:", model)
@@ -120,6 +142,13 @@ class InterceptorPanel(private val project: Project) : SimpleToolWindowPanel(tru
             .addComponent(comment("Procura o Cursor CLI e o Antigravity CLI instalados e testa cada um, com o modelo padrão, até um responder. Se nenhum responder, abre a configuração manual."))
             .addComponent(manualLink)
             .addComponent(manualPanel)
+            .addComponent(TitledSeparator("Execução"))
+            .addLabeledComponent("Onde rodar a IA:", runMode)
+            .addComponentToRightColumn(comment(RUN_MODE_HINT))
+            .addComponentToRightColumn(JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(8), 0)).apply {
+                add(terminalButton)
+                add(terminalStatus)
+            })
             .addComponent(TitledSeparator("Ações com IA"))
             .addComponent(features)
             .addComponent(TitledSeparator("Execuções recentes"))
@@ -128,13 +157,20 @@ class InterceptorPanel(private val project: Project) : SimpleToolWindowPanel(tru
             .panel
             .apply { border = JBUI.Borders.empty(8, 12) }
         setContent(JPanel(BorderLayout()).apply {
-            add(header, BorderLayout.NORTH)
+            add(JPanel(VerticalLayout(0)).apply {
+                add(header)
+                add(AgentProgressPanel(project, InterceptorTab.TITLE, this@InterceptorPanel))
+            }, BorderLayout.NORTH)
             add(ScrollPaneFactory.createScrollPane(form, true), BorderLayout.CENTER)
         })
         toolbar = ActionManager.getInstance().createActionToolbar(
             "IronDome.InterceptorToolbar",
             DefaultActionGroup(
-                refreshAction { reload() },
+                refreshAction {
+                    wslFound.clear()
+                    loadDistros()
+                    reload()
+                },
                 object : com.intellij.openapi.project.DumbAwareAction("Configurações", "Abre Settings > Tools > Iron Dome IA > Interceptador (IA)", AllIcons.General.Settings) {
                     override fun actionPerformed(e: com.intellij.openapi.actionSystem.AnActionEvent) {
                         ShowSettingsUtil.getInstance().showSettingsDialog(project, AgentConfigurable::class.java)
@@ -153,7 +189,11 @@ class InterceptorPanel(private val project: Project) : SimpleToolWindowPanel(tru
             AgentSettings.Listener { ApplicationManager.getApplication().invokeLater({ updateState() }, project.disposed) },
         )
         project.messageBus.connect(this).subscribe(AgentRunner.RUNS, AgentRunner.Listener { ApplicationManager.getApplication().invokeLater({ reload() }, project.disposed) })
+        val wsl = AgentLaunch.wslSupported
+        hostLabel.isVisible = wsl
+        host.isVisible = wsl
         loadFields()
+        loadDistros()
         reload()
         val autoNow = !AgentSettings.ready && !AgentSettings.autoSetupTried && AgentSettings.untouched
         setManualOpen(!AgentSettings.ready && !autoNow)
@@ -190,6 +230,40 @@ class InterceptorPanel(private val project: Project) : SimpleToolWindowPanel(tru
         )
     }
 
+    /** Com a configuração salva: no Windows ou no WSL, como estiver. */
+    private fun testTerminal() {
+        terminalButton.isEnabled = false
+        terminalStatus.text = "Abrindo o terminal e esperando a IA gravar OK…"
+        terminalStatus.foreground = color(null)
+        AgentVerifier.testTerminal(project) { outcome ->
+            lastTerminalTest = AgentSettings.fingerprint() to outcome
+            updateTerminalTest()
+        }
+    }
+
+    /** O último teste no terminal, enquanto a configuração for a mesma. */
+    private var lastTerminalTest: Pair<String, AgentVerifier.Outcome>? = null
+
+    private fun updateTerminalTest() {
+        val terminal = AgentTerminal.available() != null
+        terminalButton.isEnabled = terminal && !AgentVerifier.testingTerminal && AgentSettings.launch() != null
+        terminalButton.toolTipText = when {
+            !terminal -> "O plugin de terminal da IDE está desligado"
+            AgentSettings.launch() == null -> "Configure o CLI primeiro"
+            else -> "Abre o terminal da IDE e roda o CLI${AgentSettings.launch()?.where.orEmpty()} com a configuração salva"
+        }
+        if (AgentVerifier.testingTerminal) return
+        val last = lastTerminalTest?.takeIf { it.first == AgentSettings.fingerprint() }?.second
+        val at = AgentSettings.terminalVerifiedAt
+        terminalStatus.text = when {
+            last != null -> "<html>${last.message}</html>"
+            at != null -> "Terminal testado em $at."
+            terminal -> "Ainda não testado no terminal."
+            else -> ""
+        }
+        terminalStatus.foreground = color(last?.ok ?: at?.let { true })
+    }
+
     private fun showAutoStatus(text: String, ok: Boolean?) {
         autoStatus.text = text
         autoStatus.foreground = color(ok)
@@ -199,6 +273,8 @@ class InterceptorPanel(private val project: Project) : SimpleToolWindowPanel(tru
 
     private fun loadFields() {
         provider.selectedItem = AgentSettings.provider
+        host.selectedItem = AgentSettings.host
+        distro.selectedItem = AgentSettings.wslDistro
         executable.text = AgentSettings.executable.orEmpty()
         model.text = AgentSettings.model.orEmpty()
         timeout.value = AgentSettings.timeoutMinutes
@@ -223,19 +299,68 @@ class InterceptorPanel(private val project: Project) : SimpleToolWindowPanel(tru
         }
     }
 
+    /** As distribuições do WSL, para escolher; listar roda o wsl.exe. */
+    private fun loadDistros() {
+        if (!AgentLaunch.wslSupported) return
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val names = AgentLaunch.distributions()
+            ApplicationManager.getApplication().invokeLater({
+                val chosen = distro.selectedItem as? String ?: AgentSettings.wslDistro
+                distro.removeAllItems()
+                names.forEach(distro::addItem)
+                distro.selectedItem = chosen ?: names.firstOrNull()
+                updateProviderFields()
+            }, project.disposed)
+        }
+    }
+
     private fun updateProviderFields() {
         val chosen = provider.selectedItem as? AgentProvider ?: return
         val isCursor = chosen == AgentProvider.CURSOR
         cursorKey.isVisible = isCursor
         cursorKeyLabel.isVisible = isCursor
         cursorKeyHint.isVisible = isCursor
-        val path = AgentSettings.resolveExecutable(chosen, executable.text.trim().ifEmpty { null })
-        found.text = path?.let { "Encontrado: $it" } ?: "Não encontrado. ${chosen.installHint}"
-        found.foreground = if (path != null) UIUtil.getContextHelpForeground() else JBColor.RED
+        val inWsl = host.selectedItem == AgentHost.WSL && AgentLaunch.wslSupported
+        distroLabel.isVisible = inWsl
+        distro.isVisible = inWsl
+        val configured = executable.text.trim().ifEmpty { null }
+        if (!inWsl) {
+            val path = AgentSettings.resolveExecutable(chosen, configured)
+            showFound(path?.toString(), chosen)
+            return
+        }
+        val name = (distro.selectedItem as? String)?.trim()?.ifEmpty { null }
+        when {
+            name == null -> showFound(null, chosen, "Escolha a distribuição do WSL.")
+            configured != null -> showFound("WSL $name: $configured", chosen)
+            else -> {
+                val key = "${chosen.name}|$name"
+                if (key in wslFound) {
+                    showFound(wslFound[key]?.let { "WSL $name: $it" }, chosen)
+                    return
+                }
+                found.text = "Procurando o ${chosen.title} CLI no WSL $name…"
+                found.foreground = UIUtil.getContextHelpForeground()
+                ApplicationManager.getApplication().executeOnPooledThread {
+                    val path = AgentLaunch.findInWsl(chosen, name)
+                    ApplicationManager.getApplication().invokeLater({
+                        wslFound[key] = path
+                        updateProviderFields()
+                    }, project.disposed)
+                }
+            }
+        }
+    }
+
+    private fun showFound(where: String?, chosen: AgentProvider, missing: String = "Não encontrado. ${chosen.installHint}") {
+        found.text = where?.let { "Encontrado: $it" } ?: missing
+        found.foreground = if (where != null) UIUtil.getContextHelpForeground() else JBColor.RED
     }
 
     private fun saveAndTest() {
         AgentSettings.provider = provider.selectedItem as AgentProvider
+        AgentSettings.host = if (AgentLaunch.wslSupported) host.selectedItem as? AgentHost ?: AgentHost.LOCAL else AgentHost.LOCAL
+        AgentSettings.wslDistro = (distro.selectedItem as? String) ?: distro.editor.item?.toString()
         AgentSettings.executable = executable.text
         AgentSettings.model = model.text
         AgentSettings.timeoutMinutes = timeout.value as Int
@@ -256,6 +381,7 @@ class InterceptorPanel(private val project: Project) : SimpleToolWindowPanel(tru
 
     private fun updateState() {
         updateProviderFields()
+        updateTerminalTest()
         val chosen = AgentSettings.provider
         val ready = AgentSettings.ready
         val busy = runner.running
@@ -265,11 +391,11 @@ class InterceptorPanel(private val project: Project) : SimpleToolWindowPanel(tru
                 Tone.YELLOW.accent,
                 autoStatus.text,
             )
-            AgentSettings.resolveExecutable() == null -> header.update(
+            AgentSettings.launch() == null -> header.update(
                 "IA não configurada",
                 Tone.GRAY.accent,
-                "O Interceptador chama a IA pelo ${chosen.title} CLI, na sua máquina, sobre o projeto aberto.",
-                warning = autoFailure ?: chosen.installHint,
+                "O Interceptador chama a IA pelo ${chosen.title} CLI, na sua máquina ou no WSL, sobre o projeto aberto.",
+                warning = autoFailure ?: if (AgentSettings.host == AgentHost.WSL) "Escolha a distribuição do WSL." else chosen.installHint,
             )
             !ready -> header.update(
                 "Teste a integração",
@@ -292,7 +418,7 @@ class InterceptorPanel(private val project: Project) : SimpleToolWindowPanel(tru
     private fun featuresHtml(ready: Boolean): String {
         val mark = if (ready) "<font color='#1A7F37'>●</font>" else "<font color='#8C959F'>○</font>"
         val items = listOf(
-            "Radar e barra do editor" to "Disparar com IA: a IA executa a ordem de interceptação e marca os alvos atendidos",
+            "Radar e barra do editor" to "Disparar Todos com IA, ou Disparar Selecionados e Disparar no cartão do alvo: a IA executa a ordem de interceptação e marca os alvos atendidos",
             "Patrulha" to "Revisar com IA (no modo revisão): comentários da IA como rascunhos do PR",
             "Escudo" to "Explicar Falha com IA e, na resposta, Corrigir com IA",
             "Caixa-Preta" to "Analisar com IA, no bug gerado e em Ver Logs de Erro",
@@ -322,8 +448,11 @@ class InterceptorPanel(private val project: Project) : SimpleToolWindowPanel(tru
         }
     }
 
-    private companion object {
+    internal companion object {
         const val MAX_RUNS = 30
+        const val RUN_MODE_HINT = "No terminal, a IA roda à vista numa aba do terminal da IDE, onde dá para acompanhar e conversar com ela " +
+            "(o Cursor abre interativo, com o login do agent login). Ela grava a resposta final em iron-dome/ia/respostas/, " +
+            "e o plugin segue dali, como na aba. Testar no Terminal confere esse caminho com a configuração salva, no Windows ou no WSL."
 
         fun comment(text: String) = JBLabel("<html>$text</html>").apply {
             componentStyle = UIUtil.ComponentStyle.SMALL

@@ -38,7 +38,7 @@ class ReviewCommentRenderer(
     val card: EditorCard? = null,
 ) : EditorCustomElementRenderer {
 
-    enum class Hit { NONE, TOGGLE, HIDE, EDIT }
+    enum class Hit { NONE, TOGGLE, HIDE, EDIT, FIRE }
 
     private val status = when {
         card != null -> CommentStatus.RESOLVED
@@ -53,6 +53,8 @@ class ReviewCommentRenderer(
     private val buttons: List<Pair<String, Hit>> = when {
         card != null -> listOfNotNull(HIDE_LABEL to Hit.HIDE, (EDIT_LABEL to Hit.EDIT).takeIf { card.onEdit != null })
         resolved -> listOf(HIDE_LABEL to Hit.HIDE)
+        // Alvos do Radar disparam um a um; os de PR vão para o GitHub pela Patrulha.
+        editable && comment.pullRequest == 0 -> listOf(EDIT_LABEL to Hit.EDIT, FIRE_LABEL to Hit.FIRE)
         editable -> listOf(EDIT_LABEL to Hit.EDIT)
         else -> emptyList()
     }
@@ -346,6 +348,7 @@ class ReviewCommentRenderer(
     private companion object {
         const val HIDE_LABEL = "Ocultar"
         const val EDIT_LABEL = "Editar"
+        const val FIRE_LABEL = "Disparar"
         const val DISCUSS_LABEL = "Discutir antes"
         const val PULL_REQUEST_UNSENT = "Não enviado"
         const val SUGGESTION_LABEL = "Código sugerido (substitui as linhas comentadas):"

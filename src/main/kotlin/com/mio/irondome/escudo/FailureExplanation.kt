@@ -61,7 +61,12 @@ object FailureExplanation {
         val instructions = runner.writeInstructions(name, instructions(failures)) ?: return
         val what = if (failures.size == 1) "a falha de ${failures.single().label}" else "${failures.size} falhas de teste"
         runner.run(
-            AgentTask("Explicar $what", "Explique as falhas de teste descritas em $instructions, seguindo as instruções do arquivo.", write = false),
+            AgentTask(
+                "Explicar $what",
+                "Explique as falhas de teste descritas em $instructions, seguindo as instruções do arquivo.",
+                write = false,
+                origin = TestsTab.TITLE,
+            ),
             "Corrigir com IA" to { _ ->
                 runner.run(
                     AgentTask(
@@ -69,6 +74,7 @@ object FailureExplanation {
                         "Corrija as falhas de teste descritas em $instructions: altere o código de produção, ou o teste se ele estiver errado, " +
                             "e explique o que mudou. Não apague nem desative testes.",
                         write = true,
+                        origin = TestsTab.TITLE,
                     ),
                 )
             },

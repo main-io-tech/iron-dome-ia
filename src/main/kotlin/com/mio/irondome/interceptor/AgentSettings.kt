@@ -26,6 +26,11 @@ object AgentSettings {
     private const val VERIFIED_KEY = "IronDome.Agent.Verified"
     private const val VERIFIED_AT_KEY = "IronDome.Agent.VerifiedAt"
     private const val AUTO_SETUP_KEY = "IronDome.Agent.AutoSetupTried"
+    private const val RUN_MODE_KEY = "IronDome.Agent.RunMode"
+    private const val HOST_KEY = "IronDome.Agent.Host"
+    private const val WSL_DISTRO_KEY = "IronDome.Agent.WslDistro"
+    private const val TERMINAL_VERIFIED_KEY = "IronDome.Agent.TerminalVerified"
+    private const val TERMINAL_VERIFIED_AT_KEY = "IronDome.Agent.TerminalVerifiedAt"
     private val cursorCredentials = CredentialAttributes(generateServiceName("Iron Dome IA", "Cursor API key"))
 
     const val DEFAULT_TIMEOUT_MINUTES = 20
@@ -44,7 +49,17 @@ object AgentSettings {
         get() = AgentProvider.entries.firstOrNull { it.name == PropertiesComponent.getInstance().getValue(PROVIDER_KEY) } ?: AgentProvider.CURSOR
         set(value) = change { PropertiesComponent.getInstance().setValue(PROVIDER_KEY, value.name, AgentProvider.CURSOR.name) }
 
-    /** Caminho do executável; vazio procura sozinho. */
+    /** Onde o CLI está instalado: nesta máquina ou no WSL. */
+    var host: AgentHost
+        get() = AgentHost.entries.firstOrNull { it.name == PropertiesComponent.getInstance().getValue(HOST_KEY) } ?: AgentHost.LOCAL
+        set(value) = change { PropertiesComponent.getInstance().setValue(HOST_KEY, value.name, AgentHost.LOCAL.name) }
+
+    /** A distribuição do WSL, como `Ubuntu`, quando [host] é o WSL. */
+    var wslDistro: String?
+        get() = PropertiesComponent.getInstance().getValue(WSL_DISTRO_KEY)?.takeIf { it.isNotBlank() }
+        set(value) = change { PropertiesComponent.getInstance().setValue(WSL_DISTRO_KEY, value?.trim()?.takeIf { it.isNotEmpty() }) }
+
+    /** Caminho do executável (no WSL, o caminho do Linux); vazio procura sozinho. */
     var executable: String?
         get() = PropertiesComponent.getInstance().getValue(EXECUTABLE_KEY)?.takeIf { it.isNotBlank() }
         set(value) = change { PropertiesComponent.getInstance().setValue(EXECUTABLE_KEY, value?.trim()?.takeIf { it.isNotEmpty() }) }
@@ -56,6 +71,11 @@ object AgentSettings {
     var timeoutMinutes: Int
         get() = PropertiesComponent.getInstance().getInt(TIMEOUT_KEY, DEFAULT_TIMEOUT_MINUTES).coerceIn(1, 240)
         set(value) = PropertiesComponent.getInstance().setValue(TIMEOUT_KEY, value.coerceIn(1, 240), DEFAULT_TIMEOUT_MINUTES)
+
+    /** Onde a IA roda: não entra no teste, que vale para os dois jeitos. */
+    var runMode: AgentRunMode
+        get() = AgentRunMode.entries.firstOrNull { it.name == PropertiesComponent.getInstance().getValue(RUN_MODE_KEY) } ?: AgentRunMode.BACKGROUND
+        set(value) = change { PropertiesComponent.getInstance().setValue(RUN_MODE_KEY, value.name, AgentRunMode.BACKGROUND.name) }
 
     /** A configuração automática roda sozinha só na primeira vez; depois, só pelo botão. */
     var autoSetupTried: Boolean
@@ -86,7 +106,7 @@ object AgentSettings {
      * só se habilitam assim.
      */
     val ready: Boolean
-        get() = readyCache ?: (resolveExecutable() != null && verifiedFingerprint == fingerprint()).also { readyCache = it }
+        get() = readyCache ?: (launch() != null && verifiedFingerprint == fingerprint()).also { readyCache = it }
 
     /** Testada com a configuração de agora, mesmo que o executável tenha sumido depois. */
     val verified: Boolean get() = verifiedFingerprint == fingerprint()
@@ -95,10 +115,10 @@ object AgentSettings {
 
     private val verifiedFingerprint: String? get() = PropertiesComponent.getInstance().getValue(VERIFIED_KEY)
 
-    /** O que um teste valida: muda com o CLI, o executável encontrado, o modelo ou a chave. */
+    /** O que um teste valida: muda com o CLI, onde ele está e o executável, o modelo ou a chave. */
     fun fingerprint(): String = listOf(
         provider.name,
-        resolveExecutable()?.toString().orEmpty(),
+        launch()?.description.orEmpty(),
         model.orEmpty(),
         PropertiesComponent.getInstance().getInt(KEY_VERSION_KEY, 0).toString(),
     ).joinToString("|")
@@ -110,10 +130,33 @@ object AgentSettings {
 
     fun clearVerified() = change { PropertiesComponent.getInstance().unsetValue(VERIFIED_KEY) }
 
+    /** Quando o teste pelo terminal passou com a configuração de agora; nulo se nunca, ou se ela mudou. */
+    var terminalVerifiedAt: String?
+        get() = PropertiesComponent.getInstance().getValue(TERMINAL_VERIFIED_AT_KEY)
+            ?.takeIf { PropertiesComponent.getInstance().getValue(TERMINAL_VERIFIED_KEY) == fingerprint() }
+        set(value) = change {
+            PropertiesComponent.getInstance().setValue(TERMINAL_VERIFIED_KEY, value?.let { fingerprint() })
+            PropertiesComponent.getInstance().setValue(TERMINAL_VERIFIED_AT_KEY, value)
+        }
+
     private fun change(update: () -> Unit) {
         update()
         readyCache = null
         ApplicationManager.getApplication()?.messageBus?.syncPublisher(Listener.TOPIC)?.changed()
+    }
+
+    /**
+     * Como rodar o CLI com a configuração dada; nulo se ele não existe nesta máquina ou falta a distribuição do
+     * WSL. No WSL não roda nada: sem caminho configurado, vale o nome do comando, achado pelo shell de login.
+     */
+    fun launch(
+        provider: AgentProvider = this.provider,
+        configured: String? = executable,
+        host: AgentHost = this.host,
+        distro: String? = wslDistro,
+    ): AgentLaunch? = when (host) {
+        AgentHost.LOCAL -> resolveExecutable(provider, configured)?.let(AgentLaunch::local)
+        AgentHost.WSL -> distro?.takeIf { AgentLaunch.wslSupported }?.let { AgentLaunch.wsl(it, configured ?: provider.executables.first()) }
     }
 
     /** O executável configurado, se existir, ou o encontrado no PATH e nas pastas de instalação. */

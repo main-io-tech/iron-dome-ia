@@ -79,7 +79,7 @@ object Compatibility {
             missingApis = IdeSupport.missing,
             ideVersionFailures = TabFailures.fromIdeVersion,
             agentProvider = AgentSettings.provider.title,
-            agentCli = runCatching { AgentSettings.resolveExecutable()?.toString() }.getOrNull(),
+            agentCli = runCatching { AgentSettings.launch()?.description }.getOrNull(),
         )
     }
 

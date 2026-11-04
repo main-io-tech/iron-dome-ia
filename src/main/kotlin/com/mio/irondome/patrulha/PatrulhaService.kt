@@ -329,40 +329,183 @@ class PatrulhaService(private val project: Project) : PersistentStateComponent<P
     }
 
     /**
-     * Envia os rascunhos como uma revisão do PR e grava os pedidos no `.md`. [event] é `REQUEST_CHANGES`
-     * ou `COMMENT`. Não tira os rascunhos do Radar: isso é com quem chama, na EDT.
+     * Envia os rascunhos ao PR e grava os pedidos no `.md`. Com [asDraft], eles vão para a revisão pendente do
+     * GitHub (só quem revisa vê, até [publishDraft]), acrescentados à que já existir; senão, numa revisão
+     * publicada com [event], `REQUEST_CHANGES` ou `COMMENT`. Não tira os rascunhos do Radar: isso é com quem
+     * chama, na EDT.
      */
-    fun send(context: RepoContext, pr: PullRequest, drafts: List<ReviewComment>, general: String, event: String): SendResult {
+    fun send(context: RepoContext, pr: PullRequest, drafts: List<ReviewComment>, general: String, event: String, asDraft: Boolean): SendResult {
         val client = client(context)
         val planned = ReviewPlan.plan(drafts, client.files(context.repo, pr.number))
-        val inline = planned.filter { it.placement == Placement.INLINE }
-        val body = ReviewPlan.reviewBody(general, planned).ifBlank { DEFAULT_BODY }
-        val review = client.createReview(
-            context.repo, pr.number, pr.headSha, body, event,
-            inline.map { GitHubClient.InlineComment(it.comment.filePath, it.startLine, it.line!!, it.body) },
-        )
-        val posted = client.reviewComments(context.repo, pr.number, review.id).toMutableList()
-        planned.filter { it.placement == Placement.FILE }.forEach { request ->
-            posted += client.createFileComment(context.repo, pr.number, pr.headSha, request.comment.filePath, request.body)
-        }
+        var existing = record(pr.number)?.let { reconcileDraft(client, context, it).record }
         val sentAt = LocalDateTime.now().toString()
+        val posted = mutableListOf<GitHubClient.PostedComment>()
+        val reviewUrl: String
+        if (asDraft) {
+            val (url, pending) = sendToDraft(client, context, pr, planned, general, existing, posted)
+            reviewUrl = url
+            existing = (existing ?: PullRequestRecord(pr.number, pr.title, pr.url, pr.headRef, pr.baseRef, emptyList()))
+                .copy(pendingReviewId = pending.id, pendingReviewNodeId = pending.nodeId)
+        } else {
+            val inline = planned.filter { it.placement == Placement.INLINE }
+            val review = try {
+                client.createReview(
+                    context.repo, pr.number, pr.headSha, ReviewPlan.reviewBody(general, planned).ifBlank { DEFAULT_BODY }, event,
+                    inline.map { GitHubClient.InlineComment(it.comment.filePath, it.startLine, it.line!!, it.body) },
+                )
+            } catch (e: GitHubException) {
+                throw if (e.status == 422 && existing?.pendingReviewId != null) {
+                    PatrulhaException("Há um rascunho deste PR no GitHub: publique ou descarte o rascunho antes de publicar outra revisão.")
+                } else e
+            }
+            reviewUrl = review.url
+            posted += client.reviewComments(context.repo, pr.number, review.id)
+            planned.filter { it.placement == Placement.FILE }.forEach { request ->
+                posted += client.createFileComment(context.repo, pr.number, pr.headSha, request.comment.filePath, request.body)
+            }
+        }
         val requests = planned.map { request ->
             val comment = posted.firstOrNull { ReviewPlan.marker(request.comment.id) in it.body }
-            changeRequest(request.comment, pr.headSha, comment, review.url, sentAt)
+            changeRequest(request.comment, pr.headSha, comment, reviewUrl, sentAt, pending = asDraft)
         }
-        val existing = record(pr.number)
         val known = existing?.requests.orEmpty()
         write(
             PullRequestRecord(
                 pr.number, pr.title, pr.url, pr.headRef, pr.baseRef,
                 known + requests.map { request -> if (known.any { it.id == request.id }) request.copy(id = uniqueId(request.id, known)) else request },
                 existing?.checkedAt,
+                existing?.pendingReviewId,
+                existing?.pendingReviewNodeId,
             ),
         )
-        return SendResult(review.url, requests)
+        return SendResult(reviewUrl, requests)
     }
 
-    private fun changeRequest(comment: ReviewComment, commit: String, posted: GitHubClient.PostedComment?, reviewUrl: String, sentAt: String) =
+    /**
+     * Põe [planned] na revisão pendente: cria uma, ou acrescenta à que [existing] já tem. Comentários de arquivo
+     * que o GitHub não aceitar no rascunho vão para o texto dele.
+     */
+    private fun sendToDraft(
+        client: GitHubClient,
+        context: RepoContext,
+        pr: PullRequest,
+        planned: List<PlannedRequest>,
+        general: String,
+        existing: PullRequestRecord?,
+        posted: MutableList<GitHubClient.PostedComment>,
+    ): Pair<String, GitHubClient.Review> {
+        val current = existing?.pendingReviewId?.let { client.review(context.repo, pr.number, it) }?.takeIf { it.pending }
+        val inline = planned.filter { it.placement == Placement.INLINE }
+        val inBody = planned.filter { it.placement == Placement.BODY }
+        val review = if (current == null) {
+            try {
+                client.createReview(
+                    context.repo, pr.number, pr.headSha, ReviewPlan.reviewBody(general, inBody), null,
+                    inline.map { GitHubClient.InlineComment(it.comment.filePath, it.startLine, it.line!!, it.body) },
+                ).also { posted += client.reviewComments(context.repo, pr.number, it.id) }
+            } catch (e: GitHubException) {
+                throw if (e.status == 422) {
+                    PatrulhaException("Você já tem um rascunho de revisão neste PR, aberto pelo GitHub: publique ou descarte lá antes de enviar por aqui.")
+                } else e
+            }
+        } else {
+            inline.forEach { posted += client.addPendingComment(current.nodeId, it.comment.filePath, it.startLine, it.line, it.body) }
+            current
+        }
+        val fallback = planned.filter { it.placement == Placement.FILE }.mapNotNull { request ->
+            runCatching { client.addPendingComment(review.nodeId, request.comment.filePath, null, null, request.body) }
+                .onSuccess { posted += it }
+                .exceptionOrNull()
+                ?.let { PlannedRequest(request.comment, Placement.BODY, ReviewPlan.bodyFor(request.comment, Placement.BODY), null, null) }
+        }
+        // Num rascunho novo, o texto geral e os pedidos de texto já foram na criação; falta só o que não coube no arquivo.
+        val extra = if (current == null) ReviewPlan.reviewBody("", fallback) else ReviewPlan.reviewBody(general, inBody + fallback)
+        if (extra.isNotBlank()) {
+            val body = client.review(context.repo, pr.number, review.id)?.body.orEmpty()
+            client.updateReviewBody(context.repo, pr.number, review.id, listOf(body.trim(), extra).filter { it.isNotBlank() }.joinToString("\n\n"))
+        }
+        return review.url to review
+    }
+
+    /** O rascunho como está no GitHub: publicado lá, os pedidos viram publicados; descartado, saem do `.md`. */
+    private class DraftState(val record: PullRequestRecord, val comments: List<GitHubClient.PostedComment>, val published: Boolean, val discarded: Boolean)
+
+    private fun reconcileDraft(client: GitHubClient, context: RepoContext, record: PullRequestRecord): DraftState {
+        val id = record.pendingReviewId ?: return DraftState(record, emptyList(), published = false, discarded = false)
+        val review = client.review(context.repo, record.number, id)
+        return when {
+            review == null -> DraftState(record.withoutDraft(published = false), emptyList(), published = false, discarded = true)
+            !review.pending -> DraftState(record.withoutDraft(published = true), emptyList(), published = true, discarded = false)
+            else -> DraftState(record, client.reviewComments(context.repo, record.number, id), published = false, discarded = false)
+        }
+    }
+
+    /** Publica o rascunho do PR com [event], com [general] antes do texto que ele já tinha. Devolve o link da revisão. */
+    fun publishDraft(context: RepoContext, number: Int, event: String, general: String): String {
+        val record = record(number) ?: throw PatrulhaException("Nenhum pedido enviado ao PR #$number.")
+        val id = record.pendingReviewId ?: throw PatrulhaException("O PR #$number não tem rascunho no GitHub.")
+        val client = client(context)
+        val current = client.review(context.repo, number, id)
+        if (current == null) {
+            write(record.withoutDraft(published = false))
+            throw PatrulhaException("O rascunho do PR #$number foi descartado no GitHub: os pedidos dele saíram do .md.")
+        }
+        if (!current.pending) {
+            write(record.withoutDraft(published = true))
+            return current.url
+        }
+        val body = listOf(general.trim(), current.body.trim()).filter { it.isNotBlank() }.joinToString("\n\n").ifBlank { DEFAULT_BODY }
+        val submitted = client.submitReview(context.repo, number, id, event, body)
+        write(record.withoutDraft(published = true))
+        return submitted.url.ifBlank { current.url }
+    }
+
+    /** Descarta o rascunho no GitHub, com todos os comentários dele, e tira os pedidos dele do `.md`. Devolve quantos saíram. */
+    fun discardDraft(context: RepoContext, number: Int): Int {
+        val record = record(number) ?: return 0
+        val id = record.pendingReviewId ?: return 0
+        client(context).deletePendingReview(context.repo, number, id)
+        val removed = record.drafts.size
+        write(record.withoutDraft(published = false))
+        return removed
+    }
+
+    /**
+     * Apaga todos os pedidos do PR: descarta o rascunho no GitHub e, com [publishedOnGitHub], apaga também os
+     * comentários publicados (e as conversas deles). O `.md` do PR sai. Devolve quantos pedidos saíram.
+     */
+    fun deleteAll(context: RepoContext?, number: Int, publishedOnGitHub: Boolean): Int {
+        val record = record(number) ?: return 0
+        if (record.pendingReviewId != null || publishedOnGitHub) {
+            val repo = context ?: throw PatrulhaException("O projeto não tem um remote do GitHub.")
+            val client = client(repo)
+            record.pendingReviewId?.let { client.deletePendingReview(repo.repo, number, it) }
+            if (publishedOnGitHub) {
+                record.requests.filter { !it.pending && !it.deleted }.mapNotNull { it.commentId }
+                    .forEach { client.deleteReviewComment(repo.repo, it) }
+            }
+        }
+        record.requests.forEach {
+            state.hiddenRequests.remove(key(number, it.id))
+            state.expandedRequests.remove(key(number, it.id))
+        }
+        recordFile(number)?.let { file ->
+            Files.deleteIfExists(file)
+            LocalFileSystem.getInstance().refreshNioFiles(listOf(file), true, false, null)
+        }
+        project.messageBus.syncPublisher(TOPIC).recordsChanged()
+        if (isHistoryShown(number)) ApplicationManager.getApplication().invokeLater({ historyChanged(number) }, project.disposed)
+        return record.requests.size
+    }
+
+    private fun changeRequest(
+        comment: ReviewComment,
+        commit: String,
+        posted: GitHubClient.PostedComment?,
+        reviewUrl: String,
+        sentAt: String,
+        pending: Boolean,
+    ) =
         ChangeRequest(
             id = comment.id,
             path = comment.filePath,
@@ -376,6 +519,7 @@ class PatrulhaService(private val project: Project) : PersistentStateComponent<P
             url = posted?.url?.ifBlank { null } ?: reviewUrl.ifBlank { null },
             sentAt = sentAt,
             suggestion = comment.suggestion,
+            pending = pending,
         )
 
     private fun uniqueId(id: String, known: List<ChangeRequest>): String {
@@ -386,17 +530,19 @@ class PatrulhaService(private val project: Project) : PersistentStateComponent<P
 
     /** Confere o código no head atual e as conversas no PR, e regrava o `.md`. */
     fun verify(context: RepoContext, number: Int): PullRequestRecord {
-        val record = record(number) ?: throw PatrulhaException("Nenhum pedido enviado ao PR #$number.")
         val client = client(context)
+        val draft = reconcileDraft(client, context, record(number) ?: throw PatrulhaException("Nenhum pedido enviado ao PR #$number."))
+        val record = draft.record
         val pr = client.pullRequest(context.repo, number)
         val threads = client.reviewThreads(context.repo, number)
         val me = client.currentUser()
         val contents = mutableMapOf<Pair<String, String>, String?>()
         fun content(path: String, ref: String) = contents.getOrPut(path to ref) { client.fileContent(context.repo, path, ref) }
-        val remote = client.pullRequestComments(context.repo, number).associateBy { it.id }
+        val remote = (client.pullRequestComments(context.repo, number) + draft.comments).associateBy { it.id }
 
         val checked = record.requests.map { RemoteSync.apply(it, remote) }.map { request ->
-            if (request.deleted) return@map request
+            // Rascunhos o autor ainda não viu: não há o que conferir no código nem na conversa.
+            if (request.deleted || request.pending) return@map request
             val needsCode = request.target != CommentTarget.PACKAGE && pr.headSha != request.commit
             val head = if (needsCode) content(request.path, pr.headSha) else null
             val sent = if (needsCode && request.target == CommentTarget.FILE) content(request.path, request.commit) else null
@@ -413,19 +559,40 @@ class PatrulhaService(private val project: Project) : PersistentStateComponent<P
     }
 
     /** O que a sincronização encontrou de novo: pedidos editados e apagados no GitHub desde a última vez. */
-    class SyncResult(val number: Int, val edited: List<String>, val deleted: List<String>) {
-        val changed: Boolean get() = edited.isNotEmpty() || deleted.isNotEmpty()
+    class SyncResult(
+        val number: Int,
+        val edited: List<String>,
+        val deleted: List<String>,
+        /** O rascunho foi publicado ou descartado pelo GitHub, fora do plugin. */
+        val draftPublished: Boolean = false,
+        val draftDiscarded: Boolean = false,
+    ) {
+        val changed: Boolean get() = edited.isNotEmpty() || deleted.isNotEmpty() || draftPublished || draftDiscarded
     }
 
-    /** Traz para o `.md` o que o revisor editou ou apagou nos comentários do PR direto no GitHub. */
+    /**
+     * Traz para o `.md` o que mudou direto no GitHub: comentários editados ou apagados pelo revisor e o rascunho
+     * publicado ou descartado lá.
+     */
     fun sync(context: RepoContext, number: Int): SyncResult {
-        val record = record(number) ?: return SyncResult(number, emptyList(), emptyList())
-        if (record.requests.none { it.commentId != null && !it.deleted }) return SyncResult(number, emptyList(), emptyList())
-        val remote = client(context).pullRequestComments(context.repo, number).associateBy { it.id }
+        val original = record(number) ?: return SyncResult(number, emptyList(), emptyList())
+        if (original.pendingReviewId == null && original.requests.none { it.commentId != null && !it.deleted }) {
+            return SyncResult(number, emptyList(), emptyList())
+        }
+        val client = client(context)
+        val draft = reconcileDraft(client, context, original)
+        val record = draft.record
+        val remote = (client.pullRequestComments(context.repo, number) + draft.comments).associateBy { it.id }
         val synced = record.requests.map { RemoteSync.apply(it, remote) }
         val changed = synced.zip(record.requests).filter { (now, before) -> now != before }.map { it.first }
-        if (changed.isNotEmpty()) write(record.copy(requests = synced))
-        return SyncResult(number, changed.filterNot { it.deleted }.map { it.id }, changed.filter { it.deleted }.map { it.id })
+        if (changed.isNotEmpty() || record != original) write(record.copy(requests = synced))
+        return SyncResult(
+            number,
+            changed.filterNot { it.deleted }.map { it.id },
+            changed.filter { it.deleted }.map { it.id },
+            draft.published,
+            draft.discarded,
+        )
     }
 
     /**

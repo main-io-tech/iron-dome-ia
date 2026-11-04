@@ -61,6 +61,8 @@ data class ChangeRequest(
     val remote: RemoteStatus = RemoteStatus.SYNCED,
     /** Quando o comentário foi alterado no GitHub, como o GitHub informa (`updated_at`). */
     val remoteUpdatedAt: String? = null,
+    /** Na revisão pendente do GitHub: só quem revisa vê, até publicar. */
+    val pending: Boolean = false,
 ) {
     /** Apagado no GitHub: fica no `.md` como registro, mas fora das contas e das verificações. */
     val deleted: Boolean get() = remote == RemoteStatus.DELETED
@@ -93,9 +95,28 @@ data class PullRequestRecord(
     val baseRef: String,
     val requests: List<ChangeRequest>,
     val checkedAt: String? = null,
+    /** A revisão pendente (rascunho) no GitHub, com os pedidos [ChangeRequest.pending]; nula sem rascunho. */
+    val pendingReviewId: Long? = null,
+    /** O id da revisão pendente no GraphQL, para acrescentar comentários a ela. */
+    val pendingReviewNodeId: String? = null,
 ) {
-    /** Os pedidos que contam: sem os apagados no GitHub. */
-    val active: List<ChangeRequest> get() = requests.filterNot { it.deleted }
+    /** Os pedidos que contam para atendido ou pendente: publicados, sem os apagados no GitHub. */
+    val active: List<ChangeRequest> get() = requests.filterNot { it.deleted || it.pending }
+
+    val drafts: List<ChangeRequest> get() = requests.filter { it.pending && !it.deleted }
+
+    /** Sem a revisão pendente: os rascunhos viraram publicados, ou foram descartados com ela. */
+    fun withoutDraft(published: Boolean): PullRequestRecord = copy(
+        requests = requests.mapNotNull { request ->
+            when {
+                !request.pending -> request
+                published -> request.copy(pending = false)
+                else -> null
+            }
+        },
+        pendingReviewId = null,
+        pendingReviewNodeId = null,
+    )
 
     companion object {
         const val DIR = "pull-requests"
@@ -114,7 +135,11 @@ object ChangeRequestMarkdown {
     private const val REQUEST_TAG = "iron-dome-pedido"
     private val META = Regex("""^<!-- (\S+) (\{.*}) -->$""")
 
-    private class RecordMeta(val number: Int, val title: String, val url: String, val head: String, val base: String, val checkedAt: String?)
+    private class RecordMeta(
+        val number: Int, val title: String, val url: String, val head: String, val base: String, val checkedAt: String?,
+        val pendingReview: Long? = null,
+        val pendingReviewNode: String? = null,
+    )
 
     private class RequestMeta(
         val id: String, val path: String, val target: String, val start: Int, val end: Int, val snippet: String,
@@ -123,12 +148,17 @@ object ChangeRequestMarkdown {
         val suggestion: String? = null,
         val remote: String? = null,
         val remoteUpdatedAt: String? = null,
+        val pending: Boolean? = null,
     )
 
     fun render(record: PullRequestRecord): String = buildString {
         appendLine("# Pedidos de alteração do PR #${record.number}: ${record.title.oneLine()}")
         appendLine()
-        appendLine("<!-- $RECORD_TAG ${gson.toJson(RecordMeta(record.number, record.title, record.url, record.headRef, record.baseRef, record.checkedAt))} -->")
+        val recordMeta = RecordMeta(
+            record.number, record.title, record.url, record.headRef, record.baseRef, record.checkedAt,
+            record.pendingReviewId, record.pendingReviewNodeId,
+        )
+        appendLine("<!-- $RECORD_TAG ${gson.toJson(recordMeta)} -->")
         appendLine()
         appendLine("> Pedidos de alteração enviados ao pull request #${record.number} (`${record.headRef}` → `${record.baseRef}`). A aba")
         appendLine("> Patrulha regrava este arquivo a cada verificação do código e das conversas no GitHub.")
@@ -140,7 +170,11 @@ object ChangeRequestMarkdown {
         appendLine("| Pedido | Onde | Código | Conversa |")
         appendLine("| --- | --- | --- | --- |")
         record.requests.forEach { request ->
-            val id = if (request.deleted) "~~${request.id}~~ (${request.remote.label})" else request.id
+            val id = when {
+                request.deleted -> "~~${request.id}~~ (${request.remote.label})"
+                request.pending -> "${request.id} (rascunho)"
+                else -> request.id
+            }
             appendLine("| $id | `${request.path}`, ${request.location} | ${request.code.label} | ${request.thread.label} |")
         }
         record.requests.forEach { request ->
@@ -166,6 +200,7 @@ object ChangeRequestMarkdown {
             }
             appendLine()
             appendLine("- **Enviado:** ${formatDate(request.sentAt)}, no commit `${request.commit.take(7)}`${request.url?.let { " · [ver no GitHub]($it)" }.orEmpty()}")
+            if (request.pending && !request.deleted) appendLine("- **No GitHub:** rascunho da revisão, só você vê até publicar")
             if (request.remote != RemoteStatus.SYNCED) {
                 appendLine("- **No GitHub:** ${request.remote.label}${request.remoteUpdatedAt?.let { " em ${formatDate(it)}" }.orEmpty()}")
             }
@@ -187,7 +222,10 @@ object ChangeRequestMarkdown {
             ?.let { gson.fromJson(it, RecordMeta::class.java) } ?: return null
         val requests = lines.mapNotNull { line -> metaOf(line, REQUEST_TAG) }
             .map { json -> request(gson.fromJson(json, RequestMeta::class.java)) }
-        return PullRequestRecord(recordMeta.number, recordMeta.title, recordMeta.url, recordMeta.head, recordMeta.base, requests, recordMeta.checkedAt)
+        return PullRequestRecord(
+            recordMeta.number, recordMeta.title, recordMeta.url, recordMeta.head, recordMeta.base, requests, recordMeta.checkedAt,
+            recordMeta.pendingReview, recordMeta.pendingReviewNode,
+        )
     }
 
     private fun metaOf(line: String, tag: String): String? =
@@ -199,6 +237,7 @@ object ChangeRequestMarkdown {
         request.commit, request.commentId, request.url, request.sentAt, request.code.name, request.codeCommit,
         request.thread.name, request.lastReply, request.suggestion.ifBlank { null },
         request.remote.name.takeIf { request.remote != RemoteStatus.SYNCED }, request.remoteUpdatedAt,
+        request.pending.takeIf { it },
     )
 
     private fun request(meta: RequestMeta) = ChangeRequest(
@@ -220,6 +259,7 @@ object ChangeRequestMarkdown {
         suggestion = meta.suggestion.orEmpty(),
         remote = enumOr(meta.remote, RemoteStatus.SYNCED),
         remoteUpdatedAt = meta.remoteUpdatedAt,
+        pending = meta.pending == true,
     )
 
     private inline fun <reified T : Enum<T>> enumOr(name: String?, default: T): T =

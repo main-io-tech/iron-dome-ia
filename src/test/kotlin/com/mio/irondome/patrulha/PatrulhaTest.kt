@@ -65,6 +65,31 @@ class PatrulhaTest {
     }
 
     @Test
+    fun theGitHubDraftSurvivesTheMarkdownAndLeavesTheCountsUntilPublished() {
+        val record = PullRequestRecord(
+            7, "t", "u", "h", "b",
+            listOf(request("P1", code = CodeStatus.CHANGED), request("P2").copy(pending = true), request("P3", commentId = null).copy(pending = true)),
+            pendingReviewId = 99,
+            pendingReviewNodeId = "PRR_abc",
+        )
+
+        val parsed = ChangeRequestMarkdown.parse(ChangeRequestMarkdown.render(record))!!
+
+        assertEquals(99L, parsed.pendingReviewId)
+        assertEquals("PRR_abc", parsed.pendingReviewNodeId)
+        assertEquals(listOf("P2", "P3"), parsed.drafts.map { it.id })
+        assertEquals("rascunhos não contam como atendidos nem pendentes", listOf("P1"), parsed.active.map { it.id })
+
+        val published = parsed.withoutDraft(published = true)
+        assertNull(published.pendingReviewId)
+        assertEquals(listOf("P1", "P2", "P3"), published.active.map { it.id })
+
+        val discarded = parsed.withoutDraft(published = false)
+        assertEquals(listOf("P1"), discarded.requests.map { it.id })
+        assertNull(discarded.pendingReviewNodeId)
+    }
+
+    @Test
     fun oldMarkdownWithTheAiOpinionStillReads() {
         val old = ChangeRequestMarkdown.render(PullRequestRecord(3, "t", "u", "h", "b", listOf(request("P1")))) +
             "- [x] **Atendido (IA)**\n\n**Parecer da IA:** feito\n"

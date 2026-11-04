@@ -162,6 +162,43 @@
   .badge.HIGH, .badge.NONE { color: var(--highSolid); background: color-mix(in srgb, var(--highSolid) 16%, transparent); }
   .badge.TEST_CLASS, .badge.clean { color: var(--muted); background: color-mix(in srgb, var(--fg) 7%, transparent); font-weight: normal; }
   .badge.changed { color: var(--changed); background: color-mix(in srgb, var(--changed) 14%, transparent); }
+  .badge.comment { color: var(--comment); background: color-mix(in srgb, var(--comment) 14%, transparent); }
+  .badge.impact { color: var(--impact); background: var(--impactBg); }
+
+  #highlightImpact.pressed { border-color: var(--impact); color: var(--impact); background: color-mix(in srgb, var(--impact) 15%, transparent); }
+  .chip.comment { color: var(--comment); background: color-mix(in srgb, var(--comment) 14%, transparent); }
+  .chip.impact { color: var(--impact); background: var(--impactBg); }
+  .chip.comment b, .chip.impact b { color: inherit; }
+  .tag.comment { color: var(--comment); border-color: color-mix(in srgb, var(--comment) 50%, transparent); }
+  .tag.impact { color: var(--impact); border-color: color-mix(in srgb, var(--impact) 50%, transparent); background: var(--impactBg); }
+  #aiRow { display: none; flex-direction: column; align-items: stretch; gap: 6px; max-width: 560px; padding: 8px 10px; border-radius: 10px;
+    border: 1px solid color-mix(in srgb, var(--impact) 45%, var(--border)); background: linear-gradient(135deg, var(--impactBg), transparent 80%);
+    animation: rise .22s ease-out; }
+  #aiRow.show { display: flex; }
+  #aiRow .ai-head { display: flex; align-items: center; gap: 6px; font-weight: 600; color: var(--impact); }
+  #aiRow .ai-head .spacer { flex: 1; }
+  #aiRow .ai-summary { line-height: 1.45; color: var(--fg); max-height: 76px; overflow: auto; }
+  #aiRow .ai-list { display: flex; flex-wrap: wrap; gap: 4px; }
+  .ichip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: 99px; font-size: 11px; cursor: pointer;
+    border: 1px solid color-mix(in srgb, var(--impact) 40%, var(--border)); transition: background .15s; }
+  .ichip:hover { background: color-mix(in srgb, var(--impact) 16%, transparent); }
+  .ilevel { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--impact); flex: none; }
+  .ilevel.MEDIUM { opacity: .65; } .ilevel.LOW { opacity: .35; }
+  .scanning { display: inline-block; width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--impact); border-right-color: transparent;
+    animation: spin .8s linear infinite; }
+  .impact-card { margin-top: 10px; padding: 9px 10px; border-radius: 10px; line-height: 1.45;
+    border: 1px solid color-mix(in srgb, var(--impact) 45%, var(--border)); background: linear-gradient(135deg, var(--impactBg), transparent 85%); }
+  .impact-card .impact-title { display: flex; align-items: center; gap: 6px; font-weight: 700; color: var(--impact); margin-bottom: 3px; }
+  .impact-card .sources { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+  .impact-card .src { padding: 0 7px; border-radius: 99px; font-size: 10.5px; background: color-mix(in srgb, var(--fg) 8%, transparent); }
+  ul.clist { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 5px; }
+  ul.clist li { padding: 6px 8px; border-radius: 8px; border-left: 3px solid var(--comment); background: color-mix(in srgb, var(--comment) 8%, transparent); line-height: 1.4; }
+  ul.clist li.PATRULHA { border-left-color: var(--patrulha); background: color-mix(in srgb, var(--patrulha) 8%, transparent); }
+  ul.clist li.ESCUDO { border-left-color: var(--lowSolid); background: color-mix(in srgb, var(--lowSolid) 8%, transparent); }
+  ul.clist .c-head { display: flex; gap: 6px; align-items: center; font-size: 10.5px; color: var(--muted); margin-bottom: 2px; }
+  ul.clist .c-head b { color: var(--fg); }
+  ul.clist .c-text { white-space: pre-wrap; word-break: break-word; max-height: 90px; overflow: auto; }
+  .swatch-impact { width: 16px; height: 10px; border-radius: 4px; flex: none; border: 1.5px solid var(--impact); box-shadow: 0 0 6px 2px var(--impact); }
 
   #legend { left: 10px; bottom: 10px; padding: 8px 10px; width: 290px; max-height: calc(100% - 150px); overflow: auto; }
   #legend.collapsed { width: auto; padding: 5px 6px 5px 10px; }
@@ -215,10 +252,12 @@
   <div class="tb-row">
     <label class="search"><span data-icon="search"></span><input id="search" placeholder="Buscar classe  ( / )"><span id="matches"></span></label>
     <button id="highlightChanges"><span data-icon="git"></span>Destacar alteradas</button>
+    <button id="highlightImpact"><span data-icon="spark"></span>Destacar impacto</button>
     <button id="packages" title="Envolve as classes do mesmo pacote numa bolha colorida"><span data-icon="bubbles"></span>Pacotes</button>
     <button id="helpButton" title="Explica o que cada número, cor e ícone significa"><span data-icon="book"></span>Manual de campo</button>
   </div>
   <div class="tb-row" id="chips"></div>
+  <div id="aiRow"></div>
   <div class="dist">
     <div class="riskbar" id="riskbar" title="Clique numa cor para destacar só as classes com esse risco"></div>
     <div class="risk-keys" id="riskKeys"></div>
@@ -300,6 +339,8 @@
     eye: '<path d="M1 8s2.5-4.5 7-4.5S15 8 15 8s-2.5 4.5-7 4.5S1 8 1 8z"/><circle cx="8" cy="8" r="2"/>',
     map: '<path d="M1.5 3.5 5.5 2l5 1.5 4-1.5v10.5l-4 1.5-5-1.5-4 1.5z"/><path d="M5.5 2v10.5M10.5 3.5V14"/>',
     bubbles: '<circle cx="5.5" cy="6" r="4"/><circle cx="11" cy="10.5" r="3.5"/>',
+    spark: '<path d="M6 1.5 7.2 5 10.5 6.2 7.2 7.4 6 11 4.8 7.4 1.5 6.2 4.8 5z"/><path d="M12 9l.6 1.6 1.6.6-1.6.6L12 13.4l-.6-1.6-1.6-.6 1.6-.6z"/>',
+    comment: '<path d="M2 3.5a1.5 1.5 0 0 1 1.5-1.5h9A1.5 1.5 0 0 1 14 3.5v6a1.5 1.5 0 0 1-1.5 1.5H7l-3 3v-3h-.5A1.5 1.5 0 0 1 2 9.5z"/>',
   };
   const HELP_ICONS = { diagram: 'radar', afferent: 'arrowIn', efferent: 'arrowOut', risk: 'gauge', tests: 'shield', changes: 'git', cycle: 'cycle' };
 
@@ -406,10 +447,28 @@
 
   let changes = DATA.changes, vcs = DATA.vcs, highlighting = false, riskFilter = null, infoId = null, selectedId = null;
   let matchIds = new Set();
+  /** Comentários pendentes por classe e o impacto que a IA apontou (nulo antes da análise). */
+  let comments = DATA.comments || {}, impact = DATA.impact || null, analyzing = false, impactHighlight = false;
+  const IMPACT = {
+    HIGH: { width: 22, opacity: .55, name: 'alto' },
+    MEDIUM: { width: 16, opacity: .4, name: 'médio' },
+    LOW: { width: 11, opacity: .26, name: 'baixo' },
+  };
+  const impactOf = id => impact && impact.items[id] || null;
+  /** Classes com comentário ou alteração: de onde o impacto parte. */
+  const isSource = id => !!(comments[id] && comments[id].length) || !!changes[id];
+  /** Ligação no caminho do impacto: entre uma classe afetada e outra afetada ou de origem. */
+  const impactEdge = e => !!impact && ((impactOf(e.source) && (impactOf(e.target) || isSource(e.target))) ||
+    (impactOf(e.target) && (impactOf(e.source) || isSource(e.source))));
+  function nodeMarks(id) {
+    const list = comments[id] || [];
+    return { changeLabel: changes[id]?.label || null, commentCount: list.length,
+      commentPatrulha: list.length > 0 && list.every(c => c.source === 'PATRULHA'), impact: impactOf(id)?.level || null };
+  }
 
   const nodeStyle = key => d => nodeInfo.get(d.id)[key];
   const riskOf = d => RISK[nodeInfo.get(d.id).risk];
-  const edgeColor = d => d.data.cycle ? THEME.cycle : THEME.edge;
+  const edgeColor = d => d.data.impact ? THEME.impact : d.data.cycle ? THEME.cycle : THEME.edge;
   const edgeActiveColor = d => d.data.cycle ? THEME.cycle : THEME.accent;
   const graph = new G6.Graph({
     container: 'graph',
@@ -420,9 +479,9 @@
     zoomRange: [0.15, 3.5],
     animation: false,
     data: {
-      nodes: DATA.nodes.map(n => ({ id: n.id, data: { changeLabel: changes[n.id]?.label || null }, style: { x: layout.positions.get(n.id).x, y: layout.positions.get(n.id).y } })),
+      nodes: DATA.nodes.map(n => ({ id: n.id, data: nodeMarks(n.id), style: { x: layout.positions.get(n.id).x, y: layout.positions.get(n.id).y } })),
       edges: DATA.edges.map((e, i) => ({ id: 'e' + i, source: e.source, target: e.target,
-        data: { cycle: e.cycle, kind: e.kind, mutual: DATA.edges.some(o => o.source === e.target && o.target === e.source) } })),
+        data: { cycle: e.cycle, kind: e.kind, mutual: DATA.edges.some(o => o.source === e.target && o.target === e.source), impact: impactEdge(e) } })),
     },
     node: {
       type: 'rect',
@@ -431,16 +490,16 @@
         radius: d => nodeInfo.get(d.id).focus ? 12 : 9,
         fill: d => `linear-gradient(180deg, ${riskOf(d).fill[0]} 0%, ${riskOf(d).fill[1]} 100%)`,
         fillOpacity: 1,
-        stroke: d => nodeInfo.get(d.id).focus ? THEME.accent : riskOf(d).solid,
+        stroke: d => nodeInfo.get(d.id).focus ? THEME.accent : d.data.impact ? THEME.impact : riskOf(d).solid,
         strokeOpacity: 1,
-        lineWidth: d => nodeInfo.get(d.id).focus ? 3 : 1.5,
+        lineWidth: d => nodeInfo.get(d.id).focus ? 3 : d.data.impact ? 2.4 : 1.5,
         shadowColor: DARK ? 'rgba(0,0,0,0.45)' : 'rgba(31,35,40,0.18)',
         shadowBlur: 12,
         shadowOffsetY: 4,
-        halo: d => nodeInfo.get(d.id).focus || nodeInfo.get(d.id).risk === 'HIGH',
-        haloStroke: d => nodeInfo.get(d.id).focus ? THEME.accent : THEME.highSolid,
-        haloLineWidth: d => nodeInfo.get(d.id).focus ? 16 : 10,
-        haloStrokeOpacity: d => nodeInfo.get(d.id).focus ? .3 : .2,
+        halo: d => !!d.data.impact || nodeInfo.get(d.id).focus || nodeInfo.get(d.id).risk === 'HIGH',
+        haloStroke: d => d.data.impact ? THEME.impact : nodeInfo.get(d.id).focus ? THEME.accent : THEME.highSolid,
+        haloLineWidth: d => d.data.impact ? IMPACT[d.data.impact].width : nodeInfo.get(d.id).focus ? 16 : 10,
+        haloStrokeOpacity: d => d.data.impact ? IMPACT[d.data.impact].opacity : nodeInfo.get(d.id).focus ? .3 : .2,
         iconSrc: nodeStyle('image'),
         iconWidth: nodeStyle('w'),
         iconHeight: nodeStyle('h'),
@@ -459,6 +518,9 @@
         badges: d => [
           nodeInfo.get(d.id).attention && { text: '⚠ sem testes', placement: 'top', offsetY: -7, backgroundFill: THEME.highSolid },
           d.data.changeLabel && { text: '● ' + d.data.changeLabel.toLowerCase(), placement: 'bottom', offsetY: 7, backgroundFill: THEME.changed },
+          d.data.commentCount && { text: '✎ ' + d.data.commentCount, placement: 'right-top', offsetX: 4, offsetY: -4,
+            backgroundFill: d.data.commentPatrulha ? THEME.patrulha : THEME.comment },
+          d.data.impact && { text: '✦ ' + IMPACT[d.data.impact].name, placement: 'left-top', offsetX: -4, offsetY: -4, backgroundFill: THEME.impact },
         ].filter(Boolean),
         badgeFill: '#fff',
         badgeFontFamily: FONT,
@@ -482,8 +544,12 @@
       style: {
         curveOffset: 34,
         stroke: edgeColor,
-        strokeOpacity: d => d.data.cycle ? .95 : .7,
-        lineWidth: d => d.data.cycle ? 2.2 : 1.4,
+        strokeOpacity: d => d.data.cycle || d.data.impact ? .95 : .7,
+        lineWidth: d => d.data.impact ? 2.6 : d.data.cycle ? 2.2 : 1.4,
+        halo: d => !!d.data.impact,
+        haloStroke: THEME.impact,
+        haloStrokeOpacity: .16,
+        haloLineWidth: 8,
         lineDash: d => d.data.kind === 'INHERITANCE' ? [6, 4] : 0,
         endArrow: true,
         endArrowType: d => d.data.kind === 'INHERITANCE' ? 'triangle' : 'vee',
@@ -623,14 +689,15 @@
   /** Os elementos guardam os estados do hover (active/inactive) e os nossos; aqui só mexemos nos nossos. */
   const OWN_STATES = ['selected', 'match', 'dimmed'];
   function applyStates() {
-    const isDimmed = id => (highlighting && !changes[id]) || (riskFilter && byId.get(id).risk !== riskFilter);
+    const isDimmed = id => (highlighting && !changes[id]) || (riskFilter && byId.get(id).risk !== riskFilter) ||
+      (impactHighlight && !impactOf(id) && !isSource(id));
     const states = {};
     DATA.nodes.forEach(n => {
       const own = [n.id === selectedId && 'selected', matchIds.has(n.id) && 'match', isDimmed(n.id) && 'dimmed'].filter(Boolean);
       states[n.id] = [...graph.getElementState(n.id).filter(s => !OWN_STATES.includes(s)), ...own];
     });
     DATA.edges.forEach((e, i) => {
-      const own = isDimmed(e.source) && isDimmed(e.target) ? ['dimmed'] : [];
+      const own = (isDimmed(e.source) && isDimmed(e.target)) || (impactHighlight && !impactEdge(e)) ? ['dimmed'] : [];
       states['e' + i] = [...graph.getElementState('e' + i).filter(s => !OWN_STATES.includes(s)), ...own];
     });
     graph.setElementState(states, false);
@@ -709,6 +776,10 @@
       (DATA.cycles ? chip('cycle', DATA.cycles, DATA.cycles === 1 ? 'ciclo' : 'ciclos', 'cycle', 'Ciclos de dependência: as setas ficam vermelhas') : '') +
       (attention ? chip('warn', attention, 'sem escudo', 'warn', 'Classes com risco médio ou alto e nenhum teste') : '') +
       (changed ? chip('git', changed, changed === 1 ? 'alterada' : 'alteradas', 'changed', 'Classes com alterações não commitadas') : '') +
+      (commented() ? chip('comment', commented(), commented() === 1 ? 'com comentário' : 'com comentários', 'comment',
+        'Classes com comentários pendentes do Radar, do Escudo ou da Patrulha') : '') +
+      (impact && impact.order.length ? chip('spark', impact.order.length, impact.order.length === 1 ? 'impactada' : 'impactadas', 'impact',
+        'Classes que a IA apontou como afetadas pelos comentários e alterações') : '') +
       (DATA.truncated ? chip('warn', '', 'limite de classes atingido', 'warn', 'Parte dos vizinhos ficou de fora do diagrama') : '');
   }
   function renderDistribution() {
@@ -739,6 +810,49 @@
     if (infoId && document.getElementById('info').style.display === 'block') showInfo(infoId);
   }
   highlightButton.addEventListener('click', () => { highlighting = !highlighting; highlightButton.classList.toggle('pressed', highlighting); applyStates(); });
+
+  function commented() { return DATA.nodes.filter(n => comments[n.id] && comments[n.id].length).length; }
+  const impactButton = document.getElementById('highlightImpact'), aiRow = document.getElementById('aiRow');
+  /** O resultado da IA no topo: o resumo e as classes afetadas, da mais para a menos afetada. */
+  function renderImpact() {
+    const count = impact ? impact.order.length : 0;
+    if (!count) impactHighlight = false;
+    impactButton.style.display = impact ? '' : 'none';
+    impactButton.disabled = !count;
+    impactButton.classList.toggle('pressed', impactHighlight);
+    impactButton.title = count ? 'Apaga as demais classes para destacar as afetadas e as de onde o impacto parte' : 'A IA não apontou classes afetadas';
+    aiRow.classList.toggle('show', !!impact || analyzing);
+    if (analyzing) {
+      aiRow.innerHTML = `<div class="ai-head"><span class="scanning"></span>A IA está analisando o impacto dos comentários e das alterações…</div>`;
+      return;
+    }
+    if (!impact) { aiRow.innerHTML = ''; return; }
+    const counts = { HIGH: 0, MEDIUM: 0, LOW: 0 };
+    impact.order.forEach(id => counts[impact.items[id].level]++);
+    aiRow.innerHTML = `
+      <div class="ai-head">${icon('spark', 13)}Impacto apontado pela IA<span class="spacer"></span>
+        ${['HIGH', 'MEDIUM', 'LOW'].filter(k => counts[k]).map(k => `<span class="badge impact"><span class="ilevel ${k}"></span>${counts[k]} ${IMPACT[k].name}</span>`).join('')}
+        <button class="icon-button" id="clearImpact" title="Apagar as marcas da análise">${icon('close', 11)}</button></div>
+      ${impact.summary ? `<div class="ai-summary">${escapeHtml(impact.summary)}</div>` : ''}
+      <div class="ai-list">${count ? impact.order.filter(id => byId.has(id)).map(id => `<span class="ichip" data-id="${escapeHtml(id)}" ` +
+        `title="${escapeHtml(impact.items[id].reason)}"><span class="ilevel ${impact.items[id].level}"></span>${escapeHtml(byId.get(id).name)}</span>`).join('')
+        : '<span style="color: var(--muted)">Nenhuma classe do diagrama afetada.</span>'}</div>`;
+    aiRow.querySelectorAll('.ichip[data-id]').forEach(el => el.addEventListener('click', () => { select(el.dataset.id); ironDomeSend('select:' + el.dataset.id); }));
+    aiRow.querySelector('#clearImpact').addEventListener('click', () => { setImpact(null); ironDomeSend('clearImpact:'); });
+  }
+  impactButton.addEventListener('click', () => { impactHighlight = !impactHighlight; impactButton.classList.toggle('pressed', impactHighlight); applyStates(); });
+  /** Comentários e impacto mudam os dados dos nós e das ligações: redesenha sem refazer o layout. */
+  function redrawMarks() {
+    graph.updateNodeData(DATA.nodes.map(n => ({ id: n.id, data: nodeMarks(n.id) })));
+    graph.updateEdgeData(DATA.edges.map((e, i) => ({ id: 'e' + i, data: { impact: impactEdge(e) } })));
+    graph.draw().then(applyStates);
+    renderSummary();
+    renderImpact();
+    if (infoId && document.getElementById('info').style.display === 'block') showInfo(infoId);
+  }
+  function setComments(next) { comments = next || {}; redrawMarks(); }
+  function setImpact(next) { impact = next; analyzing = false; redrawMarks(); }
+  function setAnalyzing(on) { analyzing = on; renderImpact(); }
 
   /** Painéis minimizados ficam só com o título; a escolha é lembrada pela IDE. */
   const prefs = { legend: !!DATA.prefs.legend, info: !!DATA.prefs.info };
@@ -777,6 +891,9 @@
       <div class="lg-section"><div class="lg-title">Marcas</div><div class="lg-grid">
         ${legendItem(`<span class="swatch-badge" style="background: var(--highSolid)">⚠</span>`, 'risco médio ou alto sem testes', true)}
         ${legendItem(`<span class="swatch-badge" style="background: var(--changed)">●</span>`, 'alterada, sem commit')}
+        ${legendItem(`<span class="swatch-badge" style="background: var(--comment)">✎</span>`, 'Radar ou Escudo')}
+        ${legendItem(`<span class="swatch-badge" style="background: var(--patrulha)">✎</span>`, 'pedidos da Patrulha')}
+        ${legendItem('<span class="swatch-impact"></span>', 'brilho rosa: impacto apontado pela IA', true)}
         ${legendItem('<span class="swatch-orbit"></span>', 'anel: 1 passo a mais')}
         ${legendItem('<span class="swatch-bubble"></span>', 'bolha: mesmo pacote', true)}
       </div></div>
@@ -804,7 +921,10 @@
       <div class="tip-grid"><span>${icon('arrowIn', 12)}<b>${n.afferent}</b> dependem</span><span>${icon('arrowOut', 12)}<b>${n.efferent}</b> usa</span></div>
       <div class="tip-row"><span class="badge ${n.risk}"><span class="dot ${n.risk}"></span>Risco ${escapeHtml(n.riskLabel.toLowerCase())}</span>
         <span class="badge ${n.coverage}">${shieldBadge(n.coverage, 12)}${escapeHtml(n.coverageLabel)}</span>
-        ${change ? `<span class="badge changed">${icon('git', 11)}${escapeHtml(change.label)}</span>` : ''}</div>
+        ${change ? `<span class="badge changed">${icon('git', 11)}${escapeHtml(change.label)}</span>` : ''}
+        ${comments[id]?.length ? `<span class="badge comment">${icon('comment', 11)}${comments[id].length} ${comments[id].length === 1 ? 'comentário' : 'comentários'}</span>` : ''}
+        ${impactOf(id) ? `<span class="badge impact">${icon('spark', 11)}Impacto ${IMPACT[impactOf(id).level].name}</span>` : ''}</div>
+      ${impactOf(id)?.reason ? `<div class="tip-hint" style="color: var(--fg)">${escapeHtml(impactOf(id).reason)}</div>` : ''}
       <div class="tip-hint">Clique para detalhes · dois cliques abre o código</div>`;
     const [x, y] = graph.getViewportByCanvas(graph.getElementPosition(id));
     const half = nodeInfo.get(id).h / 2 * graph.getZoom() + 8;
@@ -865,6 +985,21 @@
       `<div class="status-label" style="color: var(--changed)">${escapeHtml(change.label)}, sem commit</div>` +
       `<div class="note">${escapeHtml(n.changeAdvice)}</div><button id="diff">${icon('eye', 13)}Ver alterações</button></div>${why('changes')}</div>`;
   }
+  function impactCard(id) {
+    const item = impactOf(id);
+    if (!item) return '';
+    return `<div class="impact-card"><div class="impact-title">${icon('spark', 14)}Impacto ${IMPACT[item.level].name}, segundo a IA</div>` +
+      `<div>${escapeHtml(item.reason || 'A IA não explicou o motivo.')}</div>` +
+      (item.sources.length ? `<div class="sources"><span style="color: var(--muted)">Por causa de:</span>` +
+        item.sources.map(s => `<span class="src">${escapeHtml(s)}</span>`).join('') + '</div>' : '') + '</div>';
+  }
+  function commentsSection(id) {
+    const list = comments[id] || [];
+    if (!list.length) return '';
+    return `<div class="section"><div class="section-title">${icon('comment', 12)}Comentários pendentes<span class="count">${list.length}</span></div>` +
+      `<ul class="clist">${list.map(c => `<li class="${c.source}"><div class="c-head"><b>${escapeHtml(c.id)}</b>${escapeHtml(c.sourceLabel)}` +
+        `${c.sent ? ' · enviado ao PR' : ''} · ${escapeHtml(c.where)}</div><div class="c-text">${escapeHtml(c.text)}</div></li>`).join('')}</ul></div>`;
+  }
   function testsCard(n) {
     const note = n.coverage === 'TEST_CLASS' ? 'Esta classe é um teste: ela protege outras classes.'
       : n.tests.length ? `${n.tests.length} ${n.tests.length === 1 ? 'classe de teste a usa' : 'classes de teste a usam'}. Clique para abrir.`
@@ -897,7 +1032,10 @@
         ${n.cycle ? `<span class="tag cycle">${icon('cycle', 11)}em ciclo</span>${why('cycle')}` : ''}
         ${n.attention ? `<span class="tag attention">${icon('warn', 11)}sem escudo</span>` : ''}
         ${changes[n.id] ? `<span class="tag changed">${icon('git', 11)}alterada</span>` : ''}
+        ${comments[n.id]?.length ? `<span class="tag comment">${icon('comment', 11)}${comments[n.id].length} ${comments[n.id].length === 1 ? 'comentário' : 'comentários'}</span>` : ''}
+        ${impactOf(n.id) ? `<span class="tag impact">${icon('spark', 11)}impacto ${IMPACT[impactOf(n.id).level].name}</span>` : ''}
       </div>
+      ${impactCard(n.id)}
       <div class="risk-card">
         <div class="gauge">${gauge(n)}<div class="gauge-value"><b>${n.afferent}</b><span>dependentes</span></div></div>
         <div class="risk-text">
@@ -917,6 +1055,7 @@
       </div>
       <div class="section"><div class="section-title">${icon('shield', 12)}Escudo de testes</div>${testsCard(n)}</div>
       <div class="section"><div class="section-title">${icon('git', 12)}Alterações</div>${changeCard(n)}</div>
+      ${commentsSection(n.id)}
       <div class="explain" id="explain"></div>
       <div class="advice">${icon('bulb', 16)}<div><b>O que fazer:</b> ${escapeHtml(n.advice)}</div></div>
       <div class="section"><div class="section-title">${icon('arrowOut', 12)}Depende de, no diagrama<span class="count">${uses.length}</span></div>
@@ -958,11 +1097,12 @@
   }
   function setChanges(next, nextVcs) {
     changes = next; vcs = nextVcs;
-    graph.updateNodeData(DATA.nodes.map(n => ({ id: n.id, data: { changeLabel: changes[n.id]?.label || null } })));
+    graph.updateNodeData(DATA.nodes.map(n => ({ id: n.id, data: nodeMarks(n.id) })));
+    graph.updateEdgeData(DATA.edges.map((e, i) => ({ id: 'e' + i, data: { impact: impactEdge(e) } })));
     graph.draw().then(applyStates);
     applyChanges();
   }
-  window.ironDome = { select, setChanges };
+  window.ironDome = { select, setChanges, setComments, setImpact, setAnalyzing };
 
   /** Entrada: as classes saem do centro do radar e se espalham até os anéis. Se a animação não terminar, elas vão direto para o lugar. */
   async function enter() {
@@ -986,6 +1126,7 @@
     document.getElementById('rings').classList.add('ready');
     radar.classList.add('ready');
     applyChanges();
+    renderImpact();
     renderDistribution();
     if (byId.has(DATA.focus)) select(DATA.focus, false);
     await enter();

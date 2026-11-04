@@ -509,9 +509,12 @@ class ReviewCommentService(private val project: Project) : PersistentStateCompon
         return export(scope).also { notifyChanged() }
     }
 
-    /** Arquivos cujos comentários entram num salvamento: todos, ou só um. */
-    private class Scope(val path: String?) {
-        fun includes(comment: ReviewComment) = path == null || comment.filePath == path
+    /** Grava no `.md` só os comentários dos arquivos e pacotes de [paths], como os dos alvos disparados um a um. */
+    fun exportPaths(paths: Collection<String>): Path? = export(Scope(paths.toSet())).also { notifyChanged() }
+
+    /** Arquivos cujos comentários entram num salvamento: todos, ou só os de [paths]. */
+    private class Scope(val paths: Set<String>?) {
+        fun includes(comment: ReviewComment) = paths == null || comment.filePath in paths
 
         companion object {
             val ALL = Scope(null)
@@ -519,7 +522,7 @@ class ReviewCommentService(private val project: Project) : PersistentStateCompon
     }
 
     private fun scopeOf(file: VirtualFile?): Scope? =
-        if (file == null) Scope.ALL else relativePath(file)?.let(::Scope)
+        if (file == null) Scope.ALL else relativePath(file)?.let { Scope(setOf(it)) }
 
     /** Chamado quando um `.md` de `iron-dome/` muda no disco (por exemplo, a IA marcou `[x]`). */
     fun importStatus(changedPaths: Collection<String>) {

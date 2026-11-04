@@ -42,6 +42,8 @@ import com.mio.irondome.base.SummaryHeader
 import com.mio.irondome.base.Tone
 import com.mio.irondome.base.plural
 import com.mio.irondome.base.refreshAction
+import com.intellij.ui.components.panels.VerticalLayout
+import com.mio.irondome.interceptor.AgentProgressPanel
 import com.mio.irondome.interceptor.AgentRunner
 import com.mio.irondome.interceptor.AgentTask
 import com.mio.irondome.radar.CommentStatus
@@ -134,7 +136,10 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
 
     init {
         setContent(JPanel(BorderLayout()).apply {
-            add(header, BorderLayout.NORTH)
+            add(JPanel(VerticalLayout(0)).apply {
+                add(header)
+                add(AgentProgressPanel(project, PatrulhaTab.TITLE, this@PatrulhaPanel))
+            }, BorderLayout.NORTH)
             add(ScrollPaneFactory.createScrollPane(tree, true), BorderLayout.CENTER)
         })
         val actions = DefaultActionGroup(
@@ -171,12 +176,25 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
                     selectedPr()?.let { it.active && it.checkedOut } == true && runner.running == null && runner.available()
                 },
             ) { reviewWithAi() },
-            action("Enviar ao GitHub", "Envia os comentários não enviados deste PR como uma revisão", AllIcons.Actions.Upload,
+            action("Enviar ao GitHub", "Envia os comentários não enviados deste PR: como rascunho, que só você vê, ou publicados", AllIcons.Actions.Upload,
                 enabled = { selectedPr()?.let { it.pr != null && it.drafts.isNotEmpty() } == true }) { send() },
-            action("Editar", "Edita o comentário selecionado: o rascunho no editor, ou o pedido já enviado, também no GitHub", AllIcons.Actions.Edit,
+            action(
+                "Publicar Rascunho",
+                "Publica no GitHub o rascunho da revisão deste PR: o autor passa a ver os comentários",
+                AllIcons.Actions.Commit,
+                enabled = { selectedPr()?.record?.pendingReviewId != null && context != null },
+                text = { selectedPr()?.record?.drafts?.size?.takeIf { it > 0 }?.let { "Publicar Rascunho ($it)" } ?: "Publicar Rascunho" },
+            ) { publishDraft() },
+            action("Editar", "Edita o comentário selecionado: o não enviado no editor, ou o rascunho e o publicado também no GitHub", AllIcons.Actions.Edit,
                 enabled = { selectedNode()?.userObject.let { it is DraftItem || (it is RequestItem && !it.request.deleted) } }) { editSelected() },
-            action("Excluir Pedido", "Tira o pedido do .md e, se você quiser, apaga o comentário no GitHub", AllIcons.General.Remove,
-                enabled = { selectedNode()?.userObject is RequestItem }) { deleteSelected() },
+            action("Excluir", "Exclui o comentário selecionado: o não enviado, o rascunho (também no GitHub) ou o publicado (no GitHub, se você quiser)", AllIcons.General.Remove,
+                enabled = { selectedNode()?.userObject.let { it is DraftItem || it is RequestItem } }) { deleteSelected() },
+            action(
+                "Excluir Todos",
+                "Exclui de uma vez os comentários do PR: os não enviados, os rascunhos no GitHub e, se você quiser, os publicados",
+                AllIcons.Actions.GC,
+                enabled = { selectedPr()?.let { it.drafts.isNotEmpty() || !it.record?.requests.isNullOrEmpty() } == true },
+            ) { deleteAll() },
             action(
                 "Mostrar no Editor",
                 "Mostra ou oculta no código os pedidos enviados: o histórico do PR inteiro, ou só o pedido selecionado",
@@ -281,6 +299,7 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
     private fun items(): List<PrItem> {
         val records = patrulha.records().associateBy { it.number }
         val head = context?.repository?.currentRevision
+        val branch = context?.repository?.currentBranchName
         val numbers = (openPrs.map { it.number } + records.keys + listOfNotNull(radar.activePullRequest.takeIf { it != 0 })).distinct()
         return numbers.map { number ->
             val pr = openPrs.firstOrNull { it.number == number }
@@ -292,7 +311,8 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
                 record = record,
                 drafts = radar.pullRequestComments(number),
                 active = radar.activePullRequest == number,
-                checkedOut = pr != null && pr.headSha == head,
+                // Só a branch da Patrulha conta: outra branch no mesmo commit, como a do autor, pode ter alterações não commitadas.
+                checkedOut = pr != null && pr.headSha == head && branch == PatrulhaService.branchName(number),
                 historyShown = patrulha.isHistoryShown(number),
             )
         }
@@ -363,7 +383,7 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
             node.add(DefaultMutableTreeNode(LoadingItem(filesErrors[pr.number] ?: "Carregando os arquivos do GitHub…")))
             return node
         }
-        val requests = item.record?.active.orEmpty()
+        val requests = item.record?.requests.orEmpty().filterNot { it.deleted }
         val comments = files.files.associate { file ->
             file.path to item.drafts.count { it.filePath == file.path } + requests.count { it.path == file.path }
         }
@@ -651,6 +671,7 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
                     "Revisão do PR #${pr.number}",
                     "Revise o pull request seguindo as instruções em $instructions e responda só com o JSON pedido.",
                     write = false,
+                    origin = PatrulhaTab.TITLE,
                 ),
             ) { result -> if (result.ok) addAiDrafts(pr.number, AiReview.parse(result.answer)) }
         }
@@ -703,9 +724,34 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
 
     /** Apagar no GitHub some com a conversa do comentário, então só acontece com a escolha explícita. */
     private fun deleteSelected() {
+        (selectedNode()?.userObject as? DraftItem)?.let { draft ->
+            if (Messages.showOkCancelDialog(
+                    project,
+                    "Excluir o comentário ${draft.comment.id}, ainda não enviado ao PR #${draft.number}?",
+                    "Excluir ${draft.comment.id}",
+                    "Excluir",
+                    "Cancelar",
+                    Messages.getWarningIcon(),
+                ) == Messages.OK
+            ) radar.remove(listOf(draft.comment))
+            return
+        }
         val item = selectedNode()?.userObject as? RequestItem ?: return
         val request = item.request
         val onGitHubPossible = request.commentId != null && !request.deleted
+        if (request.pending && onGitHubPossible) {
+            if (Messages.showOkCancelDialog(
+                    project,
+                    "Excluir o rascunho ${request.id} (${request.path}, ${request.location}) do PR #${item.number}, no GitHub e no .md?",
+                    "Excluir ${request.id}",
+                    "Excluir",
+                    "Cancelar",
+                    Messages.getWarningIcon(),
+                ) != Messages.OK
+            ) return
+            deleteRequest(item, request, onGitHub = true)
+            return
+        }
         val choice = if (onGitHubPossible) {
             Messages.showYesNoCancelDialog(
                 project,
@@ -730,13 +776,75 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
             ) Messages.NO else Messages.CANCEL
         }
         if (choice != Messages.YES && choice != Messages.NO) return
-        val onGitHub = choice == Messages.YES
+        deleteRequest(item, request, onGitHub = choice == Messages.YES)
+    }
+
+    private fun deleteRequest(item: RequestItem, request: ChangeRequest, onGitHub: Boolean) {
         val context = context
         background("Excluindo ${request.id} do PR #${item.number}", { patrulha.deleteRequest(context, item.number, request.id, onGitHub) }) {
             radar.refreshPaths(listOf(request.path))
             notify(
                 "${request.id} excluído do PR #${item.number}",
                 if (onGitHub) "O comentário foi apagado no GitHub e o pedido saiu do .md." else "O pedido saiu do .md; o GitHub ficou como estava.",
+                NotificationType.INFORMATION,
+            )
+            rebuild()
+        }
+    }
+
+    /** Publica o rascunho do PR no GitHub, escolhendo se pede alterações ou só comenta. */
+    private fun publishDraft() {
+        val item = selectedPr() ?: return
+        val record = item.record?.takeIf { it.pendingReviewId != null } ?: return
+        val context = context ?: return
+        val choice = Messages.showDialog(
+            project,
+            "Publicar o rascunho do PR #${item.number} (${plural(record.drafts.size, "comentário", "comentários")})? " +
+                "Depois disso, o autor do PR vê os comentários.\n\nO GitHub não deixa pedir alterações no próprio PR: nesse caso, use Só Comentar.",
+            "Publicar Rascunho",
+            arrayOf("Pedir Alterações", "Só Comentar", "Cancelar"),
+            0,
+            Messages.getQuestionIcon(),
+        )
+        val event = when (choice) {
+            0 -> "REQUEST_CHANGES"
+            1 -> "COMMENT"
+            else -> return
+        }
+        background("Publicando o rascunho do PR #${item.number}", { patrulha.publishDraft(context, item.number, event, "") }) { url ->
+            notify(
+                "Rascunho do PR #${item.number} publicado",
+                "O autor do PR já vê os comentários. Use Verificar Pedidos para conferir depois se foram atendidos.",
+                NotificationType.INFORMATION,
+                NotificationAction.createSimpleExpiring("Abrir no GitHub") { BrowserUtil.browse(url.ifBlank { item.pr?.url ?: record.url }) },
+            )
+            rebuild()
+        }
+    }
+
+    /** Apaga de uma vez os comentários do PR: os não enviados, os rascunhos do GitHub e, se escolhido, os publicados. */
+    private fun deleteAll() {
+        val item = selectedPr() ?: return
+        val record = item.record
+        val unsent = item.drafts
+        val drafts = record?.drafts.orEmpty()
+        val published = record?.requests.orEmpty().filter { !it.pending && !it.deleted }
+        val others = record?.requests.orEmpty().size - drafts.size - published.size
+        val dialog = DeleteAllDialog(project, item.number, unsent.size, drafts.size, published.size, others)
+        if (!dialog.showAndGet()) return
+        if (unsent.isNotEmpty()) radar.remove(unsent)
+        if (record == null) return
+        val context = context
+        val onGitHub = dialog.publishedOnGitHub
+        background("Excluindo os pedidos do PR #${item.number}", { patrulha.deleteAll(context, item.number, onGitHub) }) { removed ->
+            radar.refreshPaths(record.requests.map { it.path }.distinct())
+            notify(
+                "${plural(removed + unsent.size, "comentário excluído", "comentários excluídos")} do PR #${item.number}",
+                listOfNotNull(
+                    "O rascunho foi descartado no GitHub.".takeIf { drafts.isNotEmpty() },
+                    (if (onGitHub) "Os publicados foram apagados no GitHub." else "Os publicados continuam no GitHub; só saíram do .md.")
+                        .takeIf { published.isNotEmpty() },
+                ).joinToString(" ").ifEmpty { "O .md do PR saiu." },
                 NotificationType.INFORMATION,
             )
             rebuild()
@@ -783,11 +891,15 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
             if (!dialog.showAndGet()) return@background
             val event = dialog.event
             val general = dialog.generalText
-            background("Enviando os pedidos ao PR #${pr.number}", { patrulha.send(context, pr, drafts, general, event) }) { result ->
+            val asDraft = dialog.asDraft
+            val title = if (asDraft) "Enviando o rascunho ao PR #${pr.number}" else "Enviando os pedidos ao PR #${pr.number}"
+            background(title, { patrulha.send(context, pr, drafts, general, event, asDraft) }) { result ->
                 radar.remove(drafts)
                 notify(
-                    "${plural(result.requests.size, "pedido enviado", "pedidos enviados")} ao PR #${pr.number}",
-                    "Ficaram em iron-dome/pull-requests/${PullRequestRecord.fileName(pr.number)} para verificar depois.",
+                    if (asDraft) "${plural(result.requests.size, "rascunho enviado", "rascunhos enviados")} ao PR #${pr.number}"
+                    else "${plural(result.requests.size, "pedido publicado", "pedidos publicados")} no PR #${pr.number}",
+                    if (asDraft) "Só você vê no GitHub. Edite ou exclua aqui, e use Publicar Rascunho quando estiver pronto."
+                    else "Ficaram em iron-dome/pull-requests/${PullRequestRecord.fileName(pr.number)} para verificar depois.",
                     NotificationType.INFORMATION,
                     NotificationAction.createSimpleExpiring("Abrir no GitHub") { BrowserUtil.browse(result.reviewUrl.ifBlank { pr.url }) },
                     NotificationAction.createSimple("Abrir .md") { openRecord(pr.number) },
@@ -844,7 +956,9 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
     /** Em segundo plano e sem aviso, a não ser que o revisor tenha editado ou apagado algo no GitHub. */
     private fun syncQuietly(numbers: Collection<Int>) {
         val context = context?.takeIf { it.account != null } ?: return
-        val wanted = numbers.filter { number -> patrulha.record(number)?.requests?.any { it.commentId != null && !it.deleted } == true }
+        val wanted = numbers.filter { number ->
+            patrulha.record(number)?.let { record -> record.pendingReviewId != null || record.requests.any { it.commentId != null && !it.deleted } } == true
+        }
         if (wanted.isEmpty()) return
         object : Task.Backgroundable(project, "Patrulha: sincronizando os pedidos com o GitHub", true) {
             private val results = mutableListOf<PatrulhaService.SyncResult>()
@@ -856,9 +970,14 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
             override fun onSuccess() {
                 results.forEach { result ->
                     val changed = patrulha.record(result.number)?.requests.orEmpty().filter { it.id in result.edited || it.id in result.deleted }
+                    val draft = when {
+                        result.draftPublished -> "O rascunho foi publicado pelo GitHub."
+                        result.draftDiscarded -> "O rascunho foi descartado pelo GitHub, e os pedidos dele saíram do .md."
+                        else -> null
+                    }
                     notify(
                         "PR #${result.number} mudou no GitHub",
-                        remoteChanges(changed).orEmpty() + " O .md e o histórico no editor já estão atualizados.",
+                        listOfNotNull(draft, remoteChanges(changed), "O .md e o histórico no editor já estão atualizados.").joinToString(" "),
                         NotificationType.INFORMATION,
                         NotificationAction.createSimple("Abrir .md") { openRecord(result.number) },
                     )
@@ -1115,6 +1234,7 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
             if (item.checkedOut) row.pill("No checkout", Tone.TEAL)
             if (item.historyShown && item.record?.requests?.isNotEmpty() == true) row.pill("Histórico no editor", Tone.BLUE)
             if (item.drafts.isNotEmpty()) row.pill(plural(item.drafts.size, "não enviado", "não enviados"), CommentStatus.UNSAVED.tone)
+            item.record?.drafts?.size?.takeIf { it > 0 }?.let { row.pill(plural(it, "rascunho no GitHub", "rascunhos no GitHub"), Tone.YELLOW, bold = true) }
             val requests = item.record?.active.orEmpty()
             if (requests.isNotEmpty()) {
                 val done = requests.count { it.likelyDone }
@@ -1150,6 +1270,12 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
                 }
                 RemoteStatus.EDITED -> row.pill(request.remote.label, Tone.BLUE)
                 RemoteStatus.SYNCED -> Unit
+            }
+            if (request.pending) {
+                row.pill("Rascunho no GitHub", Tone.YELLOW, bold = true)
+                row.detail(request.text.lines().first().take(160))
+                row.tooltip("Só você vê no GitHub até publicar. Editar e Excluir valem lá também.\n\n${request.text}")
+                return
             }
             row.pill("Código: ${request.code.label}", codeTone(request.code))
             row.pill("Conversa: ${request.thread.label}", threadTone(request.thread))

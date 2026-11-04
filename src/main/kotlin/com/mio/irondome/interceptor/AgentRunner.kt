@@ -1,6 +1,5 @@
 package com.mio.irondome.interceptor
 
-import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.notification.NotificationAction
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
@@ -10,10 +9,10 @@ import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.options.ShowSettingsUtil
-import com.intellij.openapi.progress.ProcessCanceledException
-import com.intellij.openapi.progress.ProgressIndicator
-import com.intellij.openapi.progress.Task
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.Messages
+import com.intellij.openapi.util.SystemInfo
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VfsUtil
 import com.intellij.util.messages.Topic
@@ -47,16 +46,44 @@ class AgentResult(
 }
 
 /**
- * Roda o CLI de IA configurado sobre o projeto, em segundo plano, com o andamento na barra de progresso e
- * cancelamento. Ao terminar, grava o registro, atualiza os arquivos que a IA mexeu e avisa.
+ * O andamento da execução, lido pelas barras de progresso das abas. [inTerminal]: a IA roda no terminal da IDE
+ * e o plugin só espera a resposta; cancelar para de esperar, sem fechar o terminal.
+ */
+class AgentProgress(val task: AgentTask, val provider: AgentProvider, val inTerminal: Boolean = false) {
+    val startedAt: Long = System.currentTimeMillis()
+
+    /** O passo de agora, como "Lendo src/Frete.kt". */
+    @Volatile
+    var step: String = "Iniciando ${provider.title}…"
+        internal set
+
+    /** A última linha que a IA escreveu. */
+    @Volatile
+    var detail: String = ""
+        internal set
+
+    @Volatile
+    var cancelled = false
+        private set
+
+    fun cancel() {
+        cancelled = true
+    }
+}
+
+/**
+ * Roda o CLI de IA configurado sobre o projeto, fora da EDT, com o andamento em [progress] para as abas
+ * mostrarem e cancelarem. Ao terminar, grava o registro, atualiza os arquivos que a IA mexeu e avisa.
  */
 @Service(Service.Level.PROJECT)
 class AgentRunner(private val project: Project) {
 
     /** Um por vez por projeto: dois agentes escrevendo nos mesmos arquivos se atropelam. */
     @Volatile
-    var running: AgentTask? = null
+    var progress: AgentProgress? = null
         private set
+
+    val running: AgentTask? get() = progress?.task
 
     /** Configurada e testada: só assim os botões de IA se habilitam. Sem isso, quem chama cai no fluxo manual. */
     fun available(): Boolean = AgentSettings.ready
@@ -65,48 +92,156 @@ class AgentRunner(private val project: Project) {
      * [onDone] roda na EDT com o resultado, inclusive em erro ou cancelamento; [actions] entram no aviso de
      * sucesso, além de Ver Resposta.
      */
-    fun run(task: AgentTask, vararg actions: Pair<String, (AgentResult) -> Unit>, onDone: (AgentResult) -> Unit = {}) {
+    fun run(request: AgentTask, vararg actions: Pair<String, (AgentResult) -> Unit>, onDone: (AgentResult) -> Unit = {}) {
+        if (request.write && refusesWrite()) return
+        val task = request.copy(prompt = AgentCommand.guarded(request))
         val provider = AgentSettings.provider
-        val executable = AgentSettings.resolveExecutable()
-        if (executable == null || !AgentSettings.ready) {
-            notifyNotReady(provider, executable == null)
+        val launch = AgentSettings.launch()
+        if (launch == null || !AgentSettings.ready) {
+            notifyNotReady(provider, launch == null)
             return
         }
         if (running != null) {
-            notify("A IA já está trabalhando", "Espere ${running?.title} terminar ou cancele na barra de progresso.", NotificationType.WARNING)
+            notify("A IA já está trabalhando", "Espere ${running?.title} terminar ou cancele na barra de progresso da aba.", NotificationType.WARNING)
             return
         }
         val root = project.basePath ?: return
+        val terminal = when (chooseMode(task)) {
+            null -> return
+            AgentRunMode.TERMINAL -> AgentTerminal.available() ?: run {
+                notify("Terminal indisponível", "O plugin de terminal da IDE está desligado: a IA roda na aba.", NotificationType.WARNING)
+                null
+            }
+            else -> null
+        }
         FileDocumentManager.getInstance().saveAllDocuments()
-        running = task
+        val current = AgentProgress(task, provider, inTerminal = terminal != null)
+        progress = current
+        // Um problema só no ícone não pode deixar a IA presa como trabalhando.
+        runCatching { AgentActivity.started(project, task) }.onFailure { LOG.warn("O ícone da IA trabalhando não pôde ser trocado", it) }
         project.messageBus.syncPublisher(RUNS).changed()
-        object : Task.Backgroundable(project, "IA (${provider.title}): ${task.title}", true) {
-            private var result: AgentResult? = null
-
-            override fun run(indicator: ProgressIndicator) {
-                result = execute(task, provider, executable, root, indicator)
+        val work: () -> AgentResult = if (terminal == null) {
+            { execute(task, provider, launch, root, current) }
+        } else {
+            val answer = answerFile(task) ?: return finish(failure(task, provider, "O projeto não tem pasta no disco."), actions, onDone)
+            val relative = "${ReviewCommentService.REVIEW_DIR}/$DIR/$ANSWERS_DIR/${answer.fileName}"
+            val shell = ShellKind.of(terminal.shellPath(project), SystemInfo.isWindows)
+            val prompt = "${task.prompt} ${AgentCommand.answerInstruction(relative)}"
+            val command = launch.terminal(provider, prompt, AgentSettings.model, AgentSettings.timeoutMinutes, shell, root)
+            current.step = "No terminal: esperando a resposta em $relative"
+            try {
+                terminal.run(project, root, "IA: ${task.title}", command)
+            } catch (e: Exception) {
+                LOG.warn("O terminal da IDE não abriu", e)
+                return finish(failure(task, provider, "O terminal não abriu: ${e.message ?: e.javaClass.simpleName}"), actions, onDone)
             }
-
-            override fun onFinished() {
-                running = null
-                val done = result ?: AgentResult(task, provider, "", "A execução não terminou.", true, emptySet(), emptyList(), null, Duration.ZERO, null)
-                refresh(done)
-                report(done, actions)
-                project.messageBus.syncPublisher(RUNS).changed()
-                onDone(done)
+            ({ waitForAnswer(task, provider, answer, command, current) })
+        }
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val result = try {
+                work()
+            } catch (e: Throwable) {
+                LOG.warn("A execução da IA falhou", e)
+                failure(task, provider, e.message ?: "A execução não terminou.")
             }
-        }.queue()
+            ApplicationManager.getApplication().invokeLater({ finish(result, actions, onDone) }, project.disposed)
+        }
     }
 
-    private fun execute(task: AgentTask, provider: AgentProvider, executable: Path, root: String, indicator: ProgressIndicator): AgentResult {
+    /** O PR em revisão pela Patrulha, ou 0. Com ele, o checkout é o do PR: está sendo revisado, não alterado. */
+    fun reviewingPullRequest(): Int = project.service<ReviewCommentService>().activePullRequest
+
+    /** Avisa e devolve true se há um PR em revisão, quando a IA não pode alterar o código. */
+    fun refusesWrite(): Boolean {
+        val number = reviewingPullRequest()
+        if (number == 0) return false
+        notify(
+            "Revisando o PR #$number: a IA não altera o código",
+            "O código local é o do PR, que está sendo revisado, não alterado. Saia da revisão na aba Patrulha para a IA corrigir o código.",
+            NotificationType.WARNING,
+        )
+        return true
+    }
+
+    private fun finish(result: AgentResult, actions: Array<out Pair<String, (AgentResult) -> Unit>>, onDone: (AgentResult) -> Unit) {
+        progress = null
+        runCatching { AgentActivity.finished(project) }.onFailure { LOG.warn("O ícone da IA trabalhando não pôde voltar", it) }
+        refresh(result)
+        report(result, actions)
+        project.messageBus.syncPublisher(RUNS).changed()
+        onDone(result)
+    }
+
+    private fun failure(task: AgentTask, provider: AgentProvider, error: String) =
+        AgentResult(task, provider, "", error, false, emptySet(), emptyList(), null, Duration.ZERO, null)
+
+    /** Nulo se o usuário desistiu na pergunta de onde rodar. */
+    private fun chooseMode(task: AgentTask): AgentRunMode? {
+        val mode = AgentSettings.runMode
+        if (mode != AgentRunMode.ASK) return mode
+        if (AgentTerminal.available() == null) return AgentRunMode.BACKGROUND
+        return when (
+            Messages.showDialog(
+                project,
+                "Rodar \"${task.title}\" na aba, em segundo plano, ou no terminal da IDE, onde dá para acompanhar e conversar com a IA?",
+                "Onde Rodar a IA",
+                arrayOf("Na Aba", "No Terminal", "Cancelar"),
+                0,
+                Messages.getQuestionIcon(),
+            )
+        ) {
+            0 -> AgentRunMode.BACKGROUND
+            1 -> AgentRunMode.TERMINAL
+            else -> null
+        }
+    }
+
+    private fun answerFile(task: AgentTask): Path? {
+        val dir = transcriptsDir()?.resolve(ANSWERS_DIR) ?: return null
+        Files.createDirectories(dir)
+        return dir.resolve("${LocalDateTime.now().format(FILE_TIME)}-${slug(task.title)}.md").also(Files::deleteIfExists)
+    }
+
+    /** A IA roda no terminal: a resposta chega quando o arquivo existe e para de crescer. */
+    private fun waitForAnswer(task: AgentTask, provider: AgentProvider, file: Path, command: String, state: AgentProgress): AgentResult {
         val started = System.nanoTime()
         val timeout = AgentSettings.timeoutMinutes
-        val command = AgentCommand.build(provider, executable.toString(), task, root, AgentSettings.model, timeout)
-        val line = GeneralCommandLine(command)
-            .withWorkDirectory(root)
-            .withCharset(StandardCharsets.UTF_8)
-            .withParentEnvironmentType(GeneralCommandLine.ParentEnvironmentType.CONSOLE)
-        if (provider == AgentProvider.CURSOR) AgentSettings.cursorApiKey?.let { line.withEnvironment("CURSOR_API_KEY", it) }
+        val deadline = started + TimeUnit.MINUTES.toNanos(timeout.toLong())
+        var lastSize = -1L
+        var error: String? = null
+        var answer = ""
+        while (true) {
+            if (state.cancelled) {
+                answer = "Parei de esperar a resposta. A IA continua no terminal: feche a aba do terminal para pará-la."
+                break
+            }
+            if (System.nanoTime() > deadline) {
+                error = "A resposta não chegou em $timeout minutos. A IA pode continuar no terminal."
+                break
+            }
+            if (Files.isRegularFile(file)) {
+                val size = Files.size(file)
+                val quiet = System.currentTimeMillis() - Files.getLastModifiedTime(file).toMillis() > ANSWER_QUIET_MS
+                if (size > 0 && size == lastSize && quiet) {
+                    answer = Files.readString(file).trim()
+                    break
+                }
+                lastSize = size
+                state.step = "No terminal: a IA está gravando a resposta"
+            }
+            Thread.sleep(POLL_MS)
+        }
+        val duration = Duration.ofNanos(System.nanoTime() - started)
+        val partial = AgentResult(task, provider, answer, error, state.cancelled, emptySet(), emptyList(), null, duration, null)
+        val transcript = runCatching { writeTranscript(partial, listOf(command), "") }.getOrNull()
+        return AgentResult(task, provider, answer, error, state.cancelled, emptySet(), emptyList(), null, duration, transcript)
+    }
+
+    private fun execute(task: AgentTask, provider: AgentProvider, launch: AgentLaunch, root: String, state: AgentProgress): AgentResult {
+        val started = System.nanoTime()
+        val timeout = AgentSettings.timeoutMinutes
+        val command = AgentCommand.build(provider, launch.executable, task, launch.workspace(root), AgentSettings.model, timeout)
+        val key = if (provider == AgentProvider.CURSOR) AgentSettings.cursorApiKey else null
 
         val text = StringBuilder()
         var answer: String? = null
@@ -117,10 +252,8 @@ class AgentRunner(private val project: Project) {
         val stderr = StringBuilder()
         var cancelled = false
         var error: String? = null
-        indicator.isIndeterminate = true
-        indicator.text = "Iniciando ${provider.title}…"
         try {
-            val process = line.createProcess()
+            val process = launch.process(command, root, key).createProcess()
             process.outputStream.close()
             val errors = Thread {
                 process.errorStream.bufferedReader(StandardCharsets.UTF_8).forEachLine { synchronized(stderr) { stderr.appendLine(it) } }
@@ -132,12 +265,12 @@ class AgentRunner(private val project: Project) {
                         is AgentEvent.Init -> model = event.model
                         is AgentEvent.Text -> {
                             text.append(event.text).append('\n')
-                            indicator.text2 = event.text.lines().lastOrNull { it.isNotBlank() }?.take(120).orEmpty()
+                            state.detail = event.text.lines().lastOrNull { it.isNotBlank() }?.take(160).orEmpty()
                         }
                         is AgentEvent.Tool -> if (event.started) {
                             val what = listOfNotNull(TOOL_LABELS[event.kind] ?: event.kind, event.path).joinToString(" ")
                             tools += what
-                            indicator.text = what
+                            state.step = what
                             if (event.kind in WRITE_TOOLS) event.path?.let(files::add)
                         }
                         is AgentEvent.Result -> {
@@ -150,7 +283,7 @@ class AgentRunner(private val project: Project) {
                 }
             }.apply { isDaemon = true; start() }
             while (!process.waitFor(200, TimeUnit.MILLISECONDS)) {
-                if (indicator.isCanceled) {
+                if (state.cancelled) {
                     cancelled = true
                     process.destroyForcibly()
                     break
@@ -168,11 +301,9 @@ class AgentRunner(private val project: Project) {
                     ?: "O ${provider.title} terminou com o código ${process.exitValue()}."
             }
             if (!cancelled && error == null && failed) error = answer?.takeIf { it.isNotBlank() } ?: "A IA informou um erro."
-        } catch (e: ProcessCanceledException) {
-            cancelled = true
         } catch (e: Exception) {
             LOG.warn("Falha ao rodar ${command.firstOrNull()}", e)
-            error = "Não foi possível rodar ${executable.fileName}: ${e.message ?: e.javaClass.simpleName}"
+            error = "Não foi possível rodar ${launch.description}: ${e.message ?: e.javaClass.simpleName}"
         }
         val finalAnswer = answer?.takeIf { it.isNotBlank() } ?: text.toString().trim()
         val duration = Duration.ofNanos(System.nanoTime() - started)
@@ -273,6 +404,9 @@ class AgentRunner(private val project: Project) {
     companion object {
         const val DIR = "ia"
         private const val REQUESTS_DIR = "pedidos"
+        private const val ANSWERS_DIR = "respostas"
+        private const val POLL_MS = 1_000L
+        private const val ANSWER_QUIET_MS = 1_500L
 
         /** Uma execução começou ou terminou. */
         @Topic.ProjectLevel

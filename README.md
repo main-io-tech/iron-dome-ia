@@ -204,7 +204,9 @@ configuração extra.
 | Ação | Atalho | O que faz |
 | --- | --- | --- |
 | **Disparar Este Arquivo** | botão na barra do editor | Grava no `.md` só os comentários do arquivo aberto. |
-| **Disparar Todos** | <kbd>Ctrl</kbd>+<kbd>S</kbd> | Salva tudo e grava os comentários de todos os arquivos. |
+| **Disparar Todos** | <kbd>Ctrl</kbd>+<kbd>S</kbd> ou a barra da aba Radar | Salva tudo e grava os comentários de todos os arquivos. |
+| **Disparar Selecionados** | barra e botão direito da aba Radar | Só os alvos selecionados: um comentário, vários (<kbd>Ctrl</kbd>+clique), um arquivo ou a revisão. Grava os arquivos deles no `.md` e pede à IA que execute só esses alvos; sem a IA configurada, copia o pedido para você colar na sua. |
+| **Disparar** | botão no cartão do alvo, no editor | O mesmo, só para aquele alvo. |
 
 - 🤝 **Sem fogo amigo:** a IA é orientada a analisar os comentários em conjunto e a perguntar antes de
   aplicar comentários que se contradizem ou se cruzam.
@@ -328,6 +330,23 @@ risco de cada classe.
 
 Legenda, detalhes e painel inferior podem ser minimizados para o diagrama ganhar espaço.
 
+### Comentários e impacto apontado pela IA
+
+As classes com comentários pendentes ganham um selo **✎** no canto: azul para os alvos do Radar e do Escudo,
+roxo para os pedidos da Patrulha ao PR em revisão (os ainda não enviados e os enviados sem sinal de atendidos).
+O selo acompanha o Radar e a Patrulha na hora, e os detalhes da classe listam cada comentário.
+
+**Analisar Impacto com IA** (na barra da aba) manda para a IA as classes do diagrama, as ligações, os
+comentários e o `git diff` das alterações sem commit, e ela aponta, **sem alterar nenhum arquivo**, quais classes
+são afetadas se os comentários forem atendidos ou as alterações mantidas. No diagrama:
+
+- ✦ **Brilho rosa** nas classes afetadas, mais forte quanto maior o impacto (alto, médio ou baixo), com o selo do
+  nível no canto.
+- 🔗 **Setas rosa** no caminho do impacto, entre as classes afetadas e as de onde ele parte.
+- 📋 **Resumo da IA** no topo, com as classes afetadas da mais para a menos afetada (clique leva à classe), e
+  **Destacar impacto**, que apaga o resto.
+- 🔎 Nos detalhes e na dica de cada classe: o nível, o motivo e os comentários ou alterações que causam o impacto.
+
 ---
 
 <a id="sentinela"></a>
@@ -446,7 +465,8 @@ foi atendido.
    GitHub**). Se a organização bloquear o login pelo navegador (restrição a OAuth Apps), use **Entrar com
    Token** na aba, com um token pessoal classic com escopo `repo`.
 2. **Revise.** **Revisar Este PR** traz o código do PR para a branch local `pr-<número>` e entra no modo
-   revisão do PR; se você já está no código do PR, só entra no modo revisão. O que não estiver commitado (fora de `iron-dome/` e
+   revisão do PR; se você já está na `pr-<número>`, no head do PR, só entra no modo revisão. Outra branch no mesmo
+   commit, como a do autor do PR, não conta: ela pode ter alterações não commitadas. O que não estiver commitado (fora de `iron-dome/` e
    `.idea/`) vai para o stash, com a lista dos arquivos e a sua aprovação antes. Não há botão de checkout
    à parte: se o PR receber commits novos, o mesmo botão vira **Atualizar ou Encerrar Revisão**.
    **Encerrar Revisão** oferece voltar para a branch de antes e devolver o stash. O modo revisão só vale na
@@ -459,10 +479,13 @@ foi atendido.
    imports, navegação e erros funcionam como no editor, sem alterar o arquivo. Escreva como gostaria que
    ficasse: nas linhas do diff, vira uma sugestão do GitHub que o autor aplica com um clique
    (*Commit suggestion*); fora do diff, vai como código de exemplo.
-3. **Envie.** **Enviar ao GitHub** mostra onde cada comentário vai entrar, escolhe entre **Pedir
-   alterações** e **Só comentar** e publica a revisão. Linhas que o PR altera viram comentários de linha;
-   linhas fora do diff e arquivos inteiros, comentários do arquivo; pacotes e arquivos fora do PR entram no
-   texto geral.
+3. **Envie.** **Enviar ao GitHub** mostra onde cada comentário vai entrar. Por padrão, eles vão como
+   **rascunho no GitHub** (a revisão pendente, que só você vê): enviar de novo acrescenta ao mesmo rascunho,
+   e **Editar**, **Excluir** e **Excluir Todos** valem lá também. Quando estiver pronto, **Publicar Rascunho**
+   escolhe entre **Pedir Alterações** e **Só Comentar**, e o autor passa a ver. Desmarcando o rascunho, o envio
+   já publica. Linhas que o PR altera viram comentários de linha; linhas fora do diff e arquivos inteiros,
+   comentários do arquivo; pacotes e arquivos fora do PR entram no texto geral. Se o rascunho for publicado
+   ou descartado pelo próprio GitHub, a Patrulha percebe na sincronização e atualiza o `.md`.
 4. **Acompanhe no código.** Com a revisão ligada, os pedidos já enviados aparecem no editor como cartões
    recolhidos, onde o trecho está agora, com o status (*Enviado*, *Atendido*, *Sem alteração*). O
    cabeçalho expande, **Ocultar** tira o cartão e **Editar** troca o texto e o código sugerido também no
@@ -471,7 +494,9 @@ foi atendido.
    Se o revisor **editar ou apagar** o comentário direto no GitHub, a Patrulha sincroniza ao atualizar a
    aba, ao iniciar a revisão e em **Verificar Pedidos**: o `.md` passa a ter o texto do GitHub (*Editado no
    GitHub*), e os apagados ficam riscados (*Apagado no GitHub*), fora das contas e sem Editar.
-   **Excluir Pedido** tira um pedido do `.md` e, se você escolher, apaga o comentário no GitHub também.
+   **Excluir** apaga o comentário selecionado: o não enviado, o rascunho (no GitHub também) ou o publicado
+   (no GitHub só se você escolher). **Excluir Todos** faz isso com o PR inteiro: os não enviados, o rascunho
+   descartado no GitHub e os publicados, que só saem do GitHub se você marcar.
 5. **Verifique.** Os pedidos ficam em `iron-dome/pull-requests/pr-<número>.md`. **Verificar Pedidos**
    confere cada um de dois jeitos:
 
@@ -511,15 +536,45 @@ compartilham os mesmos componentes visuais, para tudo ter a mesma cara:
 ## 🚀 Interceptador (IA)
 
 O Interceptador chama a IA direto da IDE, pelo CLI do **Cursor** (`agent`) ou do **Antigravity** (`agy`), rodando
-na sua máquina sobre o projeto aberto. Cada execução aparece na barra de progresso, pode ser cancelada e fica
+na sua máquina sobre o projeto aberto. Enquanto ela trabalha, a aba que pediu (Radar, Patrulha, Escudo ou Raio de Impacto) e a
+aba Interceptador mostram uma barra com o passo atual (como *Lendo src/Frete.kt*), o tempo, a última linha que a
+IA escreveu e **Cancelar**; o ícone da aba e o do painel viram o ícone de IA, para dar para ver mesmo com o
+painel fechado. Execuções sem aba própria, como as da Caixa-Preta, aparecem em todas as abas. Cada execução fica
 registrada em `iron-dome/ia/` com o pedido, os passos, os arquivos alterados e a resposta (**Ver Resposta**).
+
+No Windows, o CLI também pode estar no **WSL**: em **Onde está o CLI**, escolha **No WSL** e a distribuição (a lista
+vem do `wsl.exe`, sem as internas do Docker Desktop). O plugin roda o CLI dentro dela pelo shell de login, que acha o
+`agent` ou o `agy` em `~/.local/bin` (ou use o caminho do Linux em **Executável**), converte a pasta do projeto para
+`/mnt/c/...` e repassa a chave de API do Cursor pelo ambiente. Vale para o teste, para a aba e para o terminal, e a
+configuração automática procura também nas distribuições do WSL quando não acha o CLI no Windows.
+
+Em **Onde rodar a IA** (na aba Interceptador ou em Settings), escolha **Na aba, em segundo plano**, **No terminal
+da IDE** ou **Perguntar a cada vez**. No terminal, cada pedido abre uma aba do terminal com o CLI à vista: o Cursor
+abre interativo, para acompanhar e conversar com a IA (vale o login do `agent login`; a chave de API não vai para o
+terminal, para não ficar no histórico do shell), e o Antigravity roda o pedido e mostra a resposta. A IA grava a
+resposta final em `iron-dome/ia/respostas/`, e o plugin segue dali como na aba: os rascunhos do Revisar com IA, a
+análise no `bug.md`, os avisos. Enquanto isso, a barra da aba mostra **Mostrar Terminal** e **Parar de Esperar**.
+Sem o plugin de terminal da IDE, a IA roda na aba.
+
+Os dois caminhos têm teste, no Windows ou no WSL, como estiver configurado: **Salvar e Testar** confere a execução
+em segundo plano (e habilita os botões de IA), e **Testar no Terminal** (na aba Interceptador, ou **Salvar e Testar
+no Terminal** em Settings) abre a aba *IA: Teste* do terminal, pede à IA que grave OK num arquivo e mostra quanto
+tempo ela levou e em qual shell rodou. Se a resposta não chega, a aba do terminal mostra o que deu errado: o
+comando, o login ou o PATH.
 
 | Onde | Ação | A IA pode alterar arquivos? |
 | --- | --- | --- |
-| 📡 Radar e barra do editor | **Disparar com IA**: dispara os alvos e a IA executa a ordem de interceptação, marcando `[x]` nos atendidos | Sim |
+| 📡 Radar e barra do editor | **Disparar Todos com IA**: dispara os alvos e a IA executa a ordem de interceptação, marcando `[x]` nos atendidos. **Disparar Selecionados** (aba Radar) e **Disparar** (no cartão do alvo, no editor): a IA executa só os alvos escolhidos | Sim |
 | 🛰️ Patrulha | **Revisar com IA** (no modo revisão): a IA lê os arquivos alterados e propõe comentários, que viram rascunhos para você revisar antes de enviar | Não |
 | 🛡️ Escudo | **Explicar Falha com IA**: causa, onde e a correção proposta; a resposta oferece **Corrigir com IA** | Não (Corrigir: sim) |
+| 💥 Raio de Impacto | **Analisar Impacto com IA**: as classes do diagrama afetadas pelos comentários do Radar e da Patrulha e pelas alterações sem commit, destacadas no diagrama | Não |
 | 📦 Caixa-Preta | **Analisar com IA**, no bug gerado e em Ver Logs de Erro: causa provável e correção; no bug, a análise entra no fim do `bug.md` | Não |
+
+Revisar não é alterar: **enquanto um PR está em revisão na Patrulha, a IA não altera o código**, porque o checkout
+local é o do PR. Os disparos do Radar e o Corrigir com IA ficam desligados até você sair da revisão. E, em qualquer
+pedido que altera código, a IA é instruída a não seguir os comentários de pull request (`iron-dome/pull-requests/`
+e as revisões de PR em `iron-dome/ia/`); nos pedidos só de leitura, também no terminal, ela é instruída a não
+alterar nada.
 
 Na primeira vez que a aba **Interceptador** abre, a IA se configura sozinha: o plugin procura o Cursor CLI e o
 Antigravity CLI instalados e testa cada um, com o modelo padrão, até um responder. Se nenhum responder, a

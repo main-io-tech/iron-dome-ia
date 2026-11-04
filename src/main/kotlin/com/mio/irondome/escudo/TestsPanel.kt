@@ -51,6 +51,8 @@ import com.mio.irondome.base.Stat
 import com.mio.irondome.base.SummaryHeader
 import com.mio.irondome.base.Tone
 import com.mio.irondome.base.plural
+import com.intellij.ui.components.panels.VerticalLayout
+import com.mio.irondome.interceptor.AgentProgressPanel
 import com.mio.irondome.interceptor.AgentRunner
 import com.mio.irondome.interceptor.FireWithAiAction
 import java.awt.BorderLayout
@@ -199,7 +201,10 @@ class TestsPanel(private val project: Project) : SimpleToolWindowPanel(true, tru
             secondComponent = ScrollPaneFactory.createScrollPane(details, true)
         }
         setContent(JPanel(BorderLayout()).apply {
-            add(header, BorderLayout.NORTH)
+            add(JPanel(VerticalLayout(0)).apply {
+                add(header)
+                add(AgentProgressPanel(project, TestsTab.TITLE, this@TestsPanel))
+            }, BorderLayout.NORTH)
             add(splitter, BorderLayout.CENTER)
         })
         installNavigation(openAction, explainAction)

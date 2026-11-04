@@ -42,6 +42,60 @@ class InterceptorTest {
     }
 
     @Test
+    fun whoChangesCodeIgnoresPullRequestCommentsAndReviewsOnlyRead() {
+        val write = AgentCommand.guarded(readOnly.copy(prompt = "Corrija", write = true))
+        val read = AgentCommand.guarded(readOnly.copy(prompt = "Revise"))
+
+        assertEquals("Corrija ${AgentCommand.PULL_REQUEST_RULE}", write)
+        assertTrue("iron-dome/pull-requests/" in write)
+        assertEquals("Revise ${AgentCommand.READ_ONLY_RULE}", read)
+    }
+
+    @Test
+    fun theTerminalCommandIsQuotedForEachShell() {
+        val prompt = "Revise o PR de O'Brien"
+        val exe = "C:/Program Files/Cursor/agent.cmd"
+
+        assertEquals(
+            "& 'C:/Program Files/Cursor/agent.cmd' '--model' 'gpt-5' 'Revise o PR de O''Brien'",
+            AgentCommand.terminal(AgentProvider.CURSOR, exe, prompt, "gpt-5", 20, ShellKind.POWERSHELL),
+        )
+        assertEquals(
+            "\"C:/Program Files/Cursor/agent.cmd\" \"Revise o PR de O'Brien\"",
+            AgentCommand.terminal(AgentProvider.CURSOR, exe, prompt, null, 20, ShellKind.CMD),
+        )
+        assertEquals(
+            "'agy' '-p' 'Revise o PR de O'\\''Brien' '--print-timeout' '15m'",
+            AgentCommand.terminal(AgentProvider.ANTIGRAVITY, "agy", prompt, null, 15, ShellKind.POSIX),
+        )
+    }
+
+    @Test
+    fun inWslTheTerminalRunsTheCommandInTheLoginShellOfTheDistribution() {
+        val inner = AgentCommand.terminal(AgentProvider.CURSOR, "agent", "Revise o PR", null, 20, ShellKind.POSIX)
+
+        assertEquals("'agent' 'Revise o PR'", inner)
+        assertEquals(
+            "& 'wsl.exe' '-d' 'Ubuntu' '--cd' '/mnt/c/proj' '--' 'bash' '-lic' '''agent'' ''Revise o PR'''",
+            AgentCommand.wrapWsl("Ubuntu", "/mnt/c/proj", inner, ShellKind.POWERSHELL),
+        )
+        assertEquals(
+            "\"wsl.exe\" \"-d\" \"Ubuntu\" \"--cd\" \"/mnt/c/proj\" \"--\" \"bash\" \"-lic\" \"'agent' 'Revise o PR'\"",
+            AgentCommand.wrapWsl("Ubuntu", "/mnt/c/proj", inner, ShellKind.CMD),
+        )
+    }
+
+    @Test
+    fun theShellComesFromTheTerminalSettings() {
+        assertEquals(ShellKind.POWERSHELL, ShellKind.of("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", windows = true))
+        assertEquals(ShellKind.POWERSHELL, ShellKind.of("pwsh", windows = false))
+        assertEquals(ShellKind.CMD, ShellKind.of("cmd.exe", windows = true))
+        assertEquals(ShellKind.POWERSHELL, ShellKind.of(null, windows = true))
+        assertEquals(ShellKind.POSIX, ShellKind.of("/bin/zsh", windows = false))
+        assertEquals(ShellKind.POSIX, ShellKind.of("C:\\Program Files\\Git\\bin\\bash.exe", windows = true))
+    }
+
+    @Test
     fun antigravityUsesItsOwnFlagsAndATimeout() {
         val command = AgentCommand.build(AgentProvider.ANTIGRAVITY, "agy", readOnly, "C:/proj", "gemini-3-pro", 15)
 

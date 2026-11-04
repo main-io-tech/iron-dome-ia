@@ -30,7 +30,9 @@ import com.intellij.ui.PopupHandler
 import com.intellij.ui.ScrollPaneFactory
 import com.intellij.ui.SimpleTextAttributes
 import com.intellij.ui.treeStructure.Tree
+import com.intellij.ui.components.panels.VerticalLayout
 import com.mio.irondome.base.IronDomeIcons
+import com.mio.irondome.base.ReviewToolWindowFactory
 import com.mio.irondome.base.RichTreeCellRenderer
 import com.mio.irondome.base.Segment
 import com.mio.irondome.base.Stat
@@ -40,6 +42,10 @@ import com.mio.irondome.base.plural
 import com.mio.irondome.base.refreshAction
 import com.mio.irondome.comando.ReviewArchive
 import com.mio.irondome.comando.ReviewMarkdown
+import com.mio.irondome.interceptor.AgentProgressPanel
+import com.mio.irondome.interceptor.AgentRunner
+import com.mio.irondome.interceptor.AgentSettings
+import com.mio.irondome.interceptor.FireWithAiAction
 import java.awt.BorderLayout
 import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
@@ -80,7 +86,10 @@ class CommentsPanel(private val project: Project) : SimpleToolWindowPanel(true, 
 
     init {
         setContent(JPanel(BorderLayout()).apply {
-            add(header, BorderLayout.NORTH)
+            add(JPanel(VerticalLayout(0)).apply {
+                add(header)
+                add(AgentProgressPanel(project, ReviewToolWindowFactory.RADAR, this@CommentsPanel))
+            }, BorderLayout.NORTH)
             add(ScrollPaneFactory.createScrollPane(tree, true), BorderLayout.CENTER)
         })
         toolbar = createToolbar()
@@ -102,7 +111,9 @@ class CommentsPanel(private val project: Project) : SimpleToolWindowPanel(true, 
         "IronDome.CommentsToolbar",
         DefaultActionGroup(
             refreshAction { refresh() },
+            ActionManager.getInstance().getAction("IronDome.SaveReview"),
             ActionManager.getInstance().getAction("IronDome.FireWithAi"),
+            fireSelectedAction(),
             CommonActionsManager.getInstance().createExpandAllAction(DefaultTreeExpander(tree), tree),
             CommonActionsManager.getInstance().createCollapseAllAction(DefaultTreeExpander(tree), tree),
             Separator.getInstance(),
@@ -396,7 +407,8 @@ class CommentsPanel(private val project: Project) : SimpleToolWindowPanel(true, 
         tree.addMouseListener(object : MouseAdapter() {
             override fun mousePressed(e: MouseEvent) {
                 if (!SwingUtilities.isRightMouseButton(e)) return
-                tree.getPathForLocation(e.x, e.y)?.let { tree.selectionPath = it }
+                // Mantém a seleção múltipla quando o clique é num dos selecionados, para disparar todos eles.
+                tree.getPathForLocation(e.x, e.y)?.takeUnless(tree::isPathSelected)?.let { tree.selectionPath = it }
             }
 
             override fun mouseClicked(e: MouseEvent) {
@@ -421,6 +433,8 @@ class CommentsPanel(private val project: Project) : SimpleToolWindowPanel(true, 
         PopupHandler.installPopupMenu(
             tree,
             DefaultActionGroup(
+                fireSelectedAction(),
+                Separator.getInstance(),
                 liveAction("Editar", AllIcons.Actions.Edit, service::isEditable) { TargetComments.edit(project, it) },
                 liveAction("Cancelar Alvo", AllIcons.General.Remove, { !it.resolved && !it.removing }) { service.markForRemoval(listOf(it)) },
                 liveAction("Desfazer Cancelamento", AllIcons.Actions.Undo, { it.removing }) { service.unmarkForRemoval(listOf(it)) },
@@ -431,6 +445,43 @@ class CommentsPanel(private val project: Project) : SimpleToolWindowPanel(true, 
             "IronDome.CommentsPopup",
         )
     }
+
+    /**
+     * Dispara só os alvos selecionados: um comentário, vários (Ctrl+clique) ou todos de um arquivo ou da revisão.
+     * Com a IA pronta, ela executa só eles; sem ela, o pedido vai para a área de transferência.
+     */
+    private fun fireSelectedAction() = object : DumbAwareAction("Disparar Selecionados", null, IronDomeIcons.interceptador) {
+        override fun getActionUpdateThread() = ActionUpdateThread.EDT
+
+        override fun update(e: AnActionEvent) {
+            val targets = FireWithAiAction.fireable(selectedLiveComments())
+            val runner = AgentRunner.getInstance(project)
+            val reviewing = runner.reviewingPullRequest()
+            e.presentation.isEnabled = targets.isNotEmpty() && runner.running == null && reviewing == 0
+            e.presentation.text = when (targets.size) {
+                0 -> "Disparar Selecionados"
+                1 -> "Disparar ${targets.single().id}"
+                else -> "Disparar Selecionados (${targets.size})"
+            }
+            e.presentation.description = when {
+                reviewing != 0 -> FireWithAiAction.reviewingHint(reviewing)
+                targets.isEmpty() -> "Selecione um ou mais alvos pendentes (Ctrl+clique), um arquivo ou a revisão para disparar só eles"
+                AgentSettings.ready -> "Grava no .md e pede à IA (${AgentSettings.provider.title}) que execute só os alvos selecionados"
+                else -> "Grava no .md e copia o pedido para você colar na sua IA, para executar só os alvos selecionados"
+            }
+        }
+
+        override fun actionPerformed(e: AnActionEvent) {
+            FireWithAiAction.fireTargets(project, selectedLiveComments())
+        }
+    }
+
+    /** Os comentários da revisão aberta em todos os nós selecionados, com os de baixo de arquivos e revisões. */
+    private fun selectedLiveComments(): List<ReviewComment> =
+        tree.selectionPaths.orEmpty()
+            .flatMap { path -> (path.lastPathComponent as DefaultMutableTreeNode).breadthFirstEnumeration().toList() }
+            .mapNotNull { ((it as DefaultMutableTreeNode).userObject as? CommentItem)?.live }
+            .distinct()
 
     /** Só para comentários da revisão aberta, que ainda estão no estado do plugin. */
     private fun liveAction(

@@ -29,6 +29,7 @@ dependencies {
         bundledPlugin("JUnit")
         bundledPlugin("Git4Idea")
         bundledPlugin("org.jetbrains.plugins.github")
+        bundledPlugin("org.jetbrains.plugins.terminal")
         testFramework(TestFrameworkType.Platform)
         testFramework(TestFrameworkType.Plugin.Java)
     }
@@ -46,4 +47,13 @@ intellijPlatform {
 
 tasks.named("buildPlugin") {
     dependsOn(tasks.test)
+}
+
+// A compilação dos testes ficava em dia mesmo com assinaturas novas no código principal (parâmetros com valor
+// padrão, construtores), e os testes quebravam com NoSuchMethodError: as classes principais entram pelo conteúdo.
+tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>("compileTestKotlin") {
+    inputs.files(sourceSets.main.get().output.classesDirs)
+        .withNormalizer(ClasspathNormalizer::class.java)
+        .withPropertyName("mainClassesContent")
+    incremental = false
 }

@@ -7,6 +7,7 @@ import com.intellij.openapi.editor.event.EditorMouseEventArea
 import com.intellij.openapi.editor.event.EditorMouseListener
 import com.intellij.openapi.editor.event.EditorMouseMotionListener
 import com.intellij.openapi.editor.ex.EditorEx
+import com.mio.irondome.interceptor.FireWithAiAction
 import java.awt.Cursor
 import javax.swing.SwingUtilities
 
@@ -28,7 +29,8 @@ class ReviewMouseMotionListener : EditorMouseMotionListener {
 
 /**
  * Duplo clique no número da linha abre o formulário de comentário. Num resolvido, clique no
- * cabeçalho recolhe ou expande, e clique no OK dispensa. Nos demais, Editar abre o formulário.
+ * cabeçalho recolhe ou expande, e clique no OK dispensa. Nos demais, Editar abre o formulário e, nos alvos do
+ * Radar, Disparar manda só aquele alvo para a IA.
  */
 class ReviewMouseListener : EditorMouseListener {
 
@@ -48,7 +50,7 @@ class ReviewMouseListener : EditorMouseListener {
                     ReviewCommentRenderer.Hit.TOGGLE -> card.onToggle()
                     ReviewCommentRenderer.Hit.HIDE -> card.onHide()
                     ReviewCommentRenderer.Hit.EDIT -> card.onEdit?.invoke()
-                    ReviewCommentRenderer.Hit.NONE -> return
+                    ReviewCommentRenderer.Hit.FIRE, ReviewCommentRenderer.Hit.NONE -> return
                 }
                 setHandCursor(editor, false)
                 e.consume()
@@ -58,6 +60,7 @@ class ReviewMouseListener : EditorMouseListener {
                 ReviewCommentRenderer.Hit.TOGGLE -> service.toggleExpanded(renderer.comment)
                 ReviewCommentRenderer.Hit.HIDE -> service.hide(listOf(renderer.comment))
                 ReviewCommentRenderer.Hit.EDIT -> TargetComments.edit(project, renderer.comment, editor)
+                ReviewCommentRenderer.Hit.FIRE -> FireWithAiAction.fireTargets(project, listOf(renderer.comment))
                 ReviewCommentRenderer.Hit.NONE -> return
             }
             setHandCursor(editor, false)

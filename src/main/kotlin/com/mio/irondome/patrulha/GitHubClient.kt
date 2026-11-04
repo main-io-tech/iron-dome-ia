@@ -45,7 +45,10 @@ class GitHubClient(private val apiUrl: String, private val graphQlUrl: String, p
         val updatedAt: String? = null,
     )
 
-    class Review(val id: Long, val url: String)
+    /** [state] é `PENDING` no rascunho; depois de publicada, `COMMENTED`, `CHANGES_REQUESTED` ou `APPROVED`. */
+    class Review(val id: Long, val url: String, val nodeId: String = "", val state: String = "", val body: String = "") {
+        val pending: Boolean get() = state == "PENDING"
+    }
 
     private val http = HttpClient.newBuilder()
         .connectTimeout(Duration.ofSeconds(15))
@@ -95,18 +98,18 @@ class GitHubClient(private val apiUrl: String, private val graphQlUrl: String, p
         return response.body()
     }
 
-    /** [event] é `REQUEST_CHANGES` ou `COMMENT`. */
+    /** [event] é `REQUEST_CHANGES` ou `COMMENT`; nulo cria a revisão pendente, o rascunho que só quem revisa vê. */
     fun createReview(
         repo: GitHubRepo,
         number: Int,
         commitSha: String,
         body: String,
-        event: String,
+        event: String?,
         comments: List<InlineComment>,
     ): Review {
         val payload = JsonObject().apply {
             addProperty("commit_id", commitSha)
-            addProperty("event", event)
+            event?.let { addProperty("event", it) }
             if (body.isNotBlank()) addProperty("body", body)
             add("comments", JsonArray().apply {
                 comments.forEach { comment ->
@@ -123,9 +126,85 @@ class GitHubClient(private val apiUrl: String, private val graphQlUrl: String, p
                 }
             })
         }
-        val review = request("POST", "${repoPath(repo)}/pulls/$number/reviews", payload).asJsonObject
-        return Review(review.long("id"), review.optString("html_url").orEmpty())
+        return review(request("POST", "${repoPath(repo)}/pulls/$number/reviews", payload).asJsonObject)
     }
+
+    /** A revisão como está agora no GitHub, ou nula se foi descartada (rascunho apagado). */
+    fun review(repo: GitHubRepo, number: Int, id: Long): Review? {
+        val response = send("GET", apiUrl.trimEnd('/') + "${repoPath(repo)}/pulls/$number/reviews/$id", null, JSON)
+        if (response.statusCode() == 404) return null
+        check(response)
+        return review(parse(response).asJsonObject)
+    }
+
+    /** Publica o rascunho: o autor do PR passa a ver os comentários. */
+    fun submitReview(repo: GitHubRepo, number: Int, id: Long, event: String, body: String): Review {
+        val payload = JsonObject().apply {
+            addProperty("event", event)
+            if (body.isNotBlank()) addProperty("body", body)
+        }
+        return review(request("POST", "${repoPath(repo)}/pulls/$number/reviews/$id/events", payload).asJsonObject)
+    }
+
+    /** Descarta o rascunho com todos os comentários dele; já descartado também conta. */
+    fun deletePendingReview(repo: GitHubRepo, number: Int, id: Long) {
+        val response = send("DELETE", apiUrl.trimEnd('/') + "${repoPath(repo)}/pulls/$number/reviews/$id", null, JSON)
+        if (response.statusCode() == 404) return
+        check(response)
+    }
+
+    fun updateReviewBody(repo: GitHubRepo, number: Int, id: Long, body: String): Review =
+        review(request("PUT", "${repoPath(repo)}/pulls/$number/reviews/$id", JsonObject().apply { addProperty("body", body) }).asJsonObject)
+
+    /**
+     * Acrescenta um comentário ao rascunho [reviewNodeId], que o REST não permite: na linha (com [line]) ou no
+     * arquivo inteiro (sem ela).
+     */
+    fun addPendingComment(reviewNodeId: String, path: String, startLine: Int?, line: Int?, body: String): PostedComment {
+        val mutation = """
+            mutation(${'$'}input: AddPullRequestReviewThreadInput!) {
+              addPullRequestReviewThread(input: ${'$'}input) {
+                thread { comments(first: 1) { nodes { databaseId url body path line updatedAt } } }
+              }
+            }
+        """.trimIndent()
+        val input = JsonObject().apply {
+            addProperty("pullRequestReviewId", reviewNodeId)
+            addProperty("path", path)
+            addProperty("body", body)
+            if (line != null) {
+                addProperty("line", line)
+                addProperty("side", "RIGHT")
+                if (startLine != null && startLine < line) {
+                    addProperty("startLine", startLine)
+                    addProperty("startSide", "RIGHT")
+                }
+            } else {
+                addProperty("subjectType", "FILE")
+            }
+        }
+        val data = graphQl(mutation, JsonObject().apply { add("input", input) })
+        val node = data.getAsJsonObject("addPullRequestReviewThread")?.getAsJsonObject("thread")
+            ?.getAsJsonObject("comments")?.getAsJsonArray("nodes")?.firstOrNull()?.asJsonObject
+            ?: throw GitHubException("O GitHub não devolveu o comentário acrescentado ao rascunho.")
+        return PostedComment(
+            id = node.long("databaseId"),
+            url = node.optString("url").orEmpty(),
+            path = node.optString("path").orEmpty(),
+            line = node.get("line")?.takeUnless { it is JsonNull }?.asInt,
+            body = node.optString("body").orEmpty(),
+            subjectType = if (line == null) "file" else "line",
+            updatedAt = node.optString("updatedAt"),
+        )
+    }
+
+    private fun review(json: JsonObject) = Review(
+        id = json.long("id"),
+        url = json.optString("html_url").orEmpty(),
+        nodeId = json.optString("node_id").orEmpty(),
+        state = json.optString("state").orEmpty(),
+        body = json.optString("body").orEmpty(),
+    )
 
     fun reviewComments(repo: GitHubRepo, number: Int, reviewId: Long): List<PostedComment> =
         request("GET", "${repoPath(repo)}/pulls/$number/reviews/$reviewId/comments?per_page=100")
@@ -183,18 +262,7 @@ class GitHubClient(private val apiUrl: String, private val graphQlUrl: String, p
             addProperty("name", repo.name)
             addProperty("number", number)
         }
-        val payload = JsonObject().apply {
-            addProperty("query", query)
-            add("variables", variables)
-        }
-        val response = send("POST", graphQlUrl, payload, JSON)
-        check(response)
-        val json = parse(response).asJsonObject
-        json.getAsJsonArray("errors")?.firstOrNull()?.asJsonObject?.optString("message")?.let {
-            if (GitHubException.isOauthRestriction(it)) throw GitHubException(GitHubException.OAUTH_RESTRICTED, 403, oauthRestricted = true)
-            throw GitHubException("GitHub: $it")
-        }
-        val nodes = json.getAsJsonObject("data")?.getAsJsonObject("repository")?.getAsJsonObject("pullRequest")
+        val nodes = graphQl(query, variables).getAsJsonObject("repository")?.getAsJsonObject("pullRequest")
             ?.getAsJsonObject("reviewThreads")?.getAsJsonArray("nodes") ?: return emptyList()
         return nodes.mapNotNull { node ->
             val thread = node.asJsonObject
@@ -213,6 +281,22 @@ class GitHubClient(private val apiUrl: String, private val graphQlUrl: String, p
                 },
             )
         }
+    }
+
+    /** O `data` da resposta; os erros do GraphQL viram exceção. */
+    private fun graphQl(query: String, variables: JsonObject): JsonObject {
+        val payload = JsonObject().apply {
+            addProperty("query", query)
+            add("variables", variables)
+        }
+        val response = send("POST", graphQlUrl, payload, JSON)
+        check(response)
+        val json = parse(response).asJsonObject
+        json.getAsJsonArray("errors")?.firstOrNull()?.asJsonObject?.optString("message")?.let {
+            if (GitHubException.isOauthRestriction(it)) throw GitHubException(GitHubException.OAUTH_RESTRICTED, 403, oauthRestricted = true)
+            throw GitHubException("GitHub: $it")
+        }
+        return json.getAsJsonObject("data") ?: JsonObject()
     }
 
     private fun pullRequest(json: JsonObject): PullRequest {

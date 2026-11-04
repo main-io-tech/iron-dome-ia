@@ -2,16 +2,21 @@ package com.mio.irondome.interceptor
 
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ModalityState
-import java.nio.file.Path
 
 /**
- * Configura a IA sozinha: procura os CLIs instalados, Cursor primeiro, e testa cada um com o modelo padrão
- * até um responder. Se nenhum passar, a configuração fica no primeiro encontrado e o motivo de cada falha
- * vai no resultado, para o usuário terminar a configuração manual a partir dali.
+ * Configura a IA sozinha: procura os CLIs instalados nesta máquina, Cursor primeiro, e depois nas distribuições
+ * do WSL, e testa cada um com o modelo padrão até um responder. Se nenhum passar, a configuração fica no
+ * primeiro encontrado e o motivo de cada falha vai no resultado, para o usuário terminar a configuração manual a
+ * partir dali.
  */
 object AgentAutoSetup {
 
     class Result(val ok: Boolean, val message: String)
+
+    /** Um CLI encontrado: [where] é o que aparece para o usuário, como `C:\...\agent.cmd` ou `WSL Ubuntu: /home/...`. */
+    private class Candidate(val provider: AgentProvider, val host: AgentHost, val distro: String?, val where: String) {
+        val title: String get() = "${provider.title} CLI${distro?.let { " no WSL $it" }.orEmpty()}"
+    }
 
     @Volatile
     var running = false
@@ -24,7 +29,18 @@ object AgentAutoSetup {
         AgentSettings.autoSetupTried = true
         onProgress("Procurando os CLIs de IA instalados…")
         ApplicationManager.getApplication().executeOnPooledThread {
-            val found = AgentProvider.entries.mapNotNull { provider -> AgentSettings.find(provider)?.let { provider to it } }
+            val local = AgentProvider.entries.mapNotNull { provider ->
+                AgentSettings.find(provider)?.let { Candidate(provider, AgentHost.LOCAL, null, it.toString()) }
+            }
+            val wsl = if (!AgentLaunch.wslSupported) emptyList() else {
+                ApplicationManager.getApplication().invokeLater({ onProgress("Procurando os CLIs de IA no WSL…") }, ModalityState.any())
+                AgentLaunch.distributions().flatMap { distro ->
+                    AgentProvider.entries.mapNotNull { provider ->
+                        AgentLaunch.findInWsl(provider, distro)?.let { Candidate(provider, AgentHost.WSL, distro, "WSL $distro: $it") }
+                    }
+                }
+            }
+            val found = local + wsl
             ApplicationManager.getApplication().invokeLater({
                 if (found.isEmpty()) {
                     finish(onDone, Result(false, notFound()))
@@ -35,36 +51,31 @@ object AgentAutoSetup {
         }
     }
 
-    private fun tryNext(
-        found: List<Pair<AgentProvider, Path>>,
-        index: Int,
-        failures: List<String>,
-        onProgress: (String) -> Unit,
-        onDone: (Result) -> Unit,
-    ) {
+    private fun tryNext(found: List<Candidate>, index: Int, failures: List<String>, onProgress: (String) -> Unit, onDone: (Result) -> Unit) {
         if (index == found.size) {
-            val (first, _) = found.first()
-            use(first)
-            val missing = AgentProvider.entries.filter { provider -> found.none { it.first == provider } }
+            use(found.first())
+            val missing = AgentProvider.entries.filter { provider -> found.none { it.provider == provider } }
             val message = (failures + missing.map { "${it.title} CLI não encontrado." }).joinToString(" ")
             finish(onDone, Result(false, message))
             return
         }
-        val (provider, path) = found[index]
-        use(provider)
-        onProgress("Testando o ${provider.title} CLI em $path…")
+        val candidate = found[index]
+        use(candidate)
+        onProgress("Testando o ${candidate.title} em ${candidate.where}…")
         AgentVerifier.test { outcome ->
             if (outcome.ok) {
-                finish(onDone, Result(true, "Configurada com o ${provider.title} CLI. ${outcome.message}"))
+                finish(onDone, Result(true, "Configurada com o ${candidate.title}. ${outcome.message}"))
             } else {
-                tryNext(found, index + 1, failures + "${provider.title}: ${outcome.message}", onProgress, onDone)
+                tryNext(found, index + 1, failures + "${candidate.title}: ${outcome.message}", onProgress, onDone)
             }
         }
     }
 
     /** Executável e modelo automáticos; a chave do Cursor, se já existir, continua valendo. */
-    private fun use(provider: AgentProvider) {
-        AgentSettings.provider = provider
+    private fun use(candidate: Candidate) {
+        AgentSettings.provider = candidate.provider
+        AgentSettings.host = candidate.host
+        candidate.distro?.let { AgentSettings.wslDistro = it }
         AgentSettings.executable = null
         AgentSettings.model = null
     }
@@ -75,5 +86,6 @@ object AgentAutoSetup {
     }
 
     private fun notFound(): String =
-        "Nenhum CLI de IA encontrado. " + AgentProvider.entries.joinToString(" ") { "${it.title}: ${it.installHint}" }
+        "Nenhum CLI de IA encontrado${if (AgentLaunch.wslSupported) ", nem no WSL" else ""}. " +
+            AgentProvider.entries.joinToString(" ") { "${it.title}: ${it.installHint}" }
 }

@@ -4,6 +4,7 @@ import com.intellij.icons.AllIcons
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.ui.TitledSeparator
+import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBRadioButton
 import com.intellij.ui.components.JBScrollPane
@@ -32,6 +33,11 @@ internal class SendReviewDialog(
 
     private val requestChanges = JBRadioButton("Pedir alterações", true)
     private val commentOnly = JBRadioButton("Só comentar, sem bloquear o merge")
+    private val asDraftBox = JBCheckBox("Enviar como rascunho no GitHub: só você vê, e dá para editar e apagar antes de publicar", true).apply {
+        addActionListener { updateMode() }
+    }
+
+    val asDraft: Boolean get() = asDraftBox.isSelected
     private val general = JBTextArea(4, 60).apply {
         lineWrap = true
         wrapStyleWord = true
@@ -48,8 +54,15 @@ internal class SendReviewDialog(
             add(requestChanges)
             add(commentOnly)
         }
-        setOKButtonText("Enviar ao GitHub")
         init()
+        updateMode()
+    }
+
+    /** No rascunho, o tipo da revisão é escolhido ao publicar. */
+    private fun updateMode() {
+        requestChanges.isEnabled = !asDraft
+        commentOnly.isEnabled = !asDraft
+        setOKButtonText(if (asDraft) "Enviar Rascunho" else "Publicar no GitHub")
     }
 
     override fun getPreferredFocusedComponent(): JComponent = general
@@ -68,6 +81,8 @@ internal class SendReviewDialog(
             })
             .addComponent(comment("Comentários de linha só valem nas linhas que o PR altera; os demais vão no arquivo inteiro ou no texto geral."))
             .addComponent(TitledSeparator("Revisão"))
+            .addComponent(asDraftBox)
+            .addComponent(comment("Os rascunhos ficam na revisão pendente do GitHub, que o autor do PR não vê. Publique pela Patrulha (Publicar Rascunho) ou pelo GitHub."))
             .addComponent(requestChanges)
             .addComponent(commentOnly)
             .addComponent(comment("O GitHub não deixa pedir alterações no próprio PR: nesse caso, use Só comentar."))

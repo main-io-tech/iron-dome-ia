@@ -37,6 +37,7 @@ class PullRequestCards : EditorCardProvider {
         }
         val (badge, tone) = when {
             request.deleted -> RemoteStatus.DELETED.label to Tone.GRAY
+            request.pending -> "Rascunho" to Tone.YELLOW
             request.likelyDone -> "Atendido" to Tone.GREEN
             request.likelyPending -> "Sem alteração" to Tone.YELLOW
             else -> "Enviado" to Tone.PURPLE
@@ -46,7 +47,10 @@ class PullRequestCards : EditorCardProvider {
             lines = lines,
             badge = badge,
             tone = tone,
-            subtitle = when (request.remote) {
+            subtitle = when {
+                request.pending && !request.deleted -> "Rascunho no PR #$number · só você vê no GitHub até publicar"
+                else -> null
+            } ?: when (request.remote) {
                 RemoteStatus.DELETED -> "Enviado ao PR #$number e apagado no GitHub pelo revisor"
                 RemoteStatus.EDITED -> "Enviado ao PR #$number · editado no GitHub · Código: ${request.code.label} · Conversa: ${request.thread.label}"
                 RemoteStatus.SYNCED -> "Enviado ao PR #$number · Código: ${request.code.label} · Conversa: ${request.thread.label}"
