@@ -19,13 +19,14 @@ object ReviewGutter {
     private val hoverHighlighters = Key.create<List<RangeHighlighter>>("irondome.gutterHover")
     private val commentable = Key.create<Boolean>("irondome.commentable")
 
+    /** O que depende só do editor fica guardado; o arquivo é conferido a cada vez, porque o modo revisão de PR muda o que aceita. */
     fun isCommentable(editor: Editor): Boolean {
-        editor.getUserData(commentable)?.let { return it }
-        val project = editor.project
-        val result = !IdeSupport.isLimited(RADAR) && editor.editorKind == EditorKind.MAIN_EDITOR && project != null && !project.isDisposed &&
-            project.service<ReviewCommentService>().accepts(editor.document)
-        editor.putUserData(commentable, result)
-        return result
+        val mainEditor = editor.getUserData(commentable) ?: run {
+            val project = editor.project
+            (!IdeSupport.isLimited(RADAR) && editor.editorKind == EditorKind.MAIN_EDITOR && project != null && !project.isDisposed)
+                .also { editor.putUserData(commentable, it) }
+        }
+        return mainEditor && service(editor)?.accepts(editor.document) == true
     }
 
     fun showAt(editor: Editor, line: Int) {

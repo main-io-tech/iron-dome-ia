@@ -192,6 +192,11 @@ class InterceptorTest {
 
         assertTrue(text.contains("**Não altere nenhum arquivo.**"))
         assertTrue(text.contains("No máximo ${AiReview.MAX_COMMENTS} comentários"))
+        assertTrue("os comentários são escritos para um júnior", text.contains("Quem vai ler é ${AiReview.JUNIOR}."))
+        assertTrue(text.contains("**Bug:**") && text.contains("**Como corrigir:**"))
+        val example = AiReview.parse(text.substringAfter("contendo uma lista").substringBefore("Se não houver"))
+        assertTrue("o exemplo do JSON é válido e já está no tom pedido", example.single().comment.startsWith("**Bug:**"))
+        assertTrue(example.single().comment.contains("\n\n"))
         assertTrue(text.contains("### `src/Frete.kt` · Alterado · +1 −1"))
         assertTrue(text.contains("```diff\n@@ -1 +1 @@\n-a\n+b\n```"))
     }

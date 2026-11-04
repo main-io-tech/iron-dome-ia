@@ -11,11 +11,19 @@ class AddReviewCommentAction : DumbAwareAction() {
 
     override fun update(e: AnActionEvent) {
         val project = e.project
-        e.presentation.isEnabledAndVisible = project != null && e.editorAndFile() != null
-        val pullRequest = project?.service<ReviewCommentService>()?.activePullRequest ?: 0
+        val target = e.editorAndFile()
+        e.presentation.isVisible = project != null && target != null
+        val service = project?.service<ReviewCommentService>()
+        e.presentation.isEnabled = target != null && service?.accepts(target.first.document) == true
+        val pullRequest = service?.activePullRequest ?: 0
         if (pullRequest != 0) {
+            val reviewOutput = target != null && service?.relativePath(target.second)?.let(ReviewCommentService::isReviewOutput) == true
             e.presentation.text = "Iron Dome IA: Comentar no PR #$pullRequest"
-            e.presentation.description = "Comenta a seleção ou a linha atual no PR em revisão"
+            e.presentation.description = if (reviewOutput) {
+                "Os arquivos gerados pela revisão, em ${ReviewCommentService.REVIEW_DIR}/, não fazem parte do PR e não recebem comentário"
+            } else {
+                "Comenta a seleção ou a linha atual no PR em revisão"
+            }
             e.presentation.icon = ReviewIcons.addPullRequestComment
         } else {
             e.presentation.text = templatePresentation.text
@@ -26,6 +34,7 @@ class AddReviewCommentAction : DumbAwareAction() {
 
     override fun actionPerformed(e: AnActionEvent) {
         val (editor, _) = e.editorAndFile() ?: return
+        if (e.project?.service<ReviewCommentService>()?.accepts(editor.document) != true) return
         CommentForm.open(editor, editor.selectedLines())
     }
 }

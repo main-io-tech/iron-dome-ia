@@ -1,5 +1,6 @@
 package com.mio.irondome.patrulha
 
+import com.google.gson.JsonParser
 import com.mio.irondome.radar.CommentTarget
 import com.mio.irondome.radar.ReviewComment
 import org.junit.Assert.assertEquals
@@ -137,6 +138,61 @@ class PatrulhaTest {
         assertEquals("@ana: \"Corrigido no commit x\"", summary)
         assertEquals(ThreadStatus.RESOLVED, ThreadCheck.check(request, listOf(ReviewThread(77, true, false, emptyList())), "eu").first)
         assertEquals(ThreadStatus.NONE, ThreadCheck.check(request.copy(commentId = null), emptyList(), "eu").first)
+    }
+
+    @Test
+    fun discussionsBringEveryoneButLeaveOutDraftThreadsAndEmptyReviews() {
+        val pullRequest = JsonParser.parseString(
+            """
+            {
+              "reviewThreads": { "nodes": [
+                { "id": "T1", "path": "src/Frete.kt", "line": 12, "isResolved": false, "isOutdated": false,
+                  "comments": { "nodes": [
+                    { "databaseId": 77, "body": "Meu pedido", "createdAt": "2026-11-01T10:00:00Z", "author": { "login": "eu" }, "state": "SUBMITTED" },
+                    { "databaseId": 78, "body": "Feito", "createdAt": "2026-11-02T10:00:00Z", "author": { "login": "ana" }, "state": "SUBMITTED" } ] } },
+                { "id": "T2", "path": "src/Peso.kt", "line": null, "originalLine": 5, "isResolved": true, "isOutdated": true,
+                  "comments": { "nodes": [
+                    { "databaseId": 90, "body": "Isso pode ser nulo?", "createdAt": "2026-11-03T09:00:00Z", "author": { "login": "bia" }, "state": "SUBMITTED" } ] } },
+                { "id": "T3", "path": "src/Peso.kt", "line": 1,
+                  "comments": { "nodes": [
+                    { "databaseId": 95, "body": "rascunho", "createdAt": "2026-11-03T11:00:00Z", "author": { "login": "eu" }, "state": "PENDING" } ] } }
+              ] },
+              "comments": { "nodes": [
+                { "databaseId": 100, "body": "Pode subir hoje?", "createdAt": "2026-11-01T08:00:00Z", "author": null } ] },
+              "reviews": { "nodes": [
+                { "databaseId": 200, "body": "", "state": "APPROVED", "submittedAt": "2026-11-03T12:00:00Z", "author": { "login": "caio" } },
+                { "databaseId": 201, "body": "", "state": "COMMENTED", "submittedAt": "2026-11-03T12:00:00Z", "author": { "login": "ana" } },
+                { "databaseId": 202, "body": "eu", "state": "PENDING", "author": { "login": "eu" } } ] }
+            }
+            """.trimIndent(),
+        ).asJsonObject
+
+        val discussions = Discussions.parse(pullRequest)
+
+        assertEquals(listOf("review:200", "thread:90", "thread:77", "conversation:100"), discussions.map { it.key })
+        val outdated = discussions.first { it.first.id == 90L }
+        assertEquals(5, outdated.line)
+        assertTrue(outdated.resolved && outdated.outdated)
+        assertEquals("fantasma", discussions.first { it.kind == DiscussionKind.CONVERSATION }.first.author)
+        assertEquals("APPROVED", discussions.first().reviewState)
+
+        val record = PullRequestRecord(12, "Frete", "u", "frete", "main", listOf(request("P1", commentId = 77)))
+        assertEquals(listOf("review:200", "thread:90", "conversation:100"), Discussions.others(discussions, record).map { it.key })
+        assertEquals(listOf("Feito"), Discussions.of(record.requests.first(), discussions)?.replies?.map { it.body })
+    }
+
+    @Test
+    fun repliesOutsideLineThreadsQuoteTheOriginalComment() {
+        val to = DiscussionComment(1, "ana", "Pode subir hoje?\nPreciso do deploy.", "2026-11-01T08:00:00Z")
+
+        assertEquals(
+            "> **@ana** escreveu:\n> Pode subir hoje?\n> Preciso do deploy.\n\nSim, depois do merge.",
+            Discussions.quote(to, "  Sim, depois do merge.\n"),
+        )
+        assertTrue(Discussion(DiscussionKind.THREAD, listOf(to)).repliesInPlace)
+        assertFalse(Discussion(DiscussionKind.CONVERSATION, listOf(to)).repliesInPlace)
+        assertTrue(Discussions.isMine(to, "ANA"))
+        assertFalse(Discussions.isMine(to, null))
     }
 
     @Test

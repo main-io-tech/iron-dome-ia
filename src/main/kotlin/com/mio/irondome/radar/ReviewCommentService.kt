@@ -85,11 +85,17 @@ class ReviewCommentService(private val project: Project) : PersistentStateCompon
 
     /** Caminho de um arquivo ou pacote que pode virar alvo inteiro: nem a raiz do projeto, nem as revisões. */
     fun targetPath(file: VirtualFile): String? =
-        relativePath(file)?.takeIf { it.isNotEmpty() && it != REVIEW_DIR && !it.startsWith("$REVIEW_DIR/") }
+        relativePath(file)?.takeIf { it.isNotEmpty() && !isReviewOutput(it) }
 
     fun openCommentCount(file: VirtualFile): Int = relativePath(file)?.let { openCounts[it] } ?: 0
 
-    fun accepts(document: Document): Boolean = pathOf(document) != null
+    fun accepts(document: Document): Boolean = pathOf(document)?.let(::acceptsPath) == true
+
+    /**
+     * No modo revisão de PR, os arquivos de [REVIEW_DIR] (os `.md` dos pedidos, as revisões da IA) são gerados
+     * pela revisão e não fazem parte do PR: não recebem comentário.
+     */
+    private fun acceptsPath(path: String): Boolean = state.activePullRequest == 0 || !isReviewOutput(path)
 
     fun hasPendingChanges(): Boolean = pendingPaths().isNotEmpty()
 
@@ -245,6 +251,7 @@ class ReviewCommentService(private val project: Project) : PersistentStateCompon
         val path = relativePath(file) ?: return null
         // Só o que o usuário comenta vai para o PR em revisão; os outros mecanismos falam com a IA.
         val pullRequest = if (origin == CommentOrigin.RADAR) state.activePullRequest else 0
+        if (pullRequest != 0 && isReviewOutput(path)) return null
         val (id, reviewId) = nextIdentity(pullRequest)
         val snippet = linesText(document, lines.first, lines.last)
         val comment = ReviewComment(
@@ -699,6 +706,9 @@ class ReviewCommentService(private val project: Project) : PersistentStateCompon
 
     companion object {
         const val REVIEW_DIR = "iron-dome"
+
+        /** Arquivo gerado pelas revisões, dentro de [REVIEW_DIR]; [path] relativo à raiz do projeto. */
+        fun isReviewOutput(path: String): Boolean = path == REVIEW_DIR || path.startsWith("$REVIEW_DIR/")
         private const val REVIEW_PREFIX = "ordem-interceptacao-"
         private val LOG = logger<ReviewCommentService>()
 

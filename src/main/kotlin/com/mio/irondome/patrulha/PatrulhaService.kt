@@ -86,6 +86,18 @@ class PatrulhaService(private val project: Project) : PersistentStateComponent<P
         return PullRequestFiles(pr.headSha, mergeBase, files).also { filesCache[pr.number] = it }
     }
 
+    /**
+     * Os arquivos do PR [number] quando o checkout é o head dele, lendo do GitHub se ainda não vieram; nulo fora do
+     * head ou sem conta do GitHub. Faz rede: chame fora da EDT.
+     */
+    fun checkedOutFiles(number: Int): PullRequestFiles? {
+        val context = context()?.takeIf { it.account != null } ?: return null
+        val head = context.repository.currentRevision ?: return null
+        cachedFiles(number, head)?.let { return it }
+        val pr = client(context).pullRequest(context.repo, number)
+        return if (pr.headSha == head) files(context, pr) else null
+    }
+
     override fun getState(): PatrulhaState = state
 
     override fun loadState(state: PatrulhaState) {
@@ -647,6 +659,27 @@ class PatrulhaService(private val project: Project) : PersistentStateComponent<P
         )
     }
 
+    fun discussions(context: RepoContext, number: Int): List<Discussion> = client(context).discussions(context.repo, number)
+
+    /** Para onde vai a resposta numa conversa de linha. */
+    enum class ReplyTarget { PUBLISHED, DRAFT }
+
+    /**
+     * Responde a [to], de [discussion]. Na conversa de linha, a resposta entra nela: no rascunho da revisão, se o
+     * PR tem um aberto pelo plugin, para sair junto com ele, ou publicada. Nos
+     * comentários gerais e nas revisões, vira comentário novo no PR, citando [to].
+     */
+    fun reply(context: RepoContext, number: Int, discussion: Discussion, to: DiscussionComment, body: String): Pair<DiscussionComment, ReplyTarget> {
+        val client = client(context)
+        if (!discussion.repliesInPlace) {
+            return client.addConversationComment(context.repo, number, Discussions.quote(to, body)) to ReplyTarget.PUBLISHED
+        }
+        val draft = record(number)?.let { original ->
+            reconcileDraft(client, context, original).also { if (it.record != original) write(it.record) }.record
+        }?.pendingReviewNodeId
+        val posted = client.replyToThread(discussion.nodeId, body.trim(), draft)
+        return posted to if (posted.pending) ReplyTarget.DRAFT else ReplyTarget.PUBLISHED
+    }
     /**
      * Tira o pedido do `.md`; com [onGitHub], apaga também o comentário no PR, o que some com a conversa dele.
      * Pedidos no texto geral da revisão só saem do `.md`.

@@ -288,6 +288,23 @@ class ReviewCommentServiceTest : HeavyPlatformTestCase() {
         assertTrue("rascunho de PR não pede disparo para a IA", service.pendingPaths().isEmpty())
     }
 
+    fun testPullRequestReviewDoesNotCommentOnTheFilesTheReviewGenerates() {
+        val root = first.parent.parent
+        val record = VfsTestUtil.createFile(root, "iron-dome/pull-requests/pr-12.md", "# Pedidos\n")
+        val document = FileDocumentManager.getInstance().getDocument(record)!!
+        assertTrue("fora do modo revisão continua aceitando", service.accepts(document))
+
+        service.startPullRequestReview(12)
+        assertFalse(service.accepts(document))
+        assertNull(service.addComment(record, document, 0..0, "no .md dos pedidos", discuss = false))
+        assertTrue(service.accepts(FileDocumentManager.getInstance().getDocument(first)!!))
+        service.stopPullRequestReview()
+
+        assertTrue(service.pullRequestComments(12).isEmpty())
+        assertTrue(ReviewCommentService.isReviewOutput("iron-dome") && ReviewCommentService.isReviewOutput("iron-dome/ia/x.md"))
+        assertFalse(ReviewCommentService.isReviewOutput("iron-dome-ia/src/A.kt"))
+    }
+
     fun testOnlyPullRequestCommentsKeepSuggestedCode() {
         val forAi = comment(first, "para a IA", suggestion = "val a = 10")
         service.startPullRequestReview(12)

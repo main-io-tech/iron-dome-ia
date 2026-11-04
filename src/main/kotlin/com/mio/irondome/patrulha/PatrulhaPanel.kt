@@ -70,8 +70,9 @@ import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.DefaultTreeModel
 
 /**
- * Aba Patrulha: os PRs abertos no GitHub, os comentários do modo revisão ainda não enviados a cada um e os
- * pedidos de alteração já enviados, com o que as verificações dizem sobre eles.
+ * Aba Patrulha: os PRs abertos no GitHub, os comentários do modo revisão ainda não enviados a cada um, os
+ * pedidos de alteração já enviados, com o que as verificações dizem sobre eles, e as conversas de outras pessoas
+ * no PR, que dá para responder daqui.
  */
 class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, true), Disposable {
 
@@ -90,7 +91,16 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
 
     private class DraftItem(val number: Int, val comment: ReviewComment)
 
-    private class RequestItem(val number: Int, val request: ChangeRequest, val inEditor: Boolean)
+    /** [thread] é a conversa do pedido no GitHub, quando as conversas do PR já foram lidas. */
+    private class RequestItem(val number: Int, val request: ChangeRequest, val inEditor: Boolean, val thread: Discussion? = null)
+
+    /** As conversas do PR no GitHub que não são pedidos do `.md`: [discussions] nulo enquanto carrega ou se deu [error]. */
+    private class DiscussionsItem(val number: Int, val discussions: List<Discussion>?, val error: String?, val me: String?)
+
+    private class DiscussionItem(val number: Int, val discussion: Discussion, val mine: Boolean)
+
+    /** Resposta numa conversa, de [discussion]; também as respostas aos pedidos. */
+    private class ReplyItem(val number: Int, val discussion: Discussion, val comment: DiscussionComment, val mine: Boolean)
 
     /** A pasta dos arquivos alterados do PR: [files] nulo enquanto carrega ou se deu [error]. */
     private class FilesItem(val number: Int, val files: PullRequestFiles?, val error: String?)
@@ -128,6 +138,11 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
     private val expandedFiles = mutableSetOf<Int>()
     /** Pastas dos arquivos alterados que o usuário fechou, como `número:caminho`; as outras abrem sozinhas. */
     private val collapsedDirs = mutableSetOf<String>()
+
+    /** As conversas de cada PR no GitHub, lidas ao abrir o PR e relidas no Atualizar e depois de responder. */
+    private val discussions = mutableMapOf<Int, List<Discussion>>()
+    private val discussionsLoading = mutableSetOf<Int>()
+    private val discussionsErrors = mutableMapOf<Int, String>()
 
     private companion object {
         /** Quantos arquivos o aviso do stash lista antes do "e mais". */
@@ -209,6 +224,19 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
                     )
                 },
             ) { verdict(ReviewVerdict.REQUEST_CHANGES) },
+            action(
+                "Responder",
+                "Responde ao comentário selecionado no GitHub, seu ou de outra pessoa: na conversa da linha, ou citando o comentário na conversa do PR",
+                AllIcons.Actions.Back,
+                enabled = { replyTarget() != null && context != null },
+                tooltipFor = {
+                    when (replyTarget()?.first?.repliesInPlace) {
+                        null -> "Selecione uma conversa do PR, uma resposta ou um pedido publicado"
+                        true -> "Responde na conversa da linha no GitHub" + if (selectedPr()?.record?.pendingReviewNodeId != null) ", no seu rascunho de revisão" else ""
+                        false -> "O GitHub não tem respostas aqui: vai como comentário novo na conversa do PR, citando o selecionado"
+                    }
+                },
+            ) { replySelected() },
             action("Editar", "Edita o comentário selecionado: o não enviado no editor, ou o rascunho e o publicado também no GitHub", AllIcons.Actions.Edit,
                 enabled = { selectedNode()?.userObject.let { it is DraftItem || (it is RequestItem && !it.request.deleted) } }) { editSelected() },
             action("Excluir", "Exclui o comentário selecionado: o não enviado, o rascunho (também no GitHub) ou o publicado (no GitHub, se você quiser)", AllIcons.General.Remove,
@@ -299,6 +327,8 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
                 problem = error
                 needsToken = restricted
                 filesErrors.clear()
+                discussions.clear()
+                discussionsErrors.clear()
                 rebuild()
                 if (error == null) syncQuietly(prs.map { it.number })
             }
@@ -345,16 +375,28 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
     private fun rebuild() {
         val selected = selectedPr()?.number
         val selectedKey = selectedNode()?.userObject?.let(::keyOf)
-        val expanded = TreeUtil.collectExpandedUserObjects(tree).mapNotNull { (it as? PrItem)?.number }.toSet()
+        val expandedObjects = TreeUtil.collectExpandedUserObjects(tree)
+        val expanded = expandedObjects.mapNotNull { (it as? PrItem)?.number }.toSet()
+        val expandedConversations = expandedObjects.filter { it is DiscussionsItem || it is DiscussionItem || it is RequestItem }.mapNotNull(::keyOf).toSet()
         val items = items()
         val root = DefaultMutableTreeNode()
         val open = items.filter { it.pr != null }
         val closed = items.filter { it.pr == null }
+        val me = context?.account?.name
         fun addPr(parent: DefaultMutableTreeNode, item: PrItem) {
             val node = DefaultMutableTreeNode(item)
-            item.pr?.let { pr -> node.add(filesNode(item, pr)) }
+            val loaded = discussions[item.number]
+            item.pr?.let { pr ->
+                node.add(filesNode(item, pr))
+                node.add(discussionsNode(item, me))
+            }
             item.drafts.forEach { node.add(DefaultMutableTreeNode(DraftItem(item.number, it))) }
-            item.record?.requests?.forEach { node.add(DefaultMutableTreeNode(RequestItem(item.number, it, patrulha.isInEditor(item.number, it.id)))) }
+            item.record?.requests?.forEach { request ->
+                val thread = loaded?.let { Discussions.of(request, it) }
+                val child = DefaultMutableTreeNode(RequestItem(item.number, request, patrulha.isInEditor(item.number, request.id), thread))
+                thread?.replies?.forEach { child.add(DefaultMutableTreeNode(ReplyItem(item.number, thread, it, Discussions.isMine(it, me)))) }
+                node.add(child)
+            }
             parent.add(node)
         }
         if (open.isNotEmpty()) {
@@ -381,12 +423,16 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
                 expandFolders(node)
             }
         }
+        nodes.filter { keyOf(it.userObject) in expandedConversations }.forEach { tree.expandPath(TreeUtil.getPathFromRoot(it)) }
         val reselect = nodes.firstOrNull { selectedKey != null && keyOf(it.userObject) == selectedKey }
             ?: nodes.firstOrNull { (it.userObject as? PrItem)?.number == selected }
         reselect?.let { tree.selectionPath = TreeUtil.getPathFromRoot(it) }
         updateEmptyText()
         updateHeader(items)
-        items.firstOrNull { it.active }?.pr?.let(::ensureFiles)
+        items.firstOrNull { it.active }?.pr?.let {
+            ensureFiles(it)
+            ensureDiscussions(it)
+        }
     }
 
     /** Para a seleção sobreviver à árvore refeita. */
@@ -397,7 +443,86 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
         is FileItem -> "file:${item.number}:${item.file.path}"
         is DraftItem -> "draft:${item.number}:${item.comment.id}"
         is RequestItem -> "request:${item.number}:${item.request.id}"
+        is DiscussionsItem -> "discussions:${item.number}"
+        is DiscussionItem -> "discussion:${item.number}:${item.discussion.key}"
+        is ReplyItem -> "reply:${item.number}:${item.comment.id}"
         else -> null
+    }
+
+    /** As conversas do PR que não são pedidos do `.md`, cada uma com as respostas abaixo. */
+    private fun discussionsNode(item: PrItem, me: String?): DefaultMutableTreeNode {
+        val loaded = discussions[item.number]?.let { Discussions.others(it, item.record) }
+        val error = discussionsErrors[item.number]
+        val node = DefaultMutableTreeNode(DiscussionsItem(item.number, loaded, error, me))
+        if (loaded == null) {
+            node.add(DefaultMutableTreeNode(LoadingItem(error ?: "Lendo as conversas do GitHub…")))
+            return node
+        }
+        loaded.forEach { discussion ->
+            val child = DefaultMutableTreeNode(DiscussionItem(item.number, discussion, Discussions.isMine(discussion.first, me)))
+            discussion.replies.forEach { child.add(DefaultMutableTreeNode(ReplyItem(item.number, discussion, it, Discussions.isMine(it, me)))) }
+            node.add(child)
+        }
+        return node
+    }
+
+    /** Lê as conversas do PR no GitHub em segundo plano, uma vez até o próximo Atualizar ou resposta. */
+    private fun ensureDiscussions(pr: PullRequest, force: Boolean = false) {
+        val context = context?.takeIf { it.account != null } ?: return
+        if (!force && (pr.number in discussions || pr.number in discussionsErrors)) return
+        if (!discussionsLoading.add(pr.number)) return
+        object : Task.Backgroundable(project, "Patrulha: lendo as conversas do PR #${pr.number}", true) {
+            private var loaded: List<Discussion>? = null
+
+            override fun run(indicator: ProgressIndicator) {
+                loaded = patrulha.discussions(context, pr.number)
+            }
+
+            override fun onSuccess() {
+                loaded?.let { discussions[pr.number] = it }
+                discussionsErrors.remove(pr.number)
+            }
+
+            override fun onThrowable(error: Throwable) {
+                discussionsErrors[pr.number] = "Não foi possível ler as conversas: ${error.message ?: error.javaClass.simpleName}"
+            }
+
+            override fun onFinished() {
+                discussionsLoading.remove(pr.number)
+                rebuild()
+            }
+        }.queue()
+    }
+
+    /** A conversa a responder e o comentário a que a resposta se refere, pela seleção. */
+    private fun replyTarget(): Pair<Discussion, DiscussionComment>? = when (val item = selectedNode()?.userObject) {
+        is DiscussionItem -> item.discussion to item.discussion.first
+        is ReplyItem -> item.discussion to item.comment
+        is RequestItem -> item.thread?.takeUnless { item.request.deleted || item.request.pending }?.let { it to (it.replies.lastOrNull() ?: it.first) }
+        else -> null
+    }
+
+    private fun replySelected() {
+        val (discussion, to) = replyTarget() ?: return
+        val pr = selectedPr()?.pr ?: return
+        val context = context ?: return
+        val dialog = ReplyDialog(project, pr.number, discussion, to, draft = discussion.repliesInPlace && selectedPr()?.record?.pendingReviewNodeId != null)
+        if (!dialog.showAndGet()) return
+        val text = dialog.text
+        background("Respondendo a @${to.author} no PR #${pr.number}", { patrulha.reply(context, pr.number, discussion, to, text) }) { (posted, target) ->
+            notify(
+                "Resposta a @${to.author} no PR #${pr.number}",
+                when (target) {
+                    PatrulhaService.ReplyTarget.DRAFT -> "Está no seu rascunho de revisão: os outros veem quando você publicar o rascunho."
+                    PatrulhaService.ReplyTarget.PUBLISHED -> "Publicada no GitHub."
+                },
+                NotificationType.INFORMATION,
+                *listOfNotNull(
+                    posted.url.takeIf { it.isNotBlank() }?.let { url -> NotificationAction.createSimpleExpiring("Abrir no GitHub") { BrowserUtil.browse(url) } },
+                ).toTypedArray(),
+            )
+            ensureDiscussions(pr, force = true)
+        }
     }
 
     private fun filesNode(item: PrItem, pr: PullRequest): DefaultMutableTreeNode {
@@ -408,8 +533,10 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
             return node
         }
         val requests = item.record?.requests.orEmpty().filterNot { it.deleted }
+        val threads = discussions[pr.number]?.let { Discussions.others(it, item.record) }.orEmpty().filter { it.kind == DiscussionKind.THREAD }
         val comments = files.files.associate { file ->
-            file.path to item.drafts.count { it.filePath == file.path } + requests.count { it.path == file.path }
+            file.path to item.drafts.count { it.filePath == file.path } + requests.count { it.path == file.path } +
+                threads.count { it.path == file.path }
         }
         fun add(parent: DefaultMutableTreeNode, folder: FileFolder) {
             folder.folders.forEach { sub ->
@@ -719,7 +846,7 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
             if (added.isEmpty()) "A IA não apontou nada no PR #$number" else "${plural(added.size, "rascunho", "rascunhos")} da IA no PR #$number",
             listOfNotNull(
                 "Revise, edite ou remova cada um antes de Enviar ao GitHub.".takeIf { added.isNotEmpty() },
-                "$skipped ${if (skipped == 1) "comentário apontava" else "comentários apontavam"} para arquivos fora do projeto.".takeIf { skipped > 0 },
+                "$skipped ${if (skipped == 1) "comentário apontava" else "comentários apontavam"} para arquivos fora do projeto ou gerados pela revisão (${ReviewCommentService.REVIEW_DIR}/).".takeIf { skipped > 0 },
             ).joinToString(" ").ifEmpty { "Nenhum problema encontrado nos arquivos alterados." },
             NotificationType.INFORMATION,
         )
@@ -1074,17 +1201,27 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
                     is DraftItem -> navigate(item.comment.filePath, item.comment.startLine.takeIf { item.comment.target == CommentTarget.LINES })
                     is RequestItem -> navigate(item.request.path, (item.request.startLine - 1).takeIf { item.request.target == CommentTarget.LINES })
                     is FileItem -> openPrs.firstOrNull { it.number == item.number }?.let { showDiff(it, item.file.path) }
+                    is DiscussionItem -> if (!navigateTo(item.discussion)) return
+                    is ReplyItem -> if (!navigateTo(item.discussion)) return
                     else -> return
                 }
                 e.consume()
             }
         })
-        tree.addTreeSelectionListener { selectedPr()?.pr?.let(::ensureFiles) }
+        tree.addTreeSelectionListener {
+            selectedPr()?.pr?.let {
+                ensureFiles(it)
+                ensureDiscussions(it)
+            }
+        }
         tree.addTreeExpansionListener(object : TreeExpansionListener {
             override fun treeExpanded(event: TreeExpansionEvent) {
                 val node = event.path.lastPathComponent as? DefaultMutableTreeNode ?: return
                 when (val item = node.userObject) {
-                    is PrItem -> item.pr?.let(::ensureFiles)
+                    is PrItem -> item.pr?.let {
+                        ensureFiles(it)
+                        ensureDiscussions(it)
+                    }
                     is FilesItem -> {
                         expandedFiles += item.number
                         openPrs.firstOrNull { it.number == item.number }?.let(::ensureFiles)
@@ -1109,6 +1246,13 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
         OpenFileDescriptor(project, file, line?.coerceAtLeast(0) ?: 0, 0).navigate(true)
     }
 
+    /** Abre o código da conversa da linha; falso nas que não estão num arquivo. */
+    private fun navigateTo(discussion: Discussion): Boolean {
+        val path = discussion.path?.takeIf { discussion.kind == DiscussionKind.THREAD } ?: return false
+        navigate(path, discussion.line?.minus(1))
+        return true
+    }
+
     private fun selectedNode(): DefaultMutableTreeNode? = tree.selectionPath?.lastPathComponent as? DefaultMutableTreeNode
 
     /** O PR da linha selecionada, mesmo quando a seleção é um pedido ou rascunho dele. */
@@ -1123,6 +1267,8 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
 
     private fun selectedUrl(): String? = when (val item = selectedNode()?.userObject) {
         is RequestItem -> item.request.url
+        is DiscussionItem -> item.discussion.first.url.ifBlank { null } ?: selectedPr()?.pr?.url
+        is ReplyItem -> item.comment.url.ifBlank { null } ?: selectedPr()?.pr?.url
         is FilesItem, is DirItem, is FileItem -> selectedPr()?.pr?.url?.let { "$it/files" }
         else -> selectedPr()?.let { it.pr?.url ?: it.record?.url }
     }
@@ -1204,6 +1350,16 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
                     describeRequest(row, item.request)
                     if (item.request.target != CommentTarget.PACKAGE && !item.inEditor) row.pill("Oculto no editor", Tone.GRAY)
                 }
+                is DiscussionsItem -> describeDiscussions(row, item)
+                is DiscussionItem -> describeDiscussion(row, item)
+                is ReplyItem -> {
+                    row.icon(AllIcons.General.User)
+                    row.text(if (item.mine) "Você" else "@${item.comment.author}", SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
+                    row.text("respondeu em ${Discussions.formatDate(item.comment.createdAt)}", SimpleTextAttributes.GRAYED_ATTRIBUTES)
+                    if (item.comment.pending) row.pill("No seu rascunho", Tone.YELLOW, bold = true)
+                    row.detail(firstLine(item.comment.body))
+                    row.tooltip(item.comment.body.trim())
+                }
                 is FilesItem -> describeFiles(row, item)
                 is DirItem -> describeDir(row, item)
                 is FileItem -> describeFile(row, item)
@@ -1213,6 +1369,56 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
                 }
             }
         }
+
+        private fun describeDiscussions(row: Row, item: DiscussionsItem) {
+            row.icon(AllIcons.General.Balloon)
+            row.text("Conversas no PR", SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
+            val discussions = item.discussions ?: return
+            row.pill(discussions.size.toString(), Tone.GRAY)
+            val others = discussions.count { !Discussions.isMine(it.first, item.me) }
+            if (others > 0) row.pill(plural(others, "de outra pessoa", "de outras pessoas"), Tone.PURPLE)
+            val open = discussions.count { it.kind == DiscussionKind.THREAD && !it.resolved }
+            if (open > 0) row.pill(plural(open, "aberta", "abertas"), Tone.YELLOW)
+            val reviews = discussions.filter { it.kind == DiscussionKind.REVIEW }
+            reviews.count { it.reviewState == "APPROVED" }.takeIf { it > 0 }?.let { row.pill(plural(it, "aprovação", "aprovações"), Tone.GREEN) }
+            reviews.count { it.reviewState == "CHANGES_REQUESTED" }.takeIf { it > 0 }?.let { row.pill("$it pedindo alterações", Tone.RED) }
+            row.tooltip(
+                "Os comentários do PR no GitHub, seus e de outras pessoas, fora os seus pedidos (as respostas a eles aparecem abaixo de cada pedido). " +
+                    "Selecione um e use Responder; duplo clique abre a linha comentada.",
+            )
+        }
+
+        private fun describeDiscussion(row: Row, item: DiscussionItem) {
+            val discussion = item.discussion
+            val first = discussion.first
+            row.icon(
+                when {
+                    discussion.reviewState == "APPROVED" -> AllIcons.General.InspectionsOK
+                    discussion.reviewState == "CHANGES_REQUESTED" -> AllIcons.General.BalloonWarning
+                    discussion.resolved -> AllIcons.General.InspectionsOK
+                    else -> AllIcons.General.Balloon
+                },
+            )
+            row.text(if (item.mine) "Você" else "@${first.author}", SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
+            val where = when (discussion.kind) {
+                DiscussionKind.THREAD -> "${discussion.path.orEmpty()}, ${discussion.line?.let { "linha $it" } ?: "arquivo inteiro"}"
+                DiscussionKind.CONVERSATION -> "na conversa do PR"
+                DiscussionKind.REVIEW -> when (discussion.reviewState) {
+                    "APPROVED" -> "aprovou"
+                    "CHANGES_REQUESTED" -> "solicitou alterações"
+                    "DISMISSED" -> "revisão descartada"
+                    else -> "revisou"
+                }
+            }
+            row.text("$where · ${Discussions.formatDate(first.createdAt)}", SimpleTextAttributes.GRAYED_ATTRIBUTES)
+            if (discussion.resolved) row.pill("Resolvida", Tone.GREEN)
+            if (discussion.outdated) row.pill("Desatualizada", Tone.GRAY)
+            if (discussion.replies.isNotEmpty()) row.pill(plural(discussion.replies.size, "resposta", "respostas"), Tone.BLUE)
+            if (first.body.isNotBlank()) row.detail(firstLine(first.body))
+            row.tooltip(first.body.trim().ifEmpty { "Sem texto." })
+        }
+
+        private fun firstLine(text: String) = text.trim().lines().firstOrNull { it.isNotBlank() }.orEmpty().take(160)
 
         private fun describeFiles(row: Row, item: FilesItem) {
             row.icon(AllIcons.Actions.Diff)

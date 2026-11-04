@@ -1,5 +1,6 @@
 package com.mio.irondome.impacto
 
+import com.mio.irondome.patrulha.ChangedFile
 import com.mio.irondome.radar.CommentTarget
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -52,6 +53,35 @@ class ImpactAnalysisTest {
         assertTrue("- Pedido usa Frete" in text)
         assertTrue("- `Pedido` (`${pedido.filePath}`): modificada" in text)
         assertTrue("+val x = 1" in text)
+    }
+
+    @Test
+    fun theInstructionsBringCommentsOutsideTheDiagramAndTheReviewedPullRequest() {
+        val outside = ImpactComment("P2", CommentSource.PATRULHA, "src/main/kotlin/com/app/Cliente.kt", CommentTarget.LINES, 3, 3, "Validar o CPF")
+        val pullRequest = ReviewedPullRequest(
+            42,
+            listOf(
+                ChangedFile("src/main/kotlin/com/app/Leitor.kt", "added", "@@ -0,0 +1 @@\n+class Leitor", 1, 0),
+                ChangedFile(pedido.filePath, "modified", "@@ -1 +1 @@\n-val a = 1\n+val a = 2", 1, 1),
+            ),
+        )
+
+        val text = ImpactAnalysis.instructions(
+            graph,
+            ImpactComments.byClass(graph.nodes, listOf(radar, outside)),
+            emptyMap(),
+            "",
+            outside = listOf(radar, outside),
+            pullRequest = pullRequest,
+        )
+
+        assertTrue("O pull request #42 está em revisão" in text)
+        assertTrue("## Comentários pendentes em classes fora do diagrama (1)" in text)
+        assertTrue("### P2 · Patrulha · `src/main/kotlin/com/app/Cliente.kt`, linha 3" in text)
+        assertEquals("o comentário do diagrama não se repete fora dele", 1, Regex("### C1 ").findAll(text).count())
+        assertTrue("`com.app.Pedido` (alterada no PR #42)" in text)
+        assertTrue("- `${pedido.filePath}`: alterado, +1 −1, classe do diagrama" in text)
+        assertTrue("o diff das classes do diagrama vem primeiro", text.indexOf("+val a = 2") in 0 until text.indexOf("+class Leitor"))
     }
 
     @Test

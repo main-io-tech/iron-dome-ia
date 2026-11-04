@@ -12,6 +12,7 @@ import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.components.service
+import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.progress.ProgressIndicator
@@ -31,6 +32,7 @@ import com.intellij.pom.Navigatable
 import com.intellij.psi.JavaPsiFacade
 import com.intellij.psi.PsiDocumentManager
 import com.intellij.psi.PsiFile
+import com.intellij.psi.PsiManager
 import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.ui.JBColor
 import com.intellij.ui.OnePixelSplitter
@@ -51,6 +53,9 @@ import com.mio.irondome.interceptor.AgentRunner
 import com.mio.irondome.interceptor.AgentSettings
 import com.mio.irondome.interceptor.AgentTask
 import com.mio.irondome.interceptor.FireWithAiAction
+import com.mio.irondome.patrulha.PatrulhaService
+import com.mio.irondome.radar.CommentTarget
+import com.mio.irondome.radar.ReviewCommentService
 import com.mio.irondome.radar.ReviewCommentsListener
 import com.mio.irondome.sentinela.ChangeDiff
 import java.awt.BorderLayout
@@ -109,6 +114,8 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
     private var graph: DependencyGraph? = null
     private var changes: Map<String, UncommittedChange> = emptyMap()
     private var comments: Map<String, List<ImpactComment>> = emptyMap()
+    /** Os comentários pendentes do projeto inteiro, também os de classes fora do diagrama. */
+    private var pending: List<ImpactComment> = emptyList()
     /** A última análise de impacto pela IA; vale só enquanto o diagrama for o da mesma classe. */
     private var impact: ImpactReport? = null
     private var refreshQueued = false
@@ -143,14 +150,19 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
                 override fun getActionUpdateThread() = ActionUpdateThread.EDT
                 override fun update(e: AnActionEvent) {
                     val busy = AgentRunner.getInstance(project).running != null
-                    val sources = comments.isNotEmpty() || changes.isNotEmpty()
-                    e.presentation.isEnabled = graph != null && sources && !busy && AgentSettings.ready
+                    val reviewing = project.service<ReviewCommentService>().activePullRequest
+                    val sources = pending.isNotEmpty() || changes.isNotEmpty() || (graph != null && reviewing != 0)
+                    e.presentation.isEnabled = (graph != null || pending.isNotEmpty()) && sources && !busy && AgentSettings.ready
                     e.presentation.description = when {
-                        graph == null -> "Calcule o raio de impacto de uma classe primeiro"
-                        !sources -> "Nenhuma classe do diagrama tem comentários do Radar ou da Patrulha nem alterações sem commit"
+                        graph == null && pending.isEmpty() -> "Calcule o raio de impacto de uma classe primeiro"
+                        !sources -> "Nenhum comentário pendente do Radar, do Escudo ou da Patrulha, nem alterações sem commit ou PR em revisão"
                         !AgentSettings.ready -> FireWithAiAction.NOT_READY
-                        else -> "A IA (${AgentSettings.provider.title}) lê os comentários e as alterações das classes do diagrama, " +
-                            "sem alterar nada, e aponta quais classes eles afetam"
+                        graph == null || (comments.isEmpty() && changes.isEmpty() && pending.isNotEmpty()) ->
+                            "Mira a classe com comentários e a IA (${AgentSettings.provider.title}) aponta, sem alterar nada, quais classes " +
+                                "os comentários afetam se forem atendidos"
+                        else -> "A IA (${AgentSettings.provider.title}) lê os comentários, as alterações" +
+                            (if (reviewing != 0) " e o diff do PR #$reviewing" else "") +
+                            ", sem alterar nada, e aponta quais classes do diagrama eles afetam"
                     }
                 }
                 override fun actionPerformed(e: AnActionEvent) = analyzeImpact()
@@ -220,6 +232,8 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
             override fun changeListUpdateDone() = scheduleChangesRefresh()
         })
         connection.subscribe(ReviewCommentsListener.TOPIC, ReviewCommentsListener { scheduleCommentsRefresh() })
+        connection.subscribe(PatrulhaService.TOPIC, PatrulhaService.Listener { scheduleCommentsRefresh() })
+        scheduleCommentsRefresh()
         diagram.showMessage(
             "Escolha uma classe na aba Todas as classes, abaixo, clique em Mirar Classe Atual com ela aberta no editor, " +
                 "ou clique com o botão direito numa classe ou arquivo e use Iron Dome IA: Calcular Raio de Impacto.",
@@ -273,8 +287,8 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
         run("Calculando o raio de impacto de ${DependencyAnalyzer.simpleName(qualifiedName)}") { qualifiedName }
     }
 
-    /** Só o resultado da análise mais recente aparece; as anteriores são canceladas. */
-    private fun run(title: String, resolveFocus: () -> String?) {
+    /** Só o resultado da análise mais recente aparece; as anteriores são canceladas. [after] roda com o diagrama novo na tela. */
+    private fun run(title: String, after: (() -> Unit)? = null, resolveFocus: () -> String?) {
         running?.cancel()
         val generation = ++generations
         val selectedDepth = depth.item ?: 1
@@ -300,6 +314,7 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
                     return
                 }
                 show(result)
+                after?.invoke()
             }
 
             override fun onCancel() {
@@ -318,7 +333,8 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
         projectClasses.focus = graph.focus
         this.graph = graph
         changes = uncommitted(graph)
-        comments = ImpactComments.byClass(graph.nodes, ImpactComments.collect(project))
+        pending = ImpactComments.collect(project)
+        comments = ImpactComments.byClass(graph.nodes, pending)
         impact = impact?.takeIf { it.focus == graph.focus }
             ?.let { report -> report.copy(impacts = report.impacts.filter { item -> graph.nodes.any { it.qualifiedName == item.qualifiedName } }) }
         diagram.show(graph, changeKinds(), hasVcs(), comments, impact)
@@ -332,36 +348,80 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
         commentsQueued = true
         ApplicationManager.getApplication().invokeLater({
             commentsQueued = false
+            pending = ImpactComments.collect(project)
             val graph = graph ?: return@invokeLater
-            val next = ImpactComments.byClass(graph.nodes, ImpactComments.collect(project))
-            if (next == comments) return@invokeLater
-            comments = next
-            diagram.updateComments(comments)
+            val next = ImpactComments.byClass(graph.nodes, pending)
+            if (next != comments) {
+                comments = next
+                diagram.updateComments(comments)
+            }
             updateStatus()
         }, project.disposed)
     }
 
     /**
-     * Pede à IA, só para ler, as classes do diagrama afetadas pelos comentários pendentes e pelas alterações sem
-     * commit. O `git diff` das alterações vai junto, lido fora da EDT.
+     * Pede à IA, só para ler, as classes do diagrama afetadas pelos comentários pendentes (também os de classes
+     * fora do diagrama), pelas alterações sem commit e, com um PR em revisão, pelo diff dele. Sem diagrama, ou sem
+     * nenhum comentário nem alteração nele, mira antes a classe com mais comentários. O `git diff` e os arquivos
+     * do PR são lidos fora da EDT.
      */
-    private fun analyzeImpact() {
-        val graph = graph ?: return
+    private fun analyzeImpact(refocused: Boolean = false) {
+        val current = graph
+        if (!refocused && pending.isNotEmpty() && (current == null || (comments.isEmpty() && changes.isEmpty()))) {
+            val candidates = pending.filter { it.target != CommentTarget.PACKAGE && SOURCE_FILE.containsMatchIn(it.path) }
+                .groupBy { it.path }.values.sortedByDescending { it.size }.map { it.first() }
+            if (candidates.isNotEmpty()) {
+                run("Mirando a classe comentada", after = { analyzeImpact(refocused = true) }) { commentedClass(candidates) ?: current?.focus }
+                return
+            }
+        }
+        val graph = current ?: return
         val snapshot = comments
+        val outside = pending
         val kinds = changeKinds()
         val paths = changes.values.map { it.node.filePath }.filter { it.isNotEmpty() }.distinct()
         val root = project.rootDir()?.path ?: project.basePath ?: return
+        val reviewing = project.service<ReviewCommentService>().activePullRequest
         diagram.updateAnalyzing(true)
         ApplicationManager.getApplication().executeOnPooledThread {
             val diff = gitDiff(root, paths)
-            ApplicationManager.getApplication().invokeLater({ startImpact(graph, snapshot, kinds, diff) }, project.disposed)
+            val pullRequest = reviewing.takeIf { it != 0 }?.let { number ->
+                runCatching { PatrulhaService.getInstance(project).checkedOutFiles(number) }.getOrNull()
+                    ?.let { ReviewedPullRequest(number, it.files) }
+            }
+            ApplicationManager.getApplication().invokeLater({ startImpact(graph, snapshot, kinds, diff, outside, pullRequest) }, project.disposed)
         }
     }
 
-    private fun startImpact(graph: DependencyGraph, snapshot: Map<String, List<ImpactComment>>, kinds: Map<String, FileChange>, diff: String) {
+    /** A classe do primeiro comentário de [candidates] que está num arquivo Java ou Kotlin, na linha comentada. */
+    private fun commentedClass(candidates: List<ImpactComment>): String? {
+        val radar = project.service<ReviewCommentService>()
+        return ReadAction.nonBlocking(Callable {
+            candidates.firstNotNullOfOrNull { comment ->
+                val file = radar.findFile(comment.path)?.takeUnless { it.isDirectory } ?: return@firstNotNullOfOrNull null
+                val psi = PsiManager.getInstance(project).findFile(file) ?: return@firstNotNullOfOrNull null
+                val offset = FileDocumentManager.getInstance().getDocument(file)
+                    ?.takeIf { comment.target == CommentTarget.LINES && comment.startLine in 1..it.lineCount }
+                    ?.getLineStartOffset(comment.startLine - 1)
+                DependencyAnalyzer.classAt(psi, offset)
+            }
+        }).inSmartMode(project).executeSynchronously()
+    }
+
+    private fun startImpact(
+        graph: DependencyGraph,
+        snapshot: Map<String, List<ImpactComment>>,
+        kinds: Map<String, FileChange>,
+        diff: String,
+        outside: List<ImpactComment>,
+        pullRequest: ReviewedPullRequest?,
+    ) {
         val runner = AgentRunner.getInstance(project)
         val name = DependencyAnalyzer.simpleName(graph.focus)
-        val instructions = runner.writeInstructions(ImpactAnalysis.fileName(graph.focus), ImpactAnalysis.instructions(graph, snapshot, kinds, diff))
+        val instructions = runner.writeInstructions(
+            ImpactAnalysis.fileName(graph.focus),
+            ImpactAnalysis.instructions(graph, snapshot, kinds, diff, outside, pullRequest),
+        )
         if (instructions == null) {
             diagram.updateAnalyzing(false)
             return
@@ -409,6 +469,8 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
             append(" · ${graph.nodes.size} classes · ${graph.edges.size} ligações")
             if (changes.isNotEmpty()) append(" · ${changes.size} alterada(s) sem commit")
             if (comments.isNotEmpty()) append(" · ${comments.size} com comentário(s)")
+            val outside = pending.size - comments.values.flatten().distinct().size
+            if (outside > 0) append(" · $outside comentário(s) fora do diagrama")
             impact?.takeIf { it.focus == graph.focus }?.let { append(" · IA: ${it.impacts.size} impactada(s)") }
             if (graph.cycleCount > 0) append(" · ${graph.cycleCount} ciclo(s)")
             if (graph.truncated) append(" · limite de ${DependencyAnalyzer.MAX_NODES} classes atingido")
@@ -638,6 +700,7 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
         val TAB_TITLES = listOf("Classes no raio", "Todas as classes", "Manual de campo")
         const val BOTTOM_HIDDEN_KEY = "irondome.dependencies.bottomHidden"
         const val GIT_TIMEOUT_MS = 15_000
+        val SOURCE_FILE = Regex("""\.(kt|java)$""")
 
         /** 0 é verde (tranquilo), 1 amarelo e 2 vermelho (pede cuidado). */
         fun colorOf(level: Int): Color = when (level) {

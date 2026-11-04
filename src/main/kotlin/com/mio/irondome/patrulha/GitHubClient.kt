@@ -283,6 +283,63 @@ class GitHubClient(private val apiUrl: String, private val graphQlUrl: String, p
         }
     }
 
+    /** As conversas do PR de todas as pessoas: nas linhas, na conversa geral e nos textos das revisões. */
+    fun discussions(repo: GitHubRepo, number: Int): List<Discussion> {
+        val comment = "databaseId body createdAt url author { login }"
+        val query = """
+            query(${'$'}owner: String!, ${'$'}name: String!, ${'$'}number: Int!) {
+              repository(owner: ${'$'}owner, name: ${'$'}name) {
+                pullRequest(number: ${'$'}number) {
+                  reviewThreads(first: 100) {
+                    nodes { id path line originalLine isResolved isOutdated comments(first: 100) { nodes { $comment state } } }
+                  }
+                  comments(last: 100) { nodes { $comment } }
+                  reviews(last: 100) { nodes { $comment state submittedAt } }
+                }
+              }
+            }
+        """.trimIndent()
+        val variables = JsonObject().apply {
+            addProperty("owner", repo.owner)
+            addProperty("name", repo.name)
+            addProperty("number", number)
+        }
+        val pullRequest = graphQl(query, variables).getAsJsonObject("repository")?.getAsJsonObject("pullRequest") ?: return emptyList()
+        return Discussions.parse(pullRequest)
+    }
+
+    /** Responde na conversa [threadNodeId]; com [pendingReviewNodeId], a resposta entra no rascunho da revisão. */
+    fun replyToThread(threadNodeId: String, body: String, pendingReviewNodeId: String?): DiscussionComment {
+        val mutation = """
+            mutation(${'$'}input: AddPullRequestReviewThreadReplyInput!) {
+              addPullRequestReviewThreadReply(input: ${'$'}input) {
+                comment { databaseId body createdAt url author { login } state }
+              }
+            }
+        """.trimIndent()
+        val input = JsonObject().apply {
+            addProperty("pullRequestReviewThreadId", threadNodeId)
+            addProperty("body", body)
+            pendingReviewNodeId?.let { addProperty("pullRequestReviewId", it) }
+        }
+        val node = graphQl(mutation, JsonObject().apply { add("input", input) })
+            .getAsJsonObject("addPullRequestReviewThreadReply")?.getAsJsonObject("comment")
+            ?: throw GitHubException("O GitHub não devolveu a resposta.")
+        return Discussions.comment(node)
+    }
+
+    /** Comentário novo na conversa geral do PR. */
+    fun addConversationComment(repo: GitHubRepo, number: Int, body: String): DiscussionComment {
+        val json = request("POST", "${repoPath(repo)}/issues/$number/comments", JsonObject().apply { addProperty("body", body) }).asJsonObject
+        return DiscussionComment(
+            id = json.long("id"),
+            author = json.getAsJsonObject("user")?.optString("login") ?: "fantasma",
+            body = json.optString("body").orEmpty(),
+            createdAt = json.optString("created_at").orEmpty(),
+            url = json.optString("html_url").orEmpty(),
+        )
+    }
+
     /** O `data` da resposta; os erros do GraphQL viram exceção. */
     private fun graphQl(query: String, variables: JsonObject): JsonObject {
         val payload = JsonObject().apply {
