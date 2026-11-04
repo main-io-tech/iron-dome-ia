@@ -32,9 +32,9 @@ import com.intellij.openapi.vfs.newvfs.events.VFileEvent
 import com.intellij.ui.PopupHandler
 import com.intellij.ui.ScrollPaneFactory
 import com.intellij.ui.SimpleTextAttributes
-import com.intellij.ui.treeStructure.Tree
 import com.intellij.util.ui.tree.TreeUtil
 import com.mio.irondome.base.IronDomeIcons
+import com.mio.irondome.base.MechanismTree
 import com.mio.irondome.base.RichTreeCellRenderer
 import com.mio.irondome.base.Segment
 import com.mio.irondome.base.Stat
@@ -46,6 +46,7 @@ import com.intellij.ui.components.panels.VerticalLayout
 import com.mio.irondome.interceptor.AgentProgressPanel
 import com.mio.irondome.interceptor.AgentRunner
 import com.mio.irondome.interceptor.AgentTask
+import com.mio.irondome.radar.CommentMarkdown
 import com.mio.irondome.radar.CommentStatus
 import com.mio.irondome.radar.CommentTarget
 import com.mio.irondome.radar.ReviewComment
@@ -116,14 +117,11 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
     private val patrulha = PatrulhaService.getInstance(project)
     private val radar = project.service<ReviewCommentService>()
     private val model = DefaultTreeModel(DefaultMutableTreeNode())
-    private val tree = Tree(model).apply {
-        isRootVisible = false
-        showsRootHandles = true
-        rowHeight = 0
+    private val tree = MechanismTree(model, IronDomeIcons.patrulha, Tone.PURPLE).apply {
         cellRenderer = Renderer()
         emptyText.text = "Procurando o repositório no GitHub…"
     }
-    private val header = SummaryHeader(IronDomeIcons.patrulha)
+    private val header = SummaryHeader(IronDomeIcons.patrulha, Tone.PURPLE)
 
     private var context: RepoContext? = null
     private var openPrs: List<PullRequest> = emptyList()
@@ -1343,8 +1341,9 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
                     row.text(item.comment.id, SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
                     row.text("${item.comment.filePath}, ${where(item.comment)}", SimpleTextAttributes.GRAYED_ATTRIBUTES)
                     row.pill("Não enviado", CommentStatus.UNSAVED.tone, bold = true)
+                    CommentMarkdown.severity(item.comment.text)?.let { row.pill(it.label, it.tone, bold = true) }
                     if (item.comment.suggestion.isNotBlank()) row.pill("Com código sugerido", Tone.PURPLE)
-                    row.detail(item.comment.text.trim().lines().first().take(160))
+                    row.detail(summary(item.comment.text))
                 }
                 is RequestItem -> {
                     describeRequest(row, item.request)
@@ -1418,7 +1417,7 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
             row.tooltip(first.body.trim().ifEmpty { "Sem texto." })
         }
 
-        private fun firstLine(text: String) = text.trim().lines().firstOrNull { it.isNotBlank() }.orEmpty().take(160)
+        private fun firstLine(text: String) = CommentMarkdown.plain(text, 160)
 
         private fun describeFiles(row: Row, item: FilesItem) {
             row.icon(AllIcons.Actions.Diff)
@@ -1521,10 +1520,11 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
                 else SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES,
             )
             row.text("${request.path}, ${request.location}", SimpleTextAttributes.GRAYED_ATTRIBUTES)
+            CommentMarkdown.severity(request.text)?.let { row.pill(it.label, it.tone, bold = true) }
             when (request.remote) {
                 RemoteStatus.DELETED -> {
                     row.pill(request.remote.label, Tone.RED, bold = true)
-                    row.detail(request.text.lines().first().take(160))
+                    row.detail(summary(request.text))
                     row.tooltip("O revisor apagou este comentário no GitHub. Ele fica no .md como registro, fora das contas; use Excluir Pedido para tirá-lo.")
                     return
                 }
@@ -1533,15 +1533,18 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
             }
             if (request.pending) {
                 row.pill("Rascunho no GitHub", Tone.YELLOW, bold = true)
-                row.detail(request.text.lines().first().take(160))
+                row.detail(summary(request.text))
                 row.tooltip("Só você vê no GitHub até publicar. Editar e Excluir valem lá também.\n\n${request.text}")
                 return
             }
             row.pill("Código: ${request.code.label}", codeTone(request.code))
             row.pill("Conversa: ${request.thread.label}", threadTone(request.thread))
-            row.detail(request.text.lines().first().take(160))
+            row.detail(summary(request.text))
             row.tooltip(listOfNotNull(request.text, request.lastReply?.let { "Última resposta: $it" }).joinToString("\n\n"))
         }
+
+        /** A primeira frase sem a marcação do Markdown nem a gravidade, que já virou etiqueta. */
+        private fun summary(text: String) = CommentMarkdown.plain(text, 160)
 
         private fun where(comment: ReviewComment) = when (comment.target) {
             CommentTarget.LINES -> if (comment.startLine == comment.endLine) "linha ${comment.startLine + 1}" else "linhas ${comment.startLine + 1}–${comment.endLine + 1}"

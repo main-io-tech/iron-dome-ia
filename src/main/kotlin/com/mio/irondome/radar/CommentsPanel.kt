@@ -29,9 +29,9 @@ import com.intellij.openapi.vfs.newvfs.events.VFileEvent
 import com.intellij.ui.PopupHandler
 import com.intellij.ui.ScrollPaneFactory
 import com.intellij.ui.SimpleTextAttributes
-import com.intellij.ui.treeStructure.Tree
 import com.intellij.ui.components.panels.VerticalLayout
 import com.mio.irondome.base.IronDomeIcons
+import com.mio.irondome.base.MechanismTree
 import com.mio.irondome.base.ReviewToolWindowFactory
 import com.mio.irondome.base.RichTreeCellRenderer
 import com.mio.irondome.base.Segment
@@ -68,16 +68,13 @@ class CommentsPanel(private val project: Project) : SimpleToolWindowPanel(true, 
 
     private val service = project.service<ReviewCommentService>()
     private val model = DefaultTreeModel(DefaultMutableTreeNode())
-    private val tree = Tree(model).apply {
-        isRootVisible = false
-        showsRootHandles = true
-        rowHeight = 0
+    private val tree = MechanismTree(model, IronDomeIcons.radar, Tone.GREEN).apply {
         cellRenderer = Renderer()
         emptyText.text = "Céu limpo: nenhum alvo no radar"
         emptyText.appendSecondaryText("Clique no + da margem do editor para marcar um alvo", SimpleTextAttributes.GRAYED_ATTRIBUTES, null)
         emptyText.appendLine("ou clique com o botão direito num arquivo ou pacote", SimpleTextAttributes.GRAYED_ATTRIBUTES, null)
     }
-    private val header = SummaryHeader(IronDomeIcons.radar)
+    private val header = SummaryHeader(IronDomeIcons.radar, Tone.GREEN)
     private val knownKeys = mutableSetOf<String>()
     private var refreshQueued = false
     /** Do último [refresh], para a barra de ferramentas não ler o disco a cada atualização. */
@@ -603,8 +600,9 @@ class CommentsPanel(private val project: Project) : SimpleToolWindowPanel(true, 
                     if (item.origin != CommentOrigin.RADAR) row.pill("Marcado pelo ${item.origin.label}", Tone.GREEN)
                     if (item.discuss && !resolved) row.pill("Discutir antes", ReviewColors.discussTone)
                     if (resolved && !item.inEditor) row.pill("Oculto no editor", Tone.GRAY)
+                    CommentMarkdown.severity(item.text)?.let { row.pill(it.label, it.tone, bold = true) }
                     row.detail(
-                        summaryOf(item.text),
+                        CommentMarkdown.plain(item.text, SUMMARY_MAX),
                         when {
                             item.status == CommentStatus.REMOVING ->
                                 SimpleTextAttributes(SimpleTextAttributes.STYLE_STRIKEOUT, ReviewColors.mutedForeground)
@@ -615,11 +613,6 @@ class CommentsPanel(private val project: Project) : SimpleToolWindowPanel(true, 
                     row.tooltip(item.text)
                 }
             }
-        }
-
-        private fun summaryOf(text: String): String {
-            val first = text.lineSequence().firstOrNull { it.isNotBlank() }?.trim().orEmpty()
-            return if (first.length > SUMMARY_MAX) first.take(SUMMARY_MAX) + "…" else first
         }
 
         private companion object {

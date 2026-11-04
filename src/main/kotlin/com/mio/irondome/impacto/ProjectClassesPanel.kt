@@ -23,9 +23,11 @@ import com.intellij.ui.SearchTextField
 import com.intellij.ui.SimpleTextAttributes
 import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBLabel
-import com.intellij.ui.components.JBList
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
+import com.mio.irondome.base.IronDomeIcons
+import com.mio.irondome.base.MechanismList
+import com.mio.irondome.base.Tone
 import org.jetbrains.uast.UFile
 import org.jetbrains.uast.toUElement
 import java.awt.BorderLayout
@@ -38,6 +40,7 @@ import java.util.concurrent.Callable
 import javax.swing.JButton
 import javax.swing.JList
 import javax.swing.JPanel
+import javax.swing.Timer
 import javax.swing.event.DocumentEvent
 import javax.swing.event.DocumentListener
 
@@ -68,7 +71,7 @@ class ProjectClassesPanel(private val project: Project, private val onAnalyze: (
         }
 
     private val model = CollectionListModel<ProjectClass>()
-    private val list = JBList(model).apply {
+    private val list = MechanismList(model, IronDomeIcons.impacto, Tone.RED).apply {
         cellRenderer = Renderer()
         emptyText.text = "Nenhuma classe carregada"
         emptyText.appendSecondaryText("Carregar todas as classes", SimpleTextAttributes.LINK_PLAIN_ATTRIBUTES) { load() }
@@ -77,12 +80,14 @@ class ProjectClassesPanel(private val project: Project, private val onAnalyze: (
         toolTipText = "Lista as classes Java e Kotlin do projeto para analisar sem abrir o arquivo"
         addActionListener { load() }
     }
+    /** O filtro espera a digitação parar: refiltrar milhares de classes a cada tecla trava o campo. */
+    private val filterTimer = Timer(FILTER_DELAY_MS) { applyFilter() }.apply { isRepeats = false }
     private val search = SearchTextField(false).apply {
         textEditor.emptyText.text = "Filtrar por nome ou pacote"
         addDocumentListener(object : DocumentListener {
-            override fun insertUpdate(e: DocumentEvent) = applyFilter()
-            override fun removeUpdate(e: DocumentEvent) = applyFilter()
-            override fun changedUpdate(e: DocumentEvent) = applyFilter()
+            override fun insertUpdate(e: DocumentEvent) = filterTimer.restart()
+            override fun removeUpdate(e: DocumentEvent) = filterTimer.restart()
+            override fun changedUpdate(e: DocumentEvent) = filterTimer.restart()
         })
     }
     private val showTests = JBCheckBox("Mostrar classes de teste").apply { addActionListener { applyFilter() } }
@@ -103,7 +108,7 @@ class ProjectClassesPanel(private val project: Project, private val onAnalyze: (
         })
     }
 
-    override fun dispose() = Unit
+    override fun dispose() = filterTimer.stop()
 
     fun loadIfNeeded() {
         if (!loaded) load()
@@ -189,6 +194,7 @@ class ProjectClassesPanel(private val project: Project, private val onAnalyze: (
 
     companion object {
         private const val BATCH = 50
+        private const val FILTER_DELAY_MS = 150
 
         private fun iconOf(item: ProjectClass) = when {
             item.test -> AllIcons.Nodes.Test

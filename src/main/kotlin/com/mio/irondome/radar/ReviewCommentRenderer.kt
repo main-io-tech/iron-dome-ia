@@ -4,7 +4,6 @@ import com.intellij.icons.AllIcons
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.EditorCustomElementRenderer
 import com.intellij.openapi.editor.Inlay
-import com.intellij.openapi.editor.colors.EditorFontType
 import com.intellij.openapi.editor.markup.TextAttributes
 import com.intellij.util.ui.JBFont
 import com.intellij.util.ui.JBUI
@@ -61,9 +60,12 @@ class ReviewCommentRenderer(
     private val collapsed = resolved && !comment.expanded
     private val modeLabel: String? = if (comment.discuss && !resolved) DISCUSS_LABEL else null
     private val title = comment.id
-    private val body = comment.text.trim().lines()
+    /** A gravidade do início do texto vira etiqueta no cabeçalho e sai do corpo. */
+    private val severity: Severity? = CommentMarkdown.severity(comment.text)
+    private val blocks: List<Block> = CommentMarkdown.parse(if (severity != null) CommentMarkdown.withoutSeverity(comment.text) else comment.text)
+    private var layout: Pair<Int, CommentBody>? = null
     private val headerText =
-        if (collapsed) summaryOf(body)
+        if (collapsed) CommentMarkdown.plain(comment.text, SUMMARY_MAX)
         else if (card != null) card.subtitle
         else if (comment.pullRequest != 0) "Pedido para o PR #${comment.pullRequest}${if (comment.target == CommentTarget.FILE) " · arquivo inteiro" else ""}"
         else if (comment.origin == CommentOrigin.ESCUDO) "Alvo marcado pelo Escudo · ${ReviewCommentService.reviewName(comment.reviewId)}"
@@ -99,20 +101,34 @@ class ReviewCommentRenderer(
         val subtitle: Font = JBFont.label()
         val badge: Font = JBFont.small().asBold()
         val button: Font = JBFont.small().asBold()
-        val body: Font = JBFont.label()
-        val code: Font = editor.colorsScheme.getFont(EditorFontType.PLAIN)
+        val body = BodyFonts(editor)
+        val code: Font = body.code
         val titleMetrics: FontMetrics = component.getFontMetrics(title)
         val subtitleMetrics: FontMetrics = component.getFontMetrics(subtitle)
         val badgeMetrics: FontMetrics = component.getFontMetrics(badge)
         val buttonMetrics: FontMetrics = component.getFontMetrics(button)
-        val bodyMetrics: FontMetrics = component.getFontMetrics(body)
-        val codeMetrics: FontMetrics = component.getFontMetrics(code)
+        val codeMetrics: FontMetrics = body.codeMetrics
 
         val badgeHeight = badgeMetrics.height + JBUI.scale(2)
         val buttonHeight = buttonMetrics.height + JBUI.scale(4)
         val headerHeight = maxOf(ReviewIcons.comment.iconHeight, titleMetrics.height, badgeHeight, buttonHeight)
-        val bodyLineHeight = bodyMetrics.height + JBUI.scale(2)
-        val codeLineHeight = codeMetrics.height
+        val bodyLineHeight = body.lineHeight
+        val codeLineHeight = body.codeLineHeight
+    }
+
+    /** O corpo diagramado na largura que o editor dá, guardado enquanto essa largura não muda. */
+    private fun body(editor: Editor, fonts: Fonts): CommentBody {
+        val width = wrapWidth(editor)
+        layout?.takeIf { it.first == width }?.let { return it.second }
+        return CommentBody(blocks, fonts.body, width).also { layout = width to it }
+    }
+
+    /** Até onde o texto corre antes de quebrar: cabe na área visível, entre um mínimo legível e um máximo confortável. */
+    private fun wrapWidth(editor: Editor): Int {
+        val visible = editor.scrollingModel.visibleArea.width
+        if (visible <= 0) return JBUI.scale(640)
+        val available = visible - indentPx - accentWidth() - 2 * padding() - JBUI.scale(32)
+        return available.coerceIn(JBUI.scale(320), JBUI.scale(760))
     }
 
     private class Geometry(val card: Rectangle, val header: Rectangle, val headerCenter: Int, val buttons: List<Pair<Rectangle, Pair<String, Hit>>>)
@@ -122,12 +138,13 @@ class ReviewCommentRenderer(
         val header = (chevron?.let { it.iconWidth + gap() } ?: 0) +
             icon.iconWidth + gap() +
             fonts.titleMetrics.stringWidth(title) + gap() +
+            (severity?.let { badgeWidth(fonts, it.label) + gap() } ?: 0) +
             fonts.subtitleMetrics.stringWidth(headerText) + 2 * gap() +
             badgeWidth(fonts, statusLabel) +
             (modeLabel?.let { gap() + badgeWidth(fonts, it) } ?: 0) +
             (originLabel?.let { gap() + badgeWidth(fonts, it) } ?: 0) +
             (if (buttons.isNotEmpty()) gap() + buttons.sumOf { gap() + buttonWidth(fonts, it.first) } else 0)
-        val text = if (collapsed) 0 else body.maxOfOrNull { fonts.bodyMetrics.stringWidth(it) } ?: 0
+        val text = if (collapsed) 0 else body(inlay.editor, fonts).naturalWidth
         val code = suggestion.maxOfOrNull { fonts.codeMetrics.stringWidth(it.expandTabs()) }?.let { it + 2 * padding() } ?: 0
         return indentPx + accentWidth() + 2 * padding() + maxOf(header, text, code, JBUI.scale(320))
     }
@@ -136,7 +153,7 @@ class ReviewCommentRenderer(
         val fonts = Fonts(inlay.editor)
         if (collapsed) return 2 * margin() + 2 * verticalPadding() + fonts.headerHeight
         return 2 * margin() + 2 * padding() + fonts.headerHeight + 2 * separatorGap() + 1 +
-            body.size * fonts.bodyLineHeight + suggestionHeight(fonts)
+            body(inlay.editor, fonts).height + suggestionHeight(fonts)
     }
 
     private fun suggestionHeight(fonts: Fonts): Int =
@@ -202,6 +219,11 @@ class ReviewCommentRenderer(
             g2.drawString(title, cursor, baselineFor(headerCenter, fonts.titleMetrics))
             cursor += fonts.titleMetrics.stringWidth(title) + gap()
 
+            severity?.let {
+                paintBadge(g2, fonts, cursor, headerCenter, it.label, it.tone.background, it.tone.foreground)
+                cursor += badgeWidth(fonts, it.label) + gap()
+            }
+
             g2.font = fonts.subtitle
             g2.color = ReviewColors.mutedForeground
             g2.drawString(headerText, cursor, baselineFor(headerCenter, fonts.subtitleMetrics))
@@ -229,20 +251,20 @@ class ReviewCommentRenderer(
             g2.color = ReviewColors.cardBorder
             g2.drawLine(x + accentWidth(), separatorY, x + width, separatorY)
 
-            g2.font = fonts.body
             val removing = status == CommentStatus.REMOVING
-            g2.color = if (removing) ReviewColors.mutedForeground else editor.colorsScheme.defaultForeground
-            var lineTop = separatorY + 1 + separatorGap()
-            for (line in body) {
-                val baseline = lineTop + (fonts.bodyLineHeight - fonts.bodyMetrics.height) / 2 + fonts.bodyMetrics.ascent
-                g2.drawString(line, left, baseline)
-                if (removing && line.isNotEmpty()) {
-                    val strikeY = baseline - fonts.bodyMetrics.ascent / 3
-                    g2.drawLine(left, strikeY, left + fonts.bodyMetrics.stringWidth(line), strikeY)
-                }
-                lineTop += fonts.bodyLineHeight
-            }
-            if (suggestion.isNotEmpty()) paintSuggestion(g2, fonts, editor, left, lineTop + separatorGap(), x + width - padding() - left)
+            val palette = BodyPalette(
+                foreground = if (removing) ReviewColors.mutedForeground else editor.colorsScheme.defaultForeground,
+                muted = ReviewColors.mutedForeground,
+                label = if (removing) ReviewColors.mutedForeground else severity?.tone?.foreground ?: badgeForeground,
+                bullet = if (removing) ReviewColors.mutedForeground else accent,
+                codeBackground = ReviewColors.codeBackground,
+                border = ReviewColors.cardBorder,
+                strikeout = removing,
+            )
+            val body = body(editor, fonts)
+            val lineTop = separatorY + 1 + separatorGap()
+            body.paint(g2, left, lineTop, x + width - padding() - left, palette)
+            if (suggestion.isNotEmpty()) paintSuggestion(g2, fonts, editor, left, lineTop + body.height + separatorGap(), x + width - padding() - left)
         } finally {
             g2.dispose()
         }
@@ -354,11 +376,5 @@ class ReviewCommentRenderer(
         const val SUGGESTION_LABEL = "Código sugerido (substitui as linhas comentadas):"
         const val EXAMPLE_LABEL = "Código de exemplo:"
         const val SUMMARY_MAX = 80
-
-        fun summaryOf(body: List<String>): String {
-            val first = body.firstOrNull { it.isNotBlank() }?.trim().orEmpty()
-            val more = first.length > SUMMARY_MAX || body.count { it.isNotBlank() } > 1
-            return first.take(SUMMARY_MAX) + if (more) "…" else ""
-        }
     }
 }

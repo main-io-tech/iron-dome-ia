@@ -60,14 +60,27 @@ class DiagramBrowser(parent: Disposable, private val onMessage: (String) -> Unit
         impact: ImpactReport? = null,
     ) {
         val browser = browser ?: return
-        val html = template
-            .replace("/*IRON_DOME_THEME_CSS*/", theme().entries.joinToString(" ") { (key, value) -> "--$key: $value;" })
-            .replace("/*IRON_DOME_THEME_JSON*/", Json.obj(theme()))
-            .replace("/*IRON_DOME_BRIDGE*/", query!!.inject("message"))
-            .replace("/*IRON_DOME_DATA*/", Json.safeForScript(toJson(graph, changes, vcs, comments, impact)))
-            .replace("/*IRON_DOME_G6*/", g6)
-        browser.loadHTML(html)
+        // O tema e as preferências são lidos na EDT; a montagem da página, com a biblioteca de 1,4 MB
+        // embutida, acontece fora dela, e só a carga volta para a EDT.
+        val theme = theme()
+        val bridge = query!!.inject("message")
+        val data = toJson(graph, changes, vcs, comments, impact)
+        val generation = ++loads
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val html = template
+                .replace("/*IRON_DOME_THEME_CSS*/", theme.entries.joinToString(" ") { (key, value) -> "--$key: $value;" })
+                .replace("/*IRON_DOME_THEME_JSON*/", Json.obj(theme))
+                .replace("/*IRON_DOME_BRIDGE*/", bridge)
+                .replace("/*IRON_DOME_DATA*/", Json.safeForScript(data))
+                .replace("/*IRON_DOME_G6*/", g6)
+            ApplicationManager.getApplication().invokeLater {
+                if (generation == loads && !browser.isDisposed) browser.loadHTML(html)
+            }
+        }
     }
+
+    /** Só a última página pedida é carregada, quando duas análises terminam em sequência. */
+    private var loads = 0
 
     fun updateComments(comments: Map<String, List<ImpactComment>>) {
         val cef = browser?.cefBrowser ?: return
@@ -136,6 +149,7 @@ class DiagramBrowser(parent: Disposable, private val onMessage: (String) -> Unit
     fun showMessage(text: String) {
         val theme = theme()
         val accent = theme["accent"]
+        loads++
         browser?.loadHTML(
             """
             <html><head><style>
@@ -147,11 +161,12 @@ class DiagramBrowser(parent: Disposable, private val onMessage: (String) -> Unit
                 border: 1px solid ${accent}55; box-shadow: 0 0 40px ${accent}22 inset; }
               .radar::before, .radar::after { content: ''; position: absolute; border-radius: 50%; border: 1px dashed ${accent}44; }
               .radar::before { inset: 25px; } .radar::after { inset: 52px; }
-              .sweep { position: absolute; inset: 0; border-radius: 50%; animation: spin 4s linear infinite;
+              /* Poucas voltas e para: animação sem fim mantém o navegador embutido repintando a aba o tempo todo. */
+              .sweep { position: absolute; inset: 0; border-radius: 50%; animation: spin 4s linear 4;
                 background: conic-gradient(from 0deg, transparent 0deg 280deg, ${accent}66 360deg); }
               .core { position: absolute; left: 50%; top: 50%; width: 12px; height: 12px; margin: -6px; border-radius: 50%;
                 background: $accent; box-shadow: 0 0 12px $accent; }
-              .blip { position: absolute; width: 7px; height: 7px; border-radius: 50%; animation: blink 4s infinite; }
+              .blip { position: absolute; width: 7px; height: 7px; border-radius: 50%; animation: blink 4s 4; opacity: .5; }
               .text { max-width: 440px; line-height: 1.6; }
               .title { color: ${theme["fg"]}; font-size: 15px; font-weight: 600; margin-bottom: 4px; }
               @keyframes spin { to { transform: rotate(360deg); } }

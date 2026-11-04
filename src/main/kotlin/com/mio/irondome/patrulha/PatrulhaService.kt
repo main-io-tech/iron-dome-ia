@@ -71,6 +71,8 @@ class PatrulhaService(private val project: Project) : PersistentStateComponent<P
     private var state = PatrulhaState()
 
     private val filesCache = ConcurrentHashMap<Int, PullRequestFiles>()
+    /** O registro de cada PR já interpretado, com a data e o tamanho do `.md` de onde veio. */
+    private val recordCache = ConcurrentHashMap<Int, Pair<Pair<Long, Long>, PullRequestRecord>>()
 
     /** Os arquivos já lidos do PR, se ainda valem para o head [headSha]. */
     fun cachedFiles(number: Int, headSha: String): PullRequestFiles? = filesCache[number]?.takeIf { it.headSha == headSha }
@@ -705,9 +707,18 @@ class PatrulhaService(private val project: Project) : PersistentStateComponent<P
         }.sortedByDescending { it.number }
     }
 
-    fun record(number: Int): PullRequestRecord? =
-        recordFile(number)?.takeIf(Files::exists)?.let { runCatching { ChangeRequestMarkdown.parse(Files.readString(it)) }.getOrNull() }
-
+    /**
+     * O registro do PR, lido do `.md` só quando o arquivo mudou: as abas pedem o registro a cada atualização,
+     * várias vezes na EDT, e ler e interpretar o arquivo toda vez trava a interface.
+     */
+    fun record(number: Int): PullRequestRecord? {
+        val file = recordFile(number)?.takeIf(Files::exists) ?: return null.also { recordCache.remove(number) }
+        val stamp = runCatching { Files.getLastModifiedTime(file).toMillis() to Files.size(file) }.getOrNull()
+        recordCache[number]?.takeIf { stamp != null && it.first == stamp }?.let { return it.second }
+        val record = runCatching { ChangeRequestMarkdown.parse(Files.readString(file)) }.getOrNull() ?: return null
+        if (stamp != null) recordCache[number] = stamp to record
+        return record
+    }
     fun recordFile(number: Int): Path? = recordsDir()?.resolve(PullRequestRecord.fileName(number))
 
     fun recordsDir(): Path? = project.basePath?.let { Path.of(it, ReviewCommentService.REVIEW_DIR, PullRequestRecord.DIR) }
@@ -716,6 +727,7 @@ class PatrulhaService(private val project: Project) : PersistentStateComponent<P
         val file = recordFile(record.number) ?: throw PatrulhaException("O projeto não tem pasta no disco.")
         Files.createDirectories(file.parent)
         Files.writeString(file, ChangeRequestMarkdown.render(record))
+        recordCache.remove(record.number)
         LocalFileSystem.getInstance().refreshNioFiles(listOf(file), true, false, null)
         project.messageBus.syncPublisher(TOPIC).recordsChanged()
         if (isHistoryShown(record.number)) {

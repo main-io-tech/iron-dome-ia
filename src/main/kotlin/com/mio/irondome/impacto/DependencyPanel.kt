@@ -10,6 +10,7 @@ import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.components.service
 import com.intellij.openapi.fileEditor.FileDocumentManager
@@ -37,16 +38,24 @@ import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.ui.JBColor
 import com.intellij.ui.OnePixelSplitter
 import com.intellij.ui.SimpleListCellRenderer
+import com.intellij.ui.SimpleTextAttributes
 import com.intellij.ui.components.ActionLink
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTabbedPane
 import com.intellij.ui.components.panels.VerticalLayout
 import com.intellij.ui.table.JBTable
+import com.intellij.util.concurrency.AppExecutorUtil
 import com.intellij.util.ui.HTMLEditorKitBuilder
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
+import com.intellij.util.ui.update.MergingUpdateQueue
+import com.intellij.util.ui.update.Update
 import com.mio.irondome.base.IronDomeIcons
+import com.mio.irondome.base.Segment
+import com.mio.irondome.base.Stat
+import com.mio.irondome.base.SummaryHeader
+import com.mio.irondome.base.Tone
 import com.mio.irondome.base.rootDir
 import com.mio.irondome.interceptor.AgentProgressPanel
 import com.mio.irondome.interceptor.AgentRunner
@@ -94,10 +103,10 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
         renderer = SimpleListCellRenderer.create("") { it.label }
         toolTipText = "Mostrar quem depende da classe, de quem ela depende, ou os dois"
     }
-    private val status = JBLabel().apply {
-        foreground = UIUtil.getContextHelpForeground()
-        border = JBUI.Borders.emptyLeft(8)
-    }
+    private val header = SummaryHeader(IronDomeIcons.impacto, Tone.RED)
+    /** Um aviso passageiro no cabeçalho, como "Varrendo as dependências…" ou uma falha. */
+    private var message: String? = null
+    private var messageColor: Color? = null
     private val classModel = ClassTableModel()
     private val classTable = table(classModel)
     private val tabs = JBTabbedPane()
@@ -118,8 +127,8 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
     private var pending: List<ImpactComment> = emptyList()
     /** A última análise de impacto pela IA; vale só enquanto o diagrama for o da mesma classe. */
     private var impact: ImpactReport? = null
-    private var refreshQueued = false
-    private var commentsQueued = false
+    /** Eventos de VCS e de comentários chegam em rajada enquanto se digita: só a última atualização de cada tipo roda. */
+    private val refreshQueue = MergingUpdateQueue("IronDome.Impacto", REFRESH_DELAY_MS, true, this, this)
     @Volatile
     private var running: ProgressIndicator? = null
     @Volatile
@@ -201,7 +210,6 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
             add(depth)
             add(JBLabel("Direção"))
             add(direction)
-            add(status)
         }
         listOf(depth, direction).forEach { combo -> combo.addActionListener { focus?.let(::analyze) } }
 
@@ -219,9 +227,11 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
             secondComponent = bottomPanel
         }
         add(JPanel(VerticalLayout(0)).apply {
+            add(header)
             add(controls)
             add(AgentProgressPanel(project, DependencyTab.TITLE, this@DependencyPanel))
         }, BorderLayout.NORTH)
+        updateStatus()
         add(splitter, BorderLayout.CENTER)
         add(minimizedBar, BorderLayout.SOUTH)
         setBottomVisible(!PropertiesComponent.getInstance().getBoolean(BOTTOM_HIDDEN_KEY))
@@ -271,7 +281,7 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
         val editor = FileEditorManager.getInstance(project).selectedTextEditor
         val file = editor?.let { PsiDocumentManager.getInstance(project).getPsiFile(it.document) }
         if (editor == null || file == null) {
-            status.text = "Abra uma classe Java ou Kotlin no editor."
+            status("Abra uma classe Java ou Kotlin no editor.", Tone.YELLOW.accent)
             return
         }
         analyzeAt(file, editor.caretModel.offset)
@@ -293,7 +303,7 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
         val generation = ++generations
         val selectedDepth = depth.item ?: 1
         val selectedDirection = direction.item ?: Direction.BOTH
-        status.text = "Varrendo as dependências…"
+        status("Varrendo as dependências…", Tone.BLUE.accent)
         object : Task.Backgroundable(project, title, true) {
             private var graph: DependencyGraph? = null
             private var target: String? = null
@@ -310,7 +320,7 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
                 if (generation != generations) return
                 val result = graph
                 if (result == null) {
-                    status.text = if (target == null) "Nenhuma classe Java ou Kotlin na posição do cursor." else "Classe não encontrada no projeto."
+                    status(if (target == null) "Nenhuma classe Java ou Kotlin na posição do cursor." else "Classe não encontrada no projeto.", Tone.YELLOW.accent)
                     return
                 }
                 show(result)
@@ -318,12 +328,12 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
             }
 
             override fun onCancel() {
-                if (generation == generations) status.text = "Análise cancelada."
+                if (generation == generations) status("Análise cancelada.", Tone.GRAY.accent)
             }
 
             override fun onThrowable(error: Throwable) {
                 if (error is ProcessCanceledException || generation != generations) return
-                status.text = "Falha na análise: ${error.message ?: error.javaClass.simpleName}"
+                status("Falha na análise: ${error.message ?: error.javaClass.simpleName}", Tone.RED.accent)
             }
         }.queue()
     }
@@ -339,24 +349,25 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
             ?.let { report -> report.copy(impacts = report.impacts.filter { item -> graph.nodes.any { it.qualifiedName == item.qualifiedName } }) }
         diagram.show(graph, changeKinds(), hasVcs(), comments, impact)
         classModel.update(graph.nodes, changeKinds())
+        message = null
         updateStatus()
     }
 
     /** Os comentários do Radar e da Patrulha mudaram: atualiza as marcas sem refazer a análise. */
     private fun scheduleCommentsRefresh() {
-        if (commentsQueued) return
-        commentsQueued = true
-        ApplicationManager.getApplication().invokeLater({
-            commentsQueued = false
+        refreshQueue.queue(Update.create("comments") {
+            if (project.isDisposed) return@create
             pending = ImpactComments.collect(project)
-            val graph = graph ?: return@invokeLater
-            val next = ImpactComments.byClass(graph.nodes, pending)
-            if (next != comments) {
-                comments = next
-                diagram.updateComments(comments)
+            val graph = graph
+            if (graph != null) {
+                val next = ImpactComments.byClass(graph.nodes, pending)
+                if (next != comments) {
+                    comments = next
+                    diagram.updateComments(comments)
+                }
             }
             updateStatus()
-        }, project.disposed)
+        })
     }
 
     /**
@@ -383,13 +394,21 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
         val root = project.rootDir()?.path ?: project.basePath ?: return
         val reviewing = project.service<ReviewCommentService>().activePullRequest
         diagram.updateAnalyzing(true)
+        val runner = AgentRunner.getInstance(project)
         ApplicationManager.getApplication().executeOnPooledThread {
             val diff = gitDiff(root, paths)
             val pullRequest = reviewing.takeIf { it != 0 }?.let { number ->
                 runCatching { PatrulhaService.getInstance(project).checkedOutFiles(number) }.getOrNull()
                     ?.let { ReviewedPullRequest(number, it.files) }
             }
-            ApplicationManager.getApplication().invokeLater({ startImpact(graph, snapshot, kinds, diff, outside, pullRequest) }, project.disposed)
+            // As instruções (com o diff e os patches do PR) são montadas e gravadas aqui, fora da EDT.
+            val instructions = runCatching {
+                runner.writeInstructions(
+                    ImpactAnalysis.fileName(graph.focus),
+                    ImpactAnalysis.instructions(graph, snapshot, kinds, diff, outside, pullRequest),
+                )
+            }.getOrNull()
+            ApplicationManager.getApplication().invokeLater({ startImpact(graph, instructions) }, project.disposed)
         }
     }
 
@@ -408,22 +427,13 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
         }).inSmartMode(project).executeSynchronously()
     }
 
-    private fun startImpact(
-        graph: DependencyGraph,
-        snapshot: Map<String, List<ImpactComment>>,
-        kinds: Map<String, FileChange>,
-        diff: String,
-        outside: List<ImpactComment>,
-        pullRequest: ReviewedPullRequest?,
-    ) {
+    /** [instructions] é o caminho do arquivo já gravado com o pedido; nulo quando o projeto não tem pasta no disco. */
+    private fun startImpact(graph: DependencyGraph, instructions: String?) {
         val runner = AgentRunner.getInstance(project)
         val name = DependencyAnalyzer.simpleName(graph.focus)
-        val instructions = runner.writeInstructions(
-            ImpactAnalysis.fileName(graph.focus),
-            ImpactAnalysis.instructions(graph, snapshot, kinds, diff, outside, pullRequest),
-        )
         if (instructions == null) {
             diagram.updateAnalyzing(false)
+            status("Não foi possível gravar as instruções para a IA na pasta do projeto.", Tone.RED.accent)
             return
         }
         val task = AgentTask(
@@ -437,7 +447,7 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
             if (!result.ok) return@run
             val report = ImpactAnalysis.parse(result.answer, graph)
             if (report == null) {
-                status.text = "A IA não devolveu o JSON pedido: veja a resposta na notificação."
+                status("A IA não devolveu o JSON pedido: veja a resposta na notificação.", Tone.YELLOW.accent)
                 return@run
             }
             impact = report
@@ -459,22 +469,50 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
         }.getOrDefault("")
     }
 
+    private fun status(text: String?, color: Color? = null) {
+        message = text
+        messageColor = color
+        updateStatus()
+    }
+
+    /** O cabeçalho: antes da análise, o convite; depois, a classe mirada, o risco dela e os números do raio. */
     private fun updateStatus() {
-        val graph = graph ?: return
-        status.text = buildString {
-            append(DependencyAnalyzer.simpleName(graph.focus))
-            graph.nodes.firstOrNull { it.qualifiedName == graph.focus }?.let { node ->
-                append(" · risco ao alterar ${node.risk.label.lowercase()} · testes: ${node.tests.coverage.label.lowercase()}")
-            }
-            append(" · ${graph.nodes.size} classes · ${graph.edges.size} ligações")
-            if (changes.isNotEmpty()) append(" · ${changes.size} alterada(s) sem commit")
-            if (comments.isNotEmpty()) append(" · ${comments.size} com comentário(s)")
-            val outside = pending.size - comments.values.flatten().distinct().size
-            if (outside > 0) append(" · $outside comentário(s) fora do diagrama")
-            impact?.takeIf { it.focus == graph.focus }?.let { append(" · IA: ${it.impacts.size} impactada(s)") }
-            if (graph.cycleCount > 0) append(" · ${graph.cycleCount} ciclo(s)")
-            if (graph.truncated) append(" · limite de ${DependencyAnalyzer.MAX_NODES} classes atingido")
+        val graph = graph
+        if (graph == null) {
+            header.update(
+                "Raio de Impacto",
+                messageColor,
+                message ?: "Mire uma classe para ver quem depende dela, de quem ela depende, o risco de alterá-la e os testes que a cobrem.",
+                stats = listOf(Stat(pending.size, if (pending.size == 1) "comentário pendente no projeto" else "comentários pendentes no projeto", Tone.PURPLE)),
+            )
+            return
         }
+        val node = graph.nodes.firstOrNull { it.qualifiedName == graph.focus }
+        val outside = pending.size - comments.values.flatten().distinct().size
+        val impacted = impact?.takeIf { it.focus == graph.focus }?.impacts?.size ?: 0
+        val subtitle = listOfNotNull(
+            message,
+            node?.let { "Risco ao alterar ${it.risk.label.lowercase()} · testes: ${it.tests.coverage.label.lowercase()}" },
+            "${graph.depth} ${if (graph.depth == 1) "nível" else "níveis"} · ${graph.direction.label.lowercase()}",
+            graph.focus.substringBeforeLast('.', "").takeIf { it.isNotEmpty() },
+        ).joinToString(" · ")
+        val risks = graph.nodes.groupingBy { it.risk.ordinal }.eachCount()
+        header.update(
+            DependencyAnalyzer.simpleName(graph.focus),
+            messageColor ?: node?.let { colorOf(it.risk.ordinal) },
+            subtitle,
+            stats = listOf(
+                Stat(graph.nodes.size, "classes no raio", Tone.BLUE),
+                Stat(graph.edges.size, if (graph.edges.size == 1) "ligação" else "ligações", Tone.GRAY),
+                Stat(changes.size, if (changes.size == 1) "alterada sem commit" else "alteradas sem commit", Tone.ORANGE),
+                Stat(comments.size, if (comments.size == 1) "com comentário" else "com comentários", Tone.PURPLE),
+                Stat(outside, if (outside == 1) "comentário fora do raio" else "comentários fora do raio", Tone.GRAY),
+                Stat(impacted, if (impacted == 1) "impactada pela IA" else "impactadas pela IA", Tone.PINK),
+                Stat(graph.cycleCount, if (graph.cycleCount == 1) "ciclo" else "ciclos", Tone.RED),
+            ),
+            bar = (0..2).map { level -> Segment(risks[level] ?: 0, colorOf(level)) },
+            warning = if (graph.truncated) "O raio parou em ${DependencyAnalyzer.MAX_NODES} classes: reduza a profundidade ou mude a direção para ver tudo." else null,
+        )
     }
 
     private fun hasVcs() = ProjectLevelVcsManager.getInstance(project).hasActiveVcss()
@@ -487,18 +525,16 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
 
     /** Acompanha a aba Alterações: commits, edições e reverts atualizam as marcas sem refazer a análise. */
     private fun scheduleChangesRefresh() {
-        if (refreshQueued) return
-        refreshQueued = true
-        ApplicationManager.getApplication().invokeLater({
-            refreshQueued = false
-            val graph = graph ?: return@invokeLater
+        refreshQueue.queue(Update.create("changes") {
+            val graph = graph ?: return@create
+            if (project.isDisposed) return@create
             val previous = changeKinds()
             changes = uncommitted(graph)
-            if (changeKinds() == previous) return@invokeLater
+            if (changeKinds() == previous) return@create
             diagram.updateChanges(changeKinds(), hasVcs())
             classModel.updateChanges(changeKinds())
             updateStatus()
-        }, project.disposed)
+        })
     }
 
     /** O diff passa pelas classes alteradas do diagrama, a partir da clicada. */
@@ -535,12 +571,16 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
         }
     }
 
+    /** Resolve a classe fora da EDT (em Kotlin isso pode parsear o arquivo) e navega quando pronto. */
     private fun open(qualifiedName: String) {
-        val target = ReadAction.compute<Navigatable?, RuntimeException> {
+        ReadAction.nonBlocking(Callable {
             JavaPsiFacade.getInstance(project).findClass(qualifiedName, GlobalSearchScope.projectScope(project))
                 ?.navigationElement as? Navigatable
-        }
-        target?.takeIf { it.canNavigate() }?.navigate(true)
+        })
+            .inSmartMode(project)
+            .expireWith(this)
+            .finishOnUiThread(ModalityState.defaultModalityState()) { target -> target?.takeIf { it.canNavigate() }?.navigate(true) }
+            .submit(AppExecutorUtil.getAppExecutorService())
     }
 
     private fun installTableNavigation() {
@@ -559,6 +599,8 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
     }
 
     private fun table(model: ClassTableModel) = JBTable(model).apply {
+        emptyText.text = "Nenhuma classe no raio ainda"
+        emptyText.appendSecondaryText("Mire uma classe para preencher esta tabela", SimpleTextAttributes.GRAYED_ATTRIBUTES, null)
         autoCreateRowSorter = true
         setSelectionMode(ListSelectionModel.SINGLE_SELECTION)
         setShowGrid(false)
@@ -700,6 +742,7 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
         val TAB_TITLES = listOf("Classes no raio", "Todas as classes", "Manual de campo")
         const val BOTTOM_HIDDEN_KEY = "irondome.dependencies.bottomHidden"
         const val GIT_TIMEOUT_MS = 15_000
+        const val REFRESH_DELAY_MS = 300
         val SOURCE_FILE = Regex("""\.(kt|java)$""")
 
         /** 0 é verde (tranquilo), 1 amarelo e 2 vermelho (pede cuidado). */

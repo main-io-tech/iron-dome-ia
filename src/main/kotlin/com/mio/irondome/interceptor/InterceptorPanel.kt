@@ -20,7 +20,6 @@ import com.intellij.ui.SimpleTextAttributes
 import com.intellij.ui.TitledSeparator
 import com.intellij.ui.components.ActionLink
 import com.intellij.ui.components.JBLabel
-import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBPasswordField
 import com.intellij.ui.components.JBTextField
 import com.intellij.ui.components.panels.VerticalLayout
@@ -28,6 +27,7 @@ import com.intellij.util.ui.FormBuilder
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
 import com.mio.irondome.base.IronDomeIcons
+import com.mio.irondome.base.MechanismList
 import com.mio.irondome.base.ReviewToolWindowFactory
 import com.mio.irondome.base.SummaryHeader
 import com.mio.irondome.base.Tone
@@ -67,7 +67,7 @@ class InterceptorPanel(private val project: Project) : SimpleToolWindowPanel(tru
     private class Run(val path: Path, val title: String, val status: String, val ok: Boolean)
 
     private val runner = AgentRunner.getInstance(project)
-    private val header = SummaryHeader(IronDomeIcons.interceptador)
+    private val header = SummaryHeader(IronDomeIcons.interceptador, Tone.TEAL)
     private val provider = ComboBox(AgentProvider.entries.toTypedArray()).apply {
         renderer = SimpleListCellRenderer.create("") { "${it.title} CLI (${it.executables.first()})" }
         addActionListener { updateProviderFields() }
@@ -111,7 +111,7 @@ class InterceptorPanel(private val project: Project) : SimpleToolWindowPanel(tru
     private var autoFailure: String? = null
     private val features = JBLabel()
     private val runsModel = DefaultListModel<Run>()
-    private val runs = JBList(runsModel).apply {
+    private val runs = MechanismList(runsModel, IronDomeIcons.ia, Tone.TEAL).apply {
         cellRenderer = RunRenderer()
         emptyText.text = "Nenhuma execução da IA neste projeto ainda"
         visibleRowCount = 8

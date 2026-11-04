@@ -16,9 +16,13 @@
   #graph.ready { opacity: 1; }
   #radar { position: absolute; left: 0; top: 0; width: 0; height: 0; pointer-events: none; opacity: 0; transition: opacity .7s ease; }
   #rings.ready, #radar.ready { opacity: 1; }
-  #sweep { position: absolute; border-radius: 50%; animation: spin 9s linear infinite; }
-  .pulse { position: absolute; border-radius: 50%; border: 2px solid var(--accent); animation: ping 3s cubic-bezier(.2, .6, .3, 1) infinite; }
+  /* A varredura e os pulsos rodam por um tempo e param: animação contínua numa área grande custa caro ao
+     navegador embutido, que repinta a aba inteira a cada quadro. Reorganizar os anéis liga de novo. */
+  #sweep { position: absolute; border-radius: 50%; animation: spin 9s linear 2; transition: opacity 1.2s ease; }
+  .pulse { position: absolute; border-radius: 50%; border: 2px solid var(--accent); animation: ping 3s cubic-bezier(.2, .6, .3, 1) 5; opacity: 0; }
   .pulse.late { animation-delay: 1.5s; }
+  #radar.calm #sweep { opacity: 0; animation: none; }
+  #radar.calm .pulse { animation: none; }
   @keyframes spin { to { transform: rotate(360deg); } }
   @keyframes ping { 0% { transform: scale(.6); opacity: .8; } 100% { transform: scale(1.6); opacity: 0; } }
   @keyframes rise { from { opacity: 0; transform: translateY(6px); } }
@@ -845,7 +849,7 @@
   function redrawMarks() {
     graph.updateNodeData(DATA.nodes.map(n => ({ id: n.id, data: nodeMarks(n.id) })));
     graph.updateEdgeData(DATA.edges.map((e, i) => ({ id: 'e' + i, data: { impact: impactEdge(e) } })));
-    graph.draw().then(applyStates);
+    graph.draw({ animation: false }).then(applyStates);
     renderSummary();
     renderImpact();
     if (infoId && document.getElementById('info').style.display === 'block') showInfo(infoId);
@@ -1099,15 +1103,27 @@
     changes = next; vcs = nextVcs;
     graph.updateNodeData(DATA.nodes.map(n => ({ id: n.id, data: nodeMarks(n.id) })));
     graph.updateEdgeData(DATA.edges.map((e, i) => ({ id: 'e' + i, data: { impact: impactEdge(e) } })));
-    graph.draw().then(applyStates);
+    graph.draw({ animation: false }).then(applyStates);
     applyChanges();
   }
   window.ironDome = { select, setChanges, setComments, setImpact, setAnalyzing };
+
+  /** A varredura termina as voltas e some; os pulsos param sozinhos. Reorganizar liga tudo de novo. */
+  sweep.addEventListener('animationend', () => radar.classList.add('calm'));
+  function restartRadar() {
+    radar.classList.remove('calm');
+    [sweep, ...radar.querySelectorAll('.pulse')].forEach(el => {
+      el.style.animation = 'none';
+      void el.offsetWidth;
+      el.style.animation = '';
+    });
+  }
 
   /** Entrada: as classes saem do centro do radar e se espalham até os anéis. Se a animação não terminar, elas vão direto para o lugar. */
   async function enter() {
     const final = Object.fromEntries([...layout.positions].map(([id, p]) => [id, [p.x, p.y]]));
     center = { x: 0, y: 0 };
+    restartRadar();
     if (REDUCED_MOTION) { await graph.translateElementTo(final, false); drawRings(); return; }
     await graph.translateElementTo(Object.fromEntries(Object.keys(final).map(id => [id, [0, 0]])), false);
     followViewport(900);

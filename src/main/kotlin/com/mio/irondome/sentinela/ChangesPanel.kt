@@ -33,9 +33,9 @@ import com.intellij.ui.PopupHandler
 import com.intellij.ui.ScrollPaneFactory
 import com.intellij.ui.SearchTextField
 import com.intellij.ui.SimpleTextAttributes
-import com.intellij.ui.treeStructure.Tree
 import com.intellij.util.ui.JBUI
 import com.mio.irondome.base.IronDomeIcons
+import com.mio.irondome.base.MechanismTree
 import com.mio.irondome.base.RichTreeCellRenderer
 import com.mio.irondome.base.Segment
 import com.mio.irondome.base.Stat
@@ -120,14 +120,11 @@ class ChangesPanel(private val project: Project) : SimpleToolWindowPanel(true, t
 
     private val service = project.service<ReviewCommentService>()
     private val model = DefaultTreeModel(DefaultMutableTreeNode())
-    private val tree = Tree(model).apply {
-        isRootVisible = false
-        showsRootHandles = true
-        rowHeight = 0
+    private val tree = MechanismTree(model, IronDomeIcons.sentinela, Tone.YELLOW).apply {
         cellRenderer = Renderer()
         emptyText.text = PERIMETER_CLEAR
     }
-    private val header = SummaryHeader(IronDomeIcons.sentinela)
+    private val header = SummaryHeader(IronDomeIcons.sentinela, Tone.YELLOW)
     private val diff = project.service<ChangeDiff>()
     private val knownGroups = mutableSetOf<String>()
     private var refreshQueued = false

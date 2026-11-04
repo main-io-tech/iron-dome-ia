@@ -63,12 +63,38 @@ class AgentProgress(val task: AgentTask, val provider: AgentProvider, val inTerm
     var detail: String = ""
         internal set
 
+    /** Quantas ações (leituras, buscas, edições, comandos) a IA já fez. */
+    @Volatile
+    var actions: Int = 0
+        internal set
+
+    /** Quantos arquivos a IA escreveu ou editou até agora. */
+    @Volatile
+    var filesTouched: Int = 0
+        internal set
+
+    /** Os últimos passos antes do atual, do mais recente para o mais antigo, para a trilha na barra. */
+    @Volatile
+    var trail: List<String> = emptyList()
+        private set
+
     @Volatile
     var cancelled = false
         private set
 
+    /** Registra uma ação: o passo atual vai para a trilha e [step] passa a ser [what]. */
+    internal fun advance(what: String) {
+        trail = (listOf(step) + trail).filter { it != what }.take(TRAIL_SIZE)
+        step = what
+        actions++
+    }
+
     fun cancel() {
         cancelled = true
+    }
+
+    private companion object {
+        const val TRAIL_SIZE = 3
     }
 }
 
@@ -276,8 +302,9 @@ class AgentRunner(private val project: Project) {
                         is AgentEvent.Tool -> if (event.started) {
                             val what = listOfNotNull(TOOL_LABELS[event.kind] ?: event.kind, event.path).joinToString(" ")
                             tools += what
-                            state.step = what
+                            state.advance(what)
                             if (event.kind in WRITE_TOOLS) event.path?.let(files::add)
+                            state.filesTouched = files.size
                         }
                         is AgentEvent.Result -> {
                             answer = event.text

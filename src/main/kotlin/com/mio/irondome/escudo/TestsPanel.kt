@@ -39,12 +39,12 @@ import com.intellij.ui.OnePixelSplitter
 import com.intellij.ui.PopupHandler
 import com.intellij.ui.ScrollPaneFactory
 import com.intellij.ui.SimpleTextAttributes
-import com.intellij.ui.treeStructure.Tree
 import com.intellij.util.Alarm
 import com.intellij.util.ui.HTMLEditorKitBuilder
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
 import com.mio.irondome.base.IronDomeIcons
+import com.mio.irondome.base.MechanismTree
 import com.mio.irondome.base.RichTreeCellRenderer
 import com.mio.irondome.base.Segment
 import com.mio.irondome.base.Stat
@@ -78,14 +78,11 @@ import javax.swing.tree.TreePath
 class TestsPanel(private val project: Project) : SimpleToolWindowPanel(true, true), Disposable {
 
     private val model = DefaultTreeModel(DefaultMutableTreeNode())
-    private val tree = Tree(model).apply {
-        isRootVisible = false
-        showsRootHandles = true
-        rowHeight = 0
+    private val tree = MechanismTree(model, IronDomeIcons.escudo, Tone.GREEN).apply {
         cellRenderer = Renderer { grouping != TestGrouping.TAG }
         emptyText.text = IDLE
     }
-    private val header = SummaryHeader(IronDomeIcons.escudo)
+    private val header = SummaryHeader(IronDomeIcons.escudo, Tone.GREEN)
     private val details = JEditorPane().apply {
         editorKit = HTMLEditorKitBuilder().withWordWrapViewFactory().build()
         isEditable = false
