@@ -27,8 +27,6 @@ import java.awt.geom.RoundRectangle2D
 import javax.swing.Icon
 import javax.swing.JComponent
 import javax.swing.JPanel
-import javax.swing.SwingConstants
-
 /** Um número do cabeçalho; com [count] zero, o indicador não aparece. */
 class Stat(val count: Int, val label: String, val tone: Tone)
 
@@ -37,23 +35,20 @@ class Stat(val count: Int, val label: String, val tone: Tone)
  * uma linha de contexto, os indicadores de cada estado, a barra com a proporção entre eles e, se houver,
  * um aviso. O fundo ganha um leve degradê na cor do estado e a linha de baixo acompanha essa cor.
  *
- * Minimizado (o padrão), cabe numa linha: ícone, título e indicadores, com o contexto e o aviso no tooltip. A
- * seta do canto alterna, e a escolha vale para as abas de todos os mecanismos.
+ * Minimizado, cabe numa linha: ícone, título e indicadores, com o contexto e o aviso no tooltip. A seta do canto
+ * alterna, e a escolha vale para as abas de todos os mecanismos; o padrão é o cabeçalho completo.
  */
 class SummaryHeader(icon: Icon, private val tone: Tone = Tone.GRAY) : JPanel(BorderLayout()) {
 
     private val tile = IconTile(icon, tone)
     private val smallTile = IconTile(icon, tone, scale = 1f, size = 22)
     private val dot = StatusDot()
-    private val title = JBLabel()
-    private val subtitle = JBLabel().apply {
-        font = JBFont.small()
-        foreground = UIUtil.getContextHelpForeground()
-    }
+    private val title = WrapText(font = JBFont.h4())
+    private val subtitle = WrapText(font = JBFont.small(), color = UIUtil.getContextHelpForeground())
     private val chips = JPanel(WrapLayout(FlowLayout.LEFT, JBUI.scale(6), JBUI.scale(4))).apply { isOpaque = false }
     private val barSlot = JPanel(BorderLayout()).apply {
         isOpaque = false
-        border = JBUI.Borders.emptyTop(2)
+        border = JBUI.Borders.emptyTop(4)
     }
     private val banner = NoticeBox(AllIcons.General.Warning, Tone.YELLOW).apply { isVisible = false }
     private val warningIcon = JBLabel(AllIcons.General.Warning).apply { isVisible = false }
@@ -115,16 +110,21 @@ class SummaryHeader(icon: Icon, private val tone: Tone = Tone.GRAY) : JPanel(Bor
             add(toggle, BorderLayout.NORTH)
         }
         if (expanded) {
-            border = JBUI.Borders.empty(8, 12, 8, 6)
+            border = JBUI.Borders.empty(12, 14, 10, 8)
             title.font = JBFont.h4()
-            val titleLine = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
+            // Título e contexto quebram na largura do painel; o ponto acompanha a primeira linha do título.
+            val titleLine = JPanel(BorderLayout(JBUI.scale(6), 0)).apply {
                 isOpaque = false
-                add(dot)
-                add(title)
+                add(JPanel(BorderLayout()).apply {
+                    isOpaque = false
+                    border = JBUI.Borders.emptyTop(JBUI.scale(4))
+                    add(dot, BorderLayout.NORTH)
+                }, BorderLayout.WEST)
+                add(title, BorderLayout.CENTER)
             }
-            val body = JPanel(VerticalLayout(JBUI.scale(4), VerticalLayout.FILL)).apply {
+            val body = JPanel(VerticalLayout(JBUI.scale(5), VerticalLayout.FILL)).apply {
                 isOpaque = false
-                add(JPanel(VerticalLayout(JBUI.scale(2), SwingConstants.LEFT)).apply {
+                add(JPanel(VerticalLayout(JBUI.scale(2), VerticalLayout.FILL)).apply {
                     isOpaque = false
                     add(titleLine)
                     add(subtitle)
@@ -135,7 +135,7 @@ class SummaryHeader(icon: Icon, private val tone: Tone = Tone.GRAY) : JPanel(Bor
             }
             add(JPanel(BorderLayout()).apply {
                 isOpaque = false
-                border = JBUI.Borders.emptyRight(10)
+                border = JBUI.Borders.emptyRight(12)
                 add(tile, BorderLayout.NORTH)
             }, BorderLayout.WEST)
             add(body, BorderLayout.CENTER)
@@ -174,9 +174,9 @@ class SummaryHeader(icon: Icon, private val tone: Tone = Tone.GRAY) : JPanel(Bor
 
         /** Os cabeçalhos completos, com o contexto, a barra e o aviso; vale para todas as abas abertas. */
         var expanded: Boolean
-            get() = PropertiesComponent.getInstance().getBoolean(EXPANDED_KEY, false)
+            get() = PropertiesComponent.getInstance().getBoolean(EXPANDED_KEY, true)
             set(value) {
-                PropertiesComponent.getInstance().setValue(EXPANDED_KEY, value, false)
+                PropertiesComponent.getInstance().setValue(EXPANDED_KEY, value, true)
                 headers.toList().forEach(SummaryHeader::relayout)
             }
     }

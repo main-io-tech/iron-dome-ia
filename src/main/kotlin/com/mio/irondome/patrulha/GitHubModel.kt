@@ -45,6 +45,9 @@ data class PullRequest(
     val updatedAt: String,
     val draft: Boolean,
     val baseSha: String = "",
+    val createdAt: String = "",
+    /** Dono do repositório da branch do PR: outro que o do repositório quando o PR vem de um fork. */
+    val headOwner: String = "",
 )
 
 /**

@@ -50,10 +50,32 @@ data class Discussion(
     val repliesInPlace: Boolean get() = kind == DiscussionKind.THREAD
 }
 
+/**
+ * Alguém que comentou no PR: [comments] conta os comentários com texto, em conversas, respostas e revisões;
+ * [verdict] é o da última revisão dele com veredito, `APPROVED` ou `CHANGES_REQUESTED`.
+ */
+data class Participant(val login: String, val comments: Int, val verdict: String?)
+
 object Discussions {
 
     private val DATE = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm")
     private const val QUOTE_MAX = 600
+    private val VERDICTS = setOf("APPROVED", "CHANGES_REQUESTED", "DISMISSED")
+
+    /** Quem comentou ou deu veredito no PR, de quem mais comentou para quem menos. Rascunhos não contam. */
+    fun participants(discussions: List<Discussion>): List<Participant> {
+        val counts = discussions.flatMap { it.comments }
+            .filter { !it.pending && it.body.isNotBlank() }
+            .groupingBy { it.author }
+            .eachCount()
+        val verdicts = discussions
+            .filter { it.kind == DiscussionKind.REVIEW && it.reviewState in VERDICTS }
+            .groupBy { it.first.author }
+            .mapValues { (_, reviews) -> reviews.maxBy { it.first.createdAt }.reviewState.takeUnless { it == "DISMISSED" } }
+        return (counts.keys + verdicts.keys)
+            .map { Participant(it, counts[it] ?: 0, verdicts[it]) }
+            .sortedWith(compareByDescending<Participant> { it.comments }.thenBy { it.login.lowercase() })
+    }
 
     /**
      * As conversas do `pullRequest` da consulta do [GitHubClient.discussions], as de atividade mais recente

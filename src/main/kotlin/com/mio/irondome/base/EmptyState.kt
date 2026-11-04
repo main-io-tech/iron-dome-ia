@@ -6,13 +6,17 @@ import com.intellij.util.IconUtil
 import com.intellij.util.ui.GraphicsUtil
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.StatusText
+import com.intellij.util.ui.tree.TreeUtil
 import java.awt.Color
 import java.awt.Graphics
 import java.awt.Graphics2D
 import java.awt.geom.RoundRectangle2D
 import javax.swing.Icon
 import javax.swing.JComponent
+import javax.swing.JViewport
 import javax.swing.ListModel
+import javax.swing.SwingUtilities
+import javax.swing.plaf.basic.BasicTreeUI
 import javax.swing.tree.TreeModel
 
 /**
@@ -56,15 +60,40 @@ internal object EmptyState {
 /** Árvore de uma aba: linhas com a altura do conteúdo e o estado vazio com o ícone do mecanismo. */
 open class MechanismTree(model: TreeModel, private val icon: Icon, private val tone: Tone) : Tree(model) {
 
+    private var lastWidth = -1
+
     init {
         isRootVisible = false
         showsRootHandles = true
         rowHeight = 0
     }
 
+    /** A largura que a linha de [depth] tem para o conteúdo, descontado o recuo dos níveis. */
+    fun rowWidth(depth: Int): Int {
+        val visible = (parent as? JViewport)?.width ?: width
+        val ui = ui as? BasicTreeUI
+        val indent = ui?.let { it.leftChildIndent + it.rightChildIndent } ?: JBUI.scale(20)
+        return visible - indent * depth - JBUI.scale(ROW_MARGIN)
+    }
+
+    override fun getScrollableTracksViewportWidth() = true
+
+    /** As linhas quebram conforme a largura: mudou a largura, a altura de cada linha precisa ser medida de novo. */
+    override fun setBounds(x: Int, y: Int, width: Int, height: Int) {
+        super.setBounds(x, y, width, height)
+        if (width != lastWidth) {
+            lastWidth = width
+            SwingUtilities.invokeLater { TreeUtil.invalidateCacheAndRepaint(getUI()) }
+        }
+    }
+
     override fun paintComponent(g: Graphics) {
         super.paintComponent(g)
         if (isEmpty) EmptyState.paint(this, emptyText, icon, tone, g)
+    }
+
+    private companion object {
+        const val ROW_MARGIN = 10
     }
 }
 

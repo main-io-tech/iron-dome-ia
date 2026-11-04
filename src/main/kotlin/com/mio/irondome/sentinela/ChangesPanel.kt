@@ -45,6 +45,7 @@ import com.mio.irondome.base.Tone
 import com.mio.irondome.base.plural
 import com.mio.irondome.base.refreshAction
 import com.mio.irondome.base.rootPath
+import com.mio.irondome.base.wrapping
 import com.mio.irondome.radar.CommentStatus
 import com.mio.irondome.radar.ReviewCommentService
 import com.mio.irondome.radar.ReviewCommentsListener
@@ -196,7 +197,7 @@ class ChangesPanel(private val project: Project) : SimpleToolWindowPanel(true, t
                 refreshAction { VcsDirtyScopeManager.getInstance(project).markEverythingDirty() },
             ),
             true,
-        ).apply { targetComponent = tree }.component
+        ).apply { targetComponent = tree }.wrapping().component
         installNavigation()
 
         val connection = project.messageBus.connect(this)

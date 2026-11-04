@@ -51,6 +51,7 @@ import com.mio.irondome.base.Stat
 import com.mio.irondome.base.SummaryHeader
 import com.mio.irondome.base.Tone
 import com.mio.irondome.base.plural
+import com.mio.irondome.base.wrapping
 import com.intellij.ui.components.panels.VerticalLayout
 import com.mio.irondome.interceptor.AgentProgressPanel
 import com.mio.irondome.interceptor.AgentRunner
@@ -191,7 +192,7 @@ class TestsPanel(private val project: Project) : SimpleToolWindowPanel(true, tru
                 openAction,
             ),
             true,
-        ).apply { targetComponent = tree }.component
+        ).apply { targetComponent = tree }.wrapping().component
 
         val splitter = OnePixelSplitter(true, "IronDome.TestsSplitter", 0.65f).apply {
             firstComponent = ScrollPaneFactory.createScrollPane(tree, true)

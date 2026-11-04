@@ -26,12 +26,14 @@ import com.mio.irondome.base.ReviewToolWindowFactory
 import com.mio.irondome.base.TabFailures
 import com.mio.irondome.base.rootPath
 import com.mio.irondome.interceptor.AgentRunner
+import java.awt.KeyboardFocusManager
 import java.awt.image.BufferedImage
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.time.format.DateTimeFormatter
 import javax.imageio.ImageIO
+import javax.swing.SwingUtilities
 
 /** O ambiente do bug, lido na EDT na hora de abrir o formulário. */
 internal class BugContext(val activeTab: Mechanism?, val entries: List<Pair<String, String>>) {
@@ -41,7 +43,13 @@ internal class BugContext(val activeTab: Mechanism?, val entries: List<Pair<Stri
 
         fun collect(project: Project): BugContext {
             val toolWindow = ToolWindowManager.getInstance(project).getToolWindow(ReviewToolWindowFactory.ID)
-            val tab = toolWindow?.takeIf { it.isVisible }?.contentManager?.selectedContent?.displayName
+            // Com o painel dividido, cada lado tem uma aba selecionada: vale a do lado com o foco.
+            val tab = toolWindow?.takeIf { it.isVisible }?.let { window ->
+                val selected = ReviewToolWindowFactory.contents(window).filter { it.isSelected }
+                val focus = KeyboardFocusManager.getCurrentKeyboardFocusManager().focusOwner
+                (selected.firstOrNull { focus != null && SwingUtilities.isDescendingFrom(focus, it.component) } ?: selected.firstOrNull())
+                    ?.displayName
+            }
             val editor = FileEditorManager.getInstance(project).selectedTextEditor
             val file = editor?.let { FileDocumentManager.getInstance().getFile(it.document) }
             val openFile = if (editor != null && file != null) {

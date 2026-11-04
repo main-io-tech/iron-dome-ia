@@ -44,6 +44,7 @@ import com.mio.irondome.base.plural
 import com.mio.irondome.defesa.ClassDossier
 import com.mio.irondome.defesa.ReviewFeedback
 import com.mio.irondome.base.refreshAction
+import com.mio.irondome.base.wrapping
 import com.intellij.ui.components.panels.VerticalLayout
 import com.mio.irondome.interceptor.AgentProgressPanel
 import com.mio.irondome.interceptor.AgentRunner
@@ -91,6 +92,15 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
     )
 
     private class Section(val title: String, val icon: Icon, val count: Int)
+
+    /** Quem abriu o PR e quando. */
+    private class AuthorItem(val number: Int, val pr: PullRequest, val mine: Boolean)
+
+    /** De qual branch o PR vem e para qual vai; [fork] é o dono do fork, quando não é o repositório. */
+    private class BranchItem(val number: Int, val pr: PullRequest, val fork: String?)
+
+    /** Quem comentou no PR: [participants] nulo enquanto as conversas carregam ou se deu [error]. */
+    private class ParticipantsItem(val number: Int, val author: String, val participants: List<Participant>?, val error: String?, val me: String?)
 
     private class DraftItem(val number: Int, val comment: ReviewComment)
 
@@ -194,36 +204,13 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
             action("Enviar ao GitHub", "Envia os comentários não enviados deste PR, como rascunho que só você vê ou publicados. Escolha quais enviar, quais deixar para depois e quais excluir", AllIcons.Actions.Upload,
                 enabled = { selectedPr()?.let { it.pr != null && it.drafts.isNotEmpty() } == true }) { send() },
             action(
-                "Publicar Rascunho",
-                "Publica no GitHub o rascunho da revisão deste PR: o autor passa a ver os comentários",
+                "Concluir Revisão",
+                "Publica a revisão do PR no GitHub com o veredito: aprovar, solicitar alterações ou só comentar",
                 AllIcons.Actions.Commit,
-                enabled = { selectedPr()?.record?.pendingReviewId != null && context != null },
-                text = { selectedPr()?.record?.drafts?.size?.takeIf { it > 0 }?.let { "Publicar Rascunho ($it)" } ?: "Publicar Rascunho" },
-            ) { publishDraft() },
-            action(
-                "Aprovar PR",
-                "Aprova o PR no GitHub",
-                AllIcons.General.InspectionsOK,
-                enabled = { selectedPr()?.pr?.let { context != null && !isOwn(it) } == true },
-                tooltipFor = {
-                    verdictDescription(
-                        ReviewVerdict.APPROVE,
-                        "Aprova o PR no GitHub, com um texto opcional; os comentários não enviados e o rascunho vão junto, como sugestões",
-                    )
-                },
-            ) { verdict(ReviewVerdict.APPROVE) },
-            action(
-                "Solicitar Alterações",
-                "Solicita alterações no PR",
-                AllIcons.General.BalloonWarning,
-                enabled = { selectedPr()?.pr?.let { context != null && !isOwn(it) } == true },
-                tooltipFor = {
-                    verdictDescription(
-                        ReviewVerdict.REQUEST_CHANGES,
-                        "Solicita alterações no PR, bloqueando o merge; os comentários não enviados e o rascunho vão junto",
-                    )
-                },
-            ) { verdict(ReviewVerdict.REQUEST_CHANGES) },
+                enabled = { selectedPr()?.pr != null && context != null },
+                text = { pendingComments(selectedPr()).takeIf { it > 0 }?.let { "Concluir Revisão ($it)…" } ?: "Concluir Revisão…" },
+                tooltipFor = { concludeDescription() },
+            ) { conclude() },
             action(
                 "Responder",
                 "Responde ao comentário selecionado no GitHub, seu ou de outra pessoa: na conversa da linha, ou citando o comentário na conversa do PR",
@@ -265,7 +252,7 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
             refreshAction { refresh() },
         )
         toolbar = ActionManager.getInstance().createActionToolbar("IronDome.PatrulhaToolbar", actions, true)
-            .apply { targetComponent = tree }.component
+            .apply { targetComponent = tree }.wrapping().component
         PopupHandler.installPopupMenu(tree, actions, "IronDome.PatrulhaPopup")
         installNavigation()
 
@@ -387,6 +374,14 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
             val node = DefaultMutableTreeNode(item)
             val loaded = discussions[item.number]
             item.pr?.let { pr ->
+                node.add(DefaultMutableTreeNode(AuthorItem(item.number, pr, isOwn(pr))))
+                val fork = pr.headOwner.takeIf { it.isNotBlank() && !it.equals(context?.repo?.owner, ignoreCase = true) }
+                node.add(DefaultMutableTreeNode(BranchItem(item.number, pr, fork)))
+                node.add(
+                    DefaultMutableTreeNode(
+                        ParticipantsItem(item.number, pr.author, loaded?.let(Discussions::participants), discussionsErrors[item.number], me),
+                    ),
+                )
                 node.add(filesNode(item, pr))
                 node.add(discussionsNode(item, me))
             }
@@ -438,6 +433,9 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
     /** Para a seleção sobreviver à árvore refeita. */
     private fun keyOf(item: Any?): String? = when (item) {
         is PrItem -> "pr:${item.number}"
+        is AuthorItem -> "author:${item.number}"
+        is BranchItem -> "branch:${item.number}"
+        is ParticipantsItem -> "participants:${item.number}"
         is FilesItem -> "files:${item.number}"
         is DirItem -> "dir:${dirKey(item)}"
         is FileItem -> "file:${item.number}:${item.file.path}"
@@ -972,21 +970,33 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
         }
     }
 
-    /** Publica o rascunho do PR no GitHub, escolhendo o veredito: aprovar, solicitar alterações ou só comentar. */
-    private fun publishDraft() {
-        if (selectedPr()?.record?.pendingReviewId == null) return
-        verdict(ReviewVerdict.REQUEST_CHANGES)
+    /** Os comentários que vão junto ao concluir: os não enviados e os do rascunho no GitHub. */
+    private fun pendingComments(item: PrItem?): Int = item?.let { it.drafts.size + (it.record?.drafts?.size ?: 0) } ?: 0
+
+    /**
+     * Abre o veredito já na escolha mais provável: com comentários, solicitar alterações; sem eles, aprovar. No PR
+     * próprio, o diálogo só deixa comentar.
+     */
+    private fun conclude() {
+        verdict(if (pendingComments(selectedPr()) > 0) ReviewVerdict.REQUEST_CHANGES else ReviewVerdict.APPROVE)
     }
 
     private fun isOwn(pr: PullRequest): Boolean = context?.account?.name?.equals(pr.author, ignoreCase = true) == true
 
-    /** Dica dos botões de veredito: por que estão desligados, ou o que vai junto. */
-    private fun verdictDescription(verdict: ReviewVerdict, enabled: String): String {
-        val pr = selectedPr()?.pr
-        return when {
-            pr == null -> "Selecione um PR aberto"
-            !verdict.allowedOnOwnPr && isOwn(pr) -> "O PR é seu: o GitHub não deixa ${verdict.label.lowercase()} no próprio PR"
-            else -> enabled
+    /** Dica do Concluir Revisão: por que está desligado, ou o que vai junto. */
+    private fun concludeDescription(): String {
+        val item = selectedPr()
+        val pr = item?.pr ?: return "Selecione um PR aberto"
+        val along = listOfNotNull(
+            item.drafts.size.takeIf { it > 0 }?.let { plural(it, "comentário não enviado", "comentários não enviados") },
+            item.record?.drafts?.size?.takeIf { it > 0 }?.let { "o rascunho no GitHub (${plural(it, "comentário", "comentários")})" },
+        )
+        return buildString {
+            append(
+                if (isOwn(pr)) "O PR é seu: o GitHub só deixa comentar, sem aprovar nem solicitar alterações"
+                else "Publica a revisão no GitHub: aprovar, solicitar alterações ou só comentar",
+            )
+            if (along.isNotEmpty()) append(". Vão junto ${along.joinToString(" e ")}")
         }
     }
 
@@ -1120,7 +1130,7 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
                     if (asDraft) "${plural(result.requests.size, "rascunho enviado", "rascunhos enviados")} ao PR #${pr.number}"
                     else "${plural(result.requests.size, "pedido publicado", "pedidos publicados")} no PR #${pr.number}",
                     listOfNotNull(
-                        if (asDraft) "Só você vê no GitHub. Edite ou exclua aqui, e use Publicar Rascunho quando estiver pronto."
+                        if (asDraft) "Só você vê no GitHub. Edite ou exclua aqui, e use Concluir Revisão quando estiver pronto."
                         else "Ficaram em iron-dome/pull-requests/${PullRequestRecord.fileName(pr.number)} para verificar depois.",
                         leftover,
                     ).joinToString(" "),
@@ -1384,6 +1394,24 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
                     row.pill(item.count.toString(), Tone.GRAY)
                 }
                 is PrItem -> describePr(row, item)
+                is AuthorItem -> {
+                    row.icon(AllIcons.General.User)
+                    row.text("Aberto por", SimpleTextAttributes.GRAYED_ATTRIBUTES)
+                    row.text(if (item.mine) "você" else "@${item.pr.author}", SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
+                    item.pr.createdAt.takeIf { it.isNotBlank() }?.let { row.text("em ${Discussions.formatDate(it)}", SimpleTextAttributes.GRAYED_ATTRIBUTES) }
+                    item.pr.updatedAt.takeIf { it.isNotBlank() && it != item.pr.createdAt }?.let {
+                        row.text("· atualizado em ${Discussions.formatDate(it)}", SimpleTextAttributes.GRAYED_ATTRIBUTES)
+                    }
+                }
+                is BranchItem -> {
+                    row.icon(AllIcons.Vcs.Branch)
+                    row.text(item.fork?.let { "$it:${item.pr.headRef}" } ?: item.pr.headRef, SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
+                    row.text("→ vai para", SimpleTextAttributes.GRAYED_ATTRIBUTES)
+                    row.text(item.pr.baseRef, SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
+                    if (item.fork != null) row.pill("Fork", Tone.GRAY)
+                    row.tooltip("O PR leva os commits de ${item.pr.headRef} para ${item.pr.baseRef}.")
+                }
+                is ParticipantsItem -> describeParticipants(row, item)
                 is DraftItem -> {
                     row.icon(AllIcons.General.Balloon)
                     row.text(item.comment.id, SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
@@ -1432,6 +1460,44 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
             row.tooltip(
                 "Os comentários do PR no GitHub, seus e de outras pessoas, fora os seus pedidos (as respostas a eles aparecem abaixo de cada pedido). " +
                     "Selecione um e use Responder; duplo clique abre a linha comentada.",
+            )
+        }
+
+        private fun describeParticipants(row: Row, item: ParticipantsItem) {
+            row.icon(AllIcons.General.Balloon)
+            row.text("Comentaram", SimpleTextAttributes.GRAYED_ATTRIBUTES)
+            val participants = item.participants
+            when {
+                participants == null -> {
+                    row.text(item.error ?: "lendo as conversas…", SimpleTextAttributes.GRAYED_ITALIC_ATTRIBUTES)
+                    return
+                }
+                participants.isEmpty() -> {
+                    row.text("ninguém ainda", SimpleTextAttributes.GRAYED_ITALIC_ATTRIBUTES)
+                    return
+                }
+            }
+            participants.forEach { p ->
+                val mine = item.me != null && p.login.equals(item.me, ignoreCase = true)
+                val name = if (mine) "você" else "@${p.login}"
+                val tone = when {
+                    p.verdict == "APPROVED" -> Tone.GREEN
+                    p.verdict == "CHANGES_REQUESTED" -> Tone.RED
+                    mine -> Tone.BLUE
+                    else -> Tone.PURPLE
+                }
+                row.pill(if (p.comments > 0) "$name · ${p.comments}" else name, tone, bold = p.login.equals(item.author, ignoreCase = true))
+            }
+            row.tooltip(
+                participants.joinToString("\n") { p ->
+                    val who = "@${p.login}" + if (p.login.equals(item.author, ignoreCase = true)) " (autor do PR)" else ""
+                    val verdict = when (p.verdict) {
+                        "APPROVED" -> ", aprovou"
+                        "CHANGES_REQUESTED" -> ", solicitou alterações"
+                        else -> ""
+                    }
+                    "$who: ${plural(p.comments, "comentário", "comentários")}$verdict"
+                },
             )
         }
 
@@ -1549,7 +1615,7 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
                 row.bar(listOf(Segment(done, Tone.GREEN.accent), Segment(pending, Tone.YELLOW.accent), Segment(requests.size - done - pending, Tone.GRAY.accent)))
                 row.pill("$done/${requests.size} atendidos", if (done == requests.size) Tone.GREEN else Tone.GRAY)
             }
-            item.pr?.let { row.detail("@${it.author} · ${it.headRef} → ${it.baseRef}") }
+            item.pr?.let { row.detail("Aberto por @${it.author} · ${it.headRef} → ${it.baseRef}") }
                 ?: item.record?.let { row.detail("${it.headRef} → ${it.baseRef} · fechado ou fora dos PRs abertos") }
         }
 

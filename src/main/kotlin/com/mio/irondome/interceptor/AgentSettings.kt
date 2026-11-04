@@ -31,9 +31,12 @@ object AgentSettings {
     private const val WSL_DISTRO_KEY = "IronDome.Agent.WslDistro"
     private const val TERMINAL_VERIFIED_KEY = "IronDome.Agent.TerminalVerified"
     private const val TERMINAL_VERIFIED_AT_KEY = "IronDome.Agent.TerminalVerifiedAt"
+    private const val EXTRA_ARGS_KEY = "IronDome.Agent.ExtraArgs"
+    private const val HAS_KEY_KEY = "IronDome.Agent.HasCursorKey"
     private val cursorCredentials = CredentialAttributes(generateServiceName("Iron Dome IA", "Cursor API key"))
 
     const val DEFAULT_TIMEOUT_MINUTES = 20
+    const val MAX_TIMEOUT_MINUTES = 480
 
     /** Avisa quando a configuração ou o teste mudam, para as abas e os botões se atualizarem. */
     fun interface Listener {
@@ -69,8 +72,13 @@ object AgentSettings {
         set(value) = change { PropertiesComponent.getInstance().setValue(MODEL_KEY, value?.trim()?.takeIf { it.isNotEmpty() }) }
 
     var timeoutMinutes: Int
-        get() = PropertiesComponent.getInstance().getInt(TIMEOUT_KEY, DEFAULT_TIMEOUT_MINUTES).coerceIn(1, 240)
-        set(value) = PropertiesComponent.getInstance().setValue(TIMEOUT_KEY, value.coerceIn(1, 240), DEFAULT_TIMEOUT_MINUTES)
+        get() = PropertiesComponent.getInstance().getInt(TIMEOUT_KEY, DEFAULT_TIMEOUT_MINUTES).coerceIn(1, MAX_TIMEOUT_MINUTES)
+        set(value) = change { PropertiesComponent.getInstance().setValue(TIMEOUT_KEY, value.coerceIn(1, MAX_TIMEOUT_MINUTES), DEFAULT_TIMEOUT_MINUTES) }
+
+    /** Argumentos a mais para o CLI, antes do prompt, como `--approve-mcps`. */
+    var extraArgs: String?
+        get() = PropertiesComponent.getInstance().getValue(EXTRA_ARGS_KEY)?.takeIf { it.isNotBlank() }
+        set(value) = change { PropertiesComponent.getInstance().setValue(EXTRA_ARGS_KEY, value?.trim()?.takeIf { it.isNotEmpty() }) }
 
     /** Onde a IA roda: não entra no teste, que vale para os dois jeitos. */
     var runMode: AgentRunMode
@@ -95,8 +103,14 @@ object AgentSettings {
             val key = value?.trim()?.takeIf { it.isNotEmpty() }
             if (key == cursorApiKey) return
             PasswordSafe.instance.setPassword(cursorCredentials, key)
-            change { PropertiesComponent.getInstance().setValue(KEY_VERSION_KEY, PropertiesComponent.getInstance().getInt(KEY_VERSION_KEY, 0) + 1, 0) }
+            change {
+                PropertiesComponent.getInstance().setValue(KEY_VERSION_KEY, PropertiesComponent.getInstance().getInt(KEY_VERSION_KEY, 0) + 1, 0)
+                PropertiesComponent.getInstance().setValue(HAS_KEY_KEY, key != null)
+            }
         }
+
+    /** Se há chave no cofre, sem ler o cofre de senhas, que é lento para a tela. */
+    val hasCursorApiKey: Boolean get() = PropertiesComponent.getInstance().getBoolean(HAS_KEY_KEY)
 
     @Volatile
     private var readyCache: Boolean? = null
@@ -115,12 +129,13 @@ object AgentSettings {
 
     private val verifiedFingerprint: String? get() = PropertiesComponent.getInstance().getValue(VERIFIED_KEY)
 
-    /** O que um teste valida: muda com o CLI, onde ele está e o executável, o modelo ou a chave. */
-    fun fingerprint(): String = listOf(
+    /** O que um teste valida: muda com o CLI, onde ele está e o executável, o modelo, a chave ou os argumentos extras. */
+    fun fingerprint(): String = listOfNotNull(
         provider.name,
         launch()?.description.orEmpty(),
         model.orEmpty(),
         PropertiesComponent.getInstance().getInt(KEY_VERSION_KEY, 0).toString(),
+        extraArgs,
     ).joinToString("|")
 
     fun markVerified(at: String) = change {
@@ -183,6 +198,11 @@ object AgentSettings {
                 File(home, ".cursor/bin"),
                 localAppData?.let { File(it, "cursor-agent") },
                 localAppData?.let { File(it, "Programs/cursor-agent") },
+            )
+            AgentProvider.CLAUDE -> listOfNotNull(
+                File(home, ".local/bin"),
+                File(home, ".claude/local"),
+                System.getenv("APPDATA")?.let { File(it, "npm") },
             )
             AgentProvider.ANTIGRAVITY -> listOfNotNull(
                 File(home, ".local/bin"),

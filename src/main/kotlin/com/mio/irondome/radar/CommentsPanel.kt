@@ -40,6 +40,7 @@ import com.mio.irondome.base.SummaryHeader
 import com.mio.irondome.base.Tone
 import com.mio.irondome.base.plural
 import com.mio.irondome.base.refreshAction
+import com.mio.irondome.base.wrapping
 import com.mio.irondome.comando.ReviewArchive
 import com.mio.irondome.comando.ReviewMarkdown
 import com.mio.irondome.interceptor.AgentProgressPanel
@@ -131,7 +132,7 @@ class CommentsPanel(private val project: Project) : SimpleToolWindowPanel(true, 
             ) { clear() },
         ),
         true,
-    ).apply { targetComponent = tree }.component
+    ).apply { targetComponent = tree }.wrapping().component
 
     private fun historyAction(text: String, description: String, icon: Icon, enabled: () -> Boolean, perform: () -> Unit) =
         object : DumbAwareAction(text, description, icon) {

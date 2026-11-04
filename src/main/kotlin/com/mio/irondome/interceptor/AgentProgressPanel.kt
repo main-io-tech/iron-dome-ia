@@ -15,6 +15,7 @@ import com.intellij.util.ui.GraphicsUtil
 import com.intellij.util.ui.JBFont
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
+import com.intellij.util.ui.WrapLayout
 import com.mio.irondome.base.IconTile
 import com.mio.irondome.base.IronDomeIcons
 import com.mio.irondome.base.Pill
@@ -62,7 +63,7 @@ class AgentProgressPanel(private val project: Project, private val tab: String, 
         font = JBFont.small().asItalic()
         foreground = UIUtil.getContextHelpForeground()
     }
-    private val chips = JPanel(HorizontalLayout(JBUI.scale(6), SwingConstants.CENTER)).apply { isOpaque = false }
+    private val chips = JPanel(WrapLayout(FlowLayout.LEFT, JBUI.scale(6), JBUI.scale(2))).apply { isOpaque = false }
     private val bar = PulseBar(tone)
     private val cancel = JButton("Cancelar").apply {
         icon = AllIcons.Actions.Suspend
@@ -82,16 +83,17 @@ class AgentProgressPanel(private val project: Project, private val tab: String, 
             isOpaque = false
             add(IconTile(IronDomeIcons.ia, tone, scale = 1.35f, size = 34), BorderLayout.NORTH)
         }, BorderLayout.WEST)
-        val headingLine = JPanel(HorizontalLayout(JBUI.scale(8), SwingConstants.CENTER)).apply {
+        // Linhas que quebram e textos com reticências: com o painel estreito, nada passa da borda.
+        val headingLine = JPanel(WrapLayout(FlowLayout.LEFT, JBUI.scale(8), JBUI.scale(2))).apply {
             isOpaque = false
             add(spinner)
             add(heading)
             add(pills)
         }
-        val stepLine = JPanel(HorizontalLayout(JBUI.scale(6), SwingConstants.CENTER)).apply {
+        val stepLine = JPanel(BorderLayout(JBUI.scale(6), 0)).apply {
             isOpaque = false
-            add(JBLabel(AllIcons.Actions.Forward))
-            add(step)
+            add(JBLabel(AllIcons.Actions.Forward), BorderLayout.WEST)
+            add(step, BorderLayout.CENTER)
         }
         add(JPanel(VerticalLayout(JBUI.scale(3), VerticalLayout.FILL)).apply {
             isOpaque = false
@@ -102,12 +104,12 @@ class AgentProgressPanel(private val project: Project, private val tab: String, 
             add(detail)
             add(chips)
             add(bar)
+            add(JPanel(WrapLayout(FlowLayout.LEFT, JBUI.scale(6), JBUI.scale(2))).apply {
+                isOpaque = false
+                add(showTerminal)
+                add(cancel)
+            })
         }, BorderLayout.CENTER)
-        add(JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(6), 0)).apply {
-            isOpaque = false
-            add(showTerminal)
-            add(cancel)
-        }, BorderLayout.EAST)
         isVisible = false
         project.messageBus.connect(parent).subscribe(
             AgentRunner.RUNS,
@@ -144,16 +146,20 @@ class AgentProgressPanel(private val project: Project, private val tab: String, 
             else -> "IA trabalhando"
         }
         title.text = progress.task.title
+        title.toolTipText = progress.task.title
         pills.removeAll()
         pills.add(Pill(progress.provider.title, tone, bold = true))
         pills.add(Pill(if (progress.task.write) "Pode alterar arquivos" else "Só leitura", if (progress.task.write) Tone.ORANGE else Tone.GRAY))
         if (progress.inTerminal) pills.add(Pill("Terminal da IDE", Tone.PURPLE))
         progress.task.origin?.takeIf { it != tab }?.let { pills.add(Pill("Origem: $it", Tone.GRAY)) }
         step.text = progress.step
+        step.toolTipText = progress.step
         val previous = progress.trail
         trail.text = if (previous.isEmpty()) "" else "Antes: " + previous.joinToString("  ‹  ")
+        trail.toolTipText = trail.text.ifEmpty { null }
         trail.isVisible = previous.isNotEmpty()
         detail.text = progress.detail
+        detail.toolTipText = progress.detail.ifBlank { null }
         detail.isVisible = progress.detail.isNotBlank() && !progress.cancelled
         val elapsed = (System.currentTimeMillis() - progress.startedAt) / 1000
         chips.removeAll()
@@ -239,7 +245,7 @@ internal object AgentActivity {
     fun started(project: Project, task: AgentTask) {
         val toolWindow = ToolWindowManager.getInstance(project).getToolWindow(ReviewToolWindowFactory.ID) ?: return
         toolWindow.setIcon(IronDomeIcons.ia)
-        val content = toolWindow.contentManager.findContent(task.origin ?: InterceptorTab.TITLE) ?: return
+        val content = ReviewToolWindowFactory.findContent(toolWindow, task.origin ?: InterceptorTab.TITLE) ?: return
         originals[content.displayName] = content.icon
         content.icon = IronDomeIcons.ia
     }
@@ -247,7 +253,7 @@ internal object AgentActivity {
     fun finished(project: Project) {
         val toolWindow = ToolWindowManager.getInstance(project).getToolWindow(ReviewToolWindowFactory.ID) ?: return
         toolWindow.setIcon(IronDomeIcons.toolWindow)
-        originals.forEach { (name, icon) -> toolWindow.contentManager.findContent(name)?.icon = icon }
+        originals.forEach { (name, icon) -> ReviewToolWindowFactory.findContent(toolWindow, name)?.icon = icon }
         originals.clear()
     }
 }

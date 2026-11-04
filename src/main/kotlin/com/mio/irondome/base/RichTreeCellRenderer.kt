@@ -3,30 +3,28 @@ package com.mio.irondome.base
 import com.intellij.ui.SimpleColoredComponent
 import com.intellij.ui.SimpleTextAttributes
 import com.intellij.ui.components.JBLabel
-import com.intellij.ui.components.panels.HorizontalLayout
 import com.intellij.ui.components.panels.VerticalLayout
 import com.intellij.ui.render.RenderingUtil
+import com.intellij.util.ui.JBFont
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
+import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Component
+import java.awt.Font
+import java.awt.font.TextAttribute
 import javax.swing.Icon
 import javax.swing.JPanel
 import javax.swing.JTree
-import javax.swing.SwingConstants
+import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.TreeCellRenderer
 
 /**
- * Linha de árvore montada com componentes: ícone, textos, etiquetas arredondadas e barras na primeira
- * linha e, opcionalmente, um texto de apoio na segunda. A árvore precisa de `rowHeight = 0` para as
- * linhas terem a altura do conteúdo.
+ * Linha de árvore montada com componentes: ícone, textos, etiquetas arredondadas e barras na primeira linha e,
+ * opcionalmente, um texto de apoio embaixo. As partes passam para a linha de baixo e os textos quebram na
+ * largura da aba, sem rolagem lateral. A árvore precisa de `rowHeight = 0` para as linhas terem a altura do conteúdo.
  */
 abstract class RichTreeCellRenderer : TreeCellRenderer {
-
-    private val panel = JPanel(VerticalLayout(JBUI.scale(1))).apply {
-        isOpaque = false
-        border = JBUI.Borders.empty(3, 0)
-    }
 
     protected abstract fun describe(row: Row, value: Any?)
 
@@ -39,19 +37,27 @@ abstract class RichTreeCellRenderer : TreeCellRenderer {
         row: Int,
         hasFocus: Boolean,
     ): Component {
-        panel.removeAll()
-        panel.toolTipText = null
-        val line = JPanel(HorizontalLayout(JBUI.scale(6), SwingConstants.CENTER)).apply { isOpaque = false }
-        val content = Row(line, RenderingUtil.getForeground(tree, selected))
+        val depth = (value as? DefaultMutableTreeNode)?.level ?: 1
+        val width = ((tree as? MechanismTree)?.rowWidth(depth) ?: tree.width).coerceAtLeast(JBUI.scale(MIN_WIDTH))
+        val panel = JPanel(VerticalLayout(JBUI.scale(1))).apply {
+            isOpaque = false
+            border = JBUI.Borders.empty(3, 0)
+        }
+        val content = Row(FlowRow(width), width, RenderingUtil.getForeground(tree, selected), selected)
         describe(content, value)
-        panel.add(line)
+        panel.add(content.line)
         content.detail?.let(panel::add)
         panel.toolTipText = content.tooltip
         return panel
     }
 
-    class Row internal constructor(private val line: JPanel, private val foreground: Color) {
-        internal var detail: SimpleColoredComponent? = null
+    class Row internal constructor(
+        internal val line: FlowRow,
+        private val width: Int,
+        private val foreground: Color,
+        private val selected: Boolean,
+    ) {
+        internal var detail: JPanel? = null
         internal var tooltip: String? = null
         private var hasIcon = false
 
@@ -62,13 +68,25 @@ abstract class RichTreeCellRenderer : TreeCellRenderer {
         }
 
         fun text(text: String, attributes: SimpleTextAttributes = SimpleTextAttributes.REGULAR_ATTRIBUTES) {
-            line.add(coloredText().apply { append(text, attributes) })
+            if (text.isEmpty()) return
+            line.add(WrapText(text, font(attributes), color(attributes)))
         }
 
-        /** Trechos com estilos diferentes num texto só, sem o espaço que fica entre componentes. */
+        /**
+         * Trechos com estilos diferentes num texto só, sem o espaço que fica entre componentes, como código com
+         * fundo no meio da frase. O trecho inteiro passa para a linha de baixo quando não cabe.
+         */
         fun styled(fragments: List<Pair<String, SimpleTextAttributes>>) {
             if (fragments.isEmpty()) return
-            line.add(coloredText().apply { fragments.forEach { (text, attributes) -> append(text, attributes) } })
+            line.add(
+                SimpleColoredComponent().apply {
+                    isOpaque = false
+                    ipad = JBUI.emptyInsets()
+                    font = UIUtil.getTreeFont()
+                    foreground = this@Row.foreground
+                    fragments.forEach { (text, attributes) -> append(text, attributes) }
+                },
+            )
         }
 
         fun pill(text: String, tone: Tone, bold: Boolean = false) {
@@ -79,24 +97,31 @@ abstract class RichTreeCellRenderer : TreeCellRenderer {
             line.add(SegmentBar(segments, width, barHeight = 5))
         }
 
-        /** Texto de apoio numa segunda linha, alinhado com o texto da primeira. */
+        /** Texto de apoio embaixo, alinhado com o texto da primeira linha. */
         fun detail(text: String, attributes: SimpleTextAttributes = SimpleTextAttributes.GRAYED_ATTRIBUTES) {
-            val component = detail ?: coloredText().also {
-                it.border = JBUI.Borders.emptyLeft(if (hasIcon) JBUI.scale(16) + JBUI.scale(6) else 0)
-                detail = it
+            val indent = if (hasIcon) JBUI.scale(16) + JBUI.scale(6) else 0
+            detail = JPanel(BorderLayout()).apply {
+                isOpaque = false
+                border = JBUI.Borders.emptyLeft(indent)
+                add(WrapText(text, font(attributes, JBFont.small()), color(attributes)).fit(width - indent), BorderLayout.WEST)
             }
-            component.append(text, attributes)
         }
 
         fun tooltip(text: String?) {
             tooltip = text
         }
 
-        private fun coloredText() = SimpleColoredComponent().apply {
-            isOpaque = false
-            ipad = JBUI.emptyInsets()
-            font = UIUtil.getTreeFont()
-            foreground = this@Row.foreground
+        private fun font(attributes: SimpleTextAttributes, base: Font = if (attributes.isSmaller) JBFont.small() else UIUtil.getTreeFont()): Font {
+            val bold = attributes.style and SimpleTextAttributes.STYLE_BOLD != 0
+            val italic = attributes.style and SimpleTextAttributes.STYLE_ITALIC != 0
+            val styled = base.deriveFont((if (bold) Font.BOLD else 0) or (if (italic) Font.ITALIC else 0))
+            return if (attributes.isStrikeout) styled.deriveFont(mapOf(TextAttribute.STRIKETHROUGH to TextAttribute.STRIKETHROUGH_ON)) else styled
         }
+
+        private fun color(attributes: SimpleTextAttributes): Color = if (selected) foreground else attributes.fgColor ?: foreground
+    }
+
+    private companion object {
+        const val MIN_WIDTH = 120
     }
 }

@@ -273,7 +273,9 @@ class AgentRunner(private val project: Project) {
     private fun execute(task: AgentTask, provider: AgentProvider, launch: AgentLaunch, root: String, state: AgentProgress): AgentResult {
         val started = System.nanoTime()
         val timeout = AgentSettings.timeoutMinutes
-        val command = AgentCommand.build(provider, launch.executable, task, launch.workspace(root), AgentSettings.model, timeout)
+        val command = AgentCommand.build(
+            provider, launch.executable, task, launch.workspace(root), AgentSettings.model, timeout, AgentCommand.splitArgs(AgentSettings.extraArgs),
+        )
         val key = if (provider == AgentProvider.CURSOR) AgentSettings.cursorApiKey else null
 
         val text = StringBuilder()
@@ -294,7 +296,7 @@ class AgentRunner(private val project: Project) {
             val deadline = System.nanoTime() + TimeUnit.MINUTES.toNanos(timeout.toLong())
             val reader = Thread {
                 process.inputStream.bufferedReader(StandardCharsets.UTF_8).forEachLine { raw ->
-                    when (val event = AgentEvents.parse(raw)) {
+                    for (event in AgentEvents.parseAll(raw)) when (event) {
                         is AgentEvent.Init -> model = event.model
                         is AgentEvent.Text -> {
                             text.append(event.text).append('\n')
@@ -312,7 +314,6 @@ class AgentRunner(private val project: Project) {
                             failed = event.error
                         }
                         is AgentEvent.Other -> text.append(event.line).append('\n')
-                        null -> Unit
                     }
                 }
             }.apply { isDaemon = true; start() }

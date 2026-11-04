@@ -43,11 +43,13 @@ object AgentVerifier {
             val workspace = System.getProperty("user.home")
             val outcome = runCatching {
                 val task = AgentTask("Teste", "Responda apenas OK", write = false)
-                val command = AgentCommand.build(provider, launch.executable, task, launch.workspace(workspace), model, 2)
+                val command = AgentCommand.build(
+                    provider, launch.executable, task, launch.workspace(workspace), model, 2, AgentCommand.splitArgs(AgentSettings.extraArgs),
+                )
                 ExecUtil.execAndGetOutput(launch.process(command, workspace, key), TIMEOUT_MS)
             }.fold(
                 onSuccess = { output ->
-                    val events = output.stdoutLines.mapNotNull(AgentEvents::parse)
+                    val events = output.stdoutLines.flatMap(AgentEvents::parseAll)
                     val answer = events.filterIsInstance<AgentEvent.Result>().firstOrNull()
                     val model = events.filterIsInstance<AgentEvent.Init>().firstOrNull()?.model
                     val reported = answer?.takeIf { it.error }?.text?.takeIf { it.isNotBlank() }
@@ -81,6 +83,7 @@ object AgentVerifier {
         AUTH_REQUIRED.containsMatchIn(message) -> when (provider) {
             AgentProvider.ANTIGRAVITY -> "$message. Falta entrar no Antigravity: rode agy uma vez no terminal e entre com a conta Google, depois teste de novo."
             AgentProvider.CURSOR -> "$message. Falta entrar no Cursor: rode agent login no terminal ou informe uma chave de API, depois teste de novo."
+            AgentProvider.CLAUDE -> "$message. Falta entrar no Claude Code: rode claude uma vez no terminal e faça o login, depois teste de novo."
         }
         else -> message
     }

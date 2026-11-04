@@ -58,9 +58,10 @@ class AgentLaunch private constructor(val executable: String, val distro: String
         shell: ShellKind,
         workDir: String,
         interactive: Boolean = true,
+        extraArgs: List<String> = AgentCommand.splitArgs(AgentSettings.extraArgs),
     ): String {
-        val distribution = distro ?: return AgentCommand.terminal(provider, executable, prompt, model, timeoutMinutes, shell, interactive)
-        val inner = AgentCommand.terminal(provider, executable, prompt, model, timeoutMinutes, ShellKind.POSIX, interactive)
+        val distribution = distro ?: return AgentCommand.terminal(provider, executable, prompt, model, timeoutMinutes, shell, interactive, extraArgs)
+        val inner = AgentCommand.terminal(provider, executable, prompt, model, timeoutMinutes, ShellKind.POSIX, interactive, extraArgs)
         return AgentCommand.wrapWsl(distribution, workspace(workDir), inner, shell)
     }
 

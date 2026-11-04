@@ -21,9 +21,12 @@ import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
 import com.intellij.openapi.wm.ToolWindowManager
 import com.intellij.openapi.wm.impl.content.ToolWindowContentUi
+import com.intellij.ui.content.Content
 import com.intellij.ui.content.ContentFactory
+import com.mio.irondome.base.web.WebTab
 import com.mio.irondome.interceptor.InterceptorPanel
 import com.mio.irondome.interceptor.InterceptorTab
+import com.mio.irondome.interceptor.InterceptorWeb
 import com.mio.irondome.radar.CommentsPanel
 import com.mio.irondome.sentinela.ChangesPanel
 import javax.swing.Icon
@@ -41,11 +44,10 @@ class ReviewToolWindowFactory : ToolWindowFactory, DumbAware {
         addTabs(project, toolWindow)
         // Outro projeto escolhido: as abas renascem com os comentários, as alterações e o Git dele.
         project.messageBus.connect(toolWindow.disposable).subscribe(IronDomeRoot.Listener.TOPIC, IronDomeRoot.Listener {
-            val manager = toolWindow.contentManager
-            val selected = manager.selectedContent?.displayName
-            manager.removeAllContents(true)
+            val selected = toolWindow.contentManager.selectedContent?.displayName
+            contents(toolWindow).forEach { it.manager?.removeContent(it, true) }
             addTabs(project, toolWindow)
-            selected?.let(manager::findContent)?.let(manager::setSelectedContent)
+            selected?.let { findContent(toolWindow, it) }?.let(::select)
         })
     }
 
@@ -60,7 +62,14 @@ class ReviewToolWindowFactory : ToolWindowFactory, DumbAware {
             add(toolWindow, tab.title, tab.icon, tab.description) { tab.createComponent(project, toolWindow) }
         }
         add(toolWindow, InterceptorTab.TITLE, IronDomeIcons.interceptador, "A IA: qual CLI usar, o teste da integração e as execuções recentes") {
-            InterceptorPanel(project)
+            val web = if (WebTab.supported) {
+                runCatching { InterceptorWeb(project) }
+                    .onFailure { if (it is ControlFlowException) throw it else LOG.warn("O Interceptador web não abriu; vale o painel sem navegador", it) }
+                    .getOrNull()
+            } else {
+                null
+            }
+            web ?: InterceptorPanel(project)
         }
     }
 
@@ -84,18 +93,39 @@ class ReviewToolWindowFactory : ToolWindowFactory, DumbAware {
             (component as? Disposable)?.let(::setDisposer)
         }
         toolWindow.contentManager.addContent(content)
+        @Suppress("UNCHECKED_CAST")
+        val tracked = toolWindow.component.getClientProperty(CONTENTS_KEY) as? MutableList<Content>
+            ?: mutableListOf<Content>().also { toolWindow.component.putClientProperty(CONTENTS_KEY, it) }
+        tracked.removeAll { it.manager == null }
+        tracked += content
     }
 
     companion object {
         const val ID = "Iron Dome IA"
         const val RADAR = "Radar"
+        private const val CONTENTS_KEY = "IronDome.Contents"
         private val LOG = logger<ReviewToolWindowFactory>()
+
+        /**
+         * As abas do painel, também as arrastadas para uma divisão: essas vão para outro gerenciador de abas, que
+         * `toolWindow.contentManager` não enxerga.
+         */
+        fun contents(toolWindow: ToolWindow): List<Content> =
+            (toolWindow.component.getClientProperty(CONTENTS_KEY) as? List<*>).orEmpty()
+                .filterIsInstance<Content>()
+                .filter { it.manager != null }
+
+        fun findContent(toolWindow: ToolWindow, title: String): Content? = contents(toolWindow).firstOrNull { it.displayName == title }
+
+        fun select(content: Content) {
+            content.manager?.setSelectedContent(content)
+        }
 
         /** Abre o painel do Iron Dome IA na aba [title]. */
         fun showTab(project: Project, title: String) {
             val toolWindow = ToolWindowManager.getInstance(project).getToolWindow(ID) ?: return
             toolWindow.activate {
-                toolWindow.contentManager.findContent(title)?.let(toolWindow.contentManager::setSelectedContent)
+                findContent(toolWindow, title)?.let(::select)
             }
         }
     }

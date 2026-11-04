@@ -42,6 +42,48 @@ class InterceptorTest {
     }
 
     @Test
+    fun claudeCodeOnlyGetsPermissionToWriteInTasksThatChangeFiles() {
+        val read = AgentCommand.build(AgentProvider.CLAUDE, "claude", readOnly, "C:/proj", "sonnet", 20, listOf("--approve-mcps"))
+        val write = AgentCommand.build(AgentProvider.CLAUDE, "claude", readOnly.copy(write = true), "C:/proj", null, 20)
+
+        assertEquals(listOf("claude", "-p", "--output-format", "stream-json", "--verbose"), read.take(5))
+        assertFalse("bypassPermissions" in read)
+        assertEquals(listOf("--model", "sonnet", "--approve-mcps", "Revise o PR seguindo as instrucoes responda"), read.takeLast(4))
+        assertTrue(write.containsAll(listOf("--permission-mode", "bypassPermissions")))
+        assertEquals(
+            "& 'claude' '-p' '--permission-mode' 'bypassPermissions' 'Teste'",
+            AgentCommand.terminal(AgentProvider.CLAUDE, "claude", "Teste", null, 20, ShellKind.POWERSHELL, interactive = false),
+        )
+    }
+
+    @Test
+    fun extraArgsSplitOnSpacesAndKeepQuotedGroups() {
+        assertEquals(listOf("--approve-mcps", "--allowedTools", "Read Grep"), AgentCommand.splitArgs("--approve-mcps --allowedTools \"Read Grep\""))
+        assertEquals(emptyList<String>(), AgentCommand.splitArgs("  "))
+        assertTrue("--x" in AgentCommand.build(AgentProvider.CURSOR, "agent", readOnly, "C:/proj", null, 20, listOf("--x")))
+    }
+
+    @Test
+    fun claudeMessagesBringTextAndToolsTogether() {
+        val message = """{"type":"assistant","message":{"content":[{"type":"text","text":"Vou corrigir"},""" +
+            """{"type":"tool_use","name":"Edit","input":{"file_path":"src/Frete.kt"}},{"type":"tool_use","name":"Bash","input":{"command":"gradle test"}}]}}"""
+
+        assertEquals(
+            listOf(AgentEvent.Text("Vou corrigir"), AgentEvent.Tool(true, "edit", "src/Frete.kt"), AgentEvent.Tool(true, "shell", null)),
+            AgentEvents.parseAll(message),
+        )
+        assertEquals(
+            AgentEvent.Tool(true, "read", "a.kt"),
+            AgentEvents.parse("""{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"a.kt"}}]}}"""),
+        )
+        assertNull("eventos de sistema que não são o início ficam de fora", AgentEvents.parse("""{"type":"system","subtype":"hook_response"}"""))
+        assertEquals(
+            AgentEvent.Result("limite", true),
+            AgentEvents.parse("""{"type":"result","subtype":"error_max_turns","is_error":false,"result":"limite"}"""),
+        )
+    }
+
+    @Test
     fun whoChangesCodeIgnoresPullRequestCommentsAndReviewsOnlyRead() {
         val write = AgentCommand.guarded(readOnly.copy(prompt = "Corrija", write = true))
         val read = AgentCommand.guarded(readOnly.copy(prompt = "Revise"))

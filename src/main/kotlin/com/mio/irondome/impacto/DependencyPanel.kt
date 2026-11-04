@@ -47,6 +47,7 @@ import com.intellij.util.concurrency.AppExecutorUtil
 import com.intellij.util.ui.HTMLEditorKitBuilder
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
+import com.intellij.util.ui.WrapLayout
 import com.intellij.util.ui.update.MergingUpdateQueue
 import com.intellij.util.ui.update.Update
 import com.mio.irondome.base.IronDomeIcons
@@ -55,6 +56,7 @@ import com.mio.irondome.base.Stat
 import com.mio.irondome.base.SummaryHeader
 import com.mio.irondome.base.Tone
 import com.mio.irondome.base.rootDir
+import com.mio.irondome.base.wrapping
 import com.mio.irondome.defesa.ChangeHistoryService
 import com.mio.irondome.defesa.ClassDossier
 import com.mio.irondome.defesa.RiskScore
@@ -112,7 +114,7 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
     private val classTable = table(classModel)
     private val tabs = JBTabbedPane()
     private val bottomPanel = JPanel(BorderLayout())
-    private val minimizedBar = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(14), JBUI.scale(3))).apply {
+    private val minimizedBar = JPanel(WrapLayout(FlowLayout.LEFT, JBUI.scale(14), JBUI.scale(3))).apply {
         border = JBUI.Borders.customLineTop(JBColor.border())
         add(JBLabel(AllIcons.General.ArrowUp).apply { toolTipText = "Painel minimizado: clique numa aba para mostrar" })
     }
@@ -190,15 +192,22 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
                 override fun actionPerformed(e: AnActionEvent) = showTab(HELP_TAB)
             },
         )
-        val toolbar = ActionManager.getInstance().createActionToolbar("IronDome.DependenciesToolbar", actions, true)
+        val toolbar = ActionManager.getInstance().createActionToolbar("IronDome.DependenciesToolbar", actions, true).wrapping()
         toolbar.targetComponent = this
 
-        val controls = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(8), 0)).apply {
+        // A barra numa linha só dela e os filtros abaixo: com o painel estreito, cada um quebra em vez de sumir.
+        val controls = JPanel(VerticalLayout(0, VerticalLayout.FILL)).apply {
             add(toolbar.component)
-            add(JBLabel("Profundidade"))
-            add(depth)
-            add(JBLabel("Direção"))
-            add(direction)
+            add(JPanel(WrapLayout(FlowLayout.LEFT, JBUI.scale(8), JBUI.scale(2))).apply {
+                add(JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
+                    add(JBLabel("Profundidade"))
+                    add(depth)
+                })
+                add(JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
+                    add(JBLabel("Direção"))
+                    add(direction)
+                })
+            })
         }
         listOf(depth, direction).forEach { combo -> combo.addActionListener { focus?.let(::analyze) } }
 

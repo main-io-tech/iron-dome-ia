@@ -168,7 +168,7 @@ internal class SendReviewDialog(
             .addComponent(comment("Comentários de linha só valem nas linhas que o PR altera; os demais vão no arquivo inteiro ou no texto geral."))
             .addComponent(TitledSeparator("Revisão"))
             .addComponent(asDraftBox)
-            .addComponent(comment("Os rascunhos ficam na revisão pendente do GitHub, que o autor do PR não vê. Publique pela Patrulha (Publicar Rascunho) ou pelo GitHub."))
+            .addComponent(comment("Os rascunhos ficam na revisão pendente do GitHub, que o autor do PR não vê. Publique pela Patrulha (Concluir Revisão) ou pelo GitHub."))
             .addComponent(approve)
             .addComponent(requestChanges)
             .addComponent(commentOnly)

@@ -24,8 +24,8 @@ class DependencyTab : ReviewToolWindowTab {
         fun open(project: Project, use: (DependencyPanel) -> Unit) {
             val toolWindow = ToolWindowManager.getInstance(project).getToolWindow(ReviewToolWindowFactory.ID) ?: return
             toolWindow.activate {
-                val content = toolWindow.contentManager.findContent(TITLE) ?: return@activate
-                toolWindow.contentManager.setSelectedContent(content)
+                val content = ReviewToolWindowFactory.findContent(toolWindow, TITLE) ?: return@activate
+                ReviewToolWindowFactory.select(content)
                 (content.component as? DependencyPanel)?.let(use)
             }
         }

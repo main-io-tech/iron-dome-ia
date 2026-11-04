@@ -176,6 +176,17 @@ class PatrulhaTest {
         assertEquals("fantasma", discussions.first { it.kind == DiscussionKind.CONVERSATION }.first.author)
         assertEquals("APPROVED", discussions.first().reviewState)
 
+        assertEquals(
+            listOf(
+                Participant("ana", 1, null),
+                Participant("bia", 1, null),
+                Participant("eu", 1, null),
+                Participant("fantasma", 1, null),
+                Participant("caio", 0, "APPROVED"),
+            ),
+            Discussions.participants(discussions),
+        )
+
         val record = PullRequestRecord(12, "Frete", "u", "frete", "main", listOf(request("P1", commentId = 77)))
         assertEquals(listOf("review:200", "thread:90", "conversation:100"), Discussions.others(discussions, record).map { it.key })
         assertEquals(listOf("Feito"), Discussions.of(record.requests.first(), discussions)?.replies?.map { it.body })

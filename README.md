@@ -481,15 +481,15 @@ foi atendido.
    (*Commit suggestion*); fora do diff, vai como código de exemplo.
 3. **Envie.** **Enviar ao GitHub** mostra onde cada comentário vai entrar. Por padrão, eles vão como
    **rascunho no GitHub** (a revisão pendente, que só você vê): enviar de novo acrescenta ao mesmo rascunho,
-   e **Editar**, **Excluir** e **Excluir Todos** valem lá também. Quando estiver pronto, **Publicar Rascunho**
+   e **Editar**, **Excluir** e **Excluir Todos** valem lá também. Quando estiver pronto, **Concluir Revisão**
    escolhe o veredito (**Aprovar**, **Solicitar alterações** ou **Só comentar**), e o autor passa a ver.
    Desmarcando o rascunho, o envio já publica. Linhas que o PR altera viram comentários de linha; linhas fora do diff e arquivos inteiros,
    comentários do arquivo; pacotes e arquivos fora do PR entram no texto geral. Se o rascunho for publicado
    ou descartado pelo próprio GitHub, a Patrulha percebe na sincronização e atualiza o `.md`.
-   **Aprovar PR** e **Solicitar Alterações**, na barra da aba, dão o veredito a qualquer hora, com ou sem
-   comentários: o texto é opcional para aprovar e obrigatório para solicitar alterações sem comentários, e os
-   comentários não enviados e o rascunho vão junto, na mesma revisão. No próprio PR, o GitHub só deixa comentar,
-   e os dois botões ficam desligados.
+   **Concluir Revisão**, na barra da aba, dá o veredito a qualquer hora, com ou sem comentários: já vem em
+   *Solicitar alterações* quando há comentários e em *Aprovar* quando não há. O texto é opcional para aprovar e
+   obrigatório para solicitar alterações sem comentários, e os comentários não enviados e o rascunho vão junto,
+   na mesma revisão. No próprio PR, o GitHub só deixa comentar.
 4. **Acompanhe no código.** Com a revisão ligada, os pedidos já enviados aparecem no editor como cartões
    recolhidos, onde o trecho está agora, com o status (*Enviado*, *Atendido*, *Sem alteração*). O
    cabeçalho expande, **Ocultar** tira o cartão e **Editar** troca o texto e o código sugerido também no

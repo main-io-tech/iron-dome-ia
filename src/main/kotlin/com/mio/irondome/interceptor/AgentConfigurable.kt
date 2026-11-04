@@ -46,7 +46,8 @@ class AgentConfigurable : Configurable {
         addBrowseFolderListener(null, FileChooserDescriptorFactory.createSingleFileNoJarsDescriptor().withTitle("Executável do CLI de IA"))
     }
     private val model = JBTextField().apply { emptyText.text = "Padrão do CLI" }
-    private val timeout = JSpinner(SpinnerNumberModel(AgentSettings.DEFAULT_TIMEOUT_MINUTES, 1, 240, 5))
+    private val timeout = JSpinner(SpinnerNumberModel(AgentSettings.DEFAULT_TIMEOUT_MINUTES, 1, AgentSettings.MAX_TIMEOUT_MINUTES, 5))
+    private val extraArgs = JBTextField().apply { emptyText.text = "Ex.: --approve-mcps" }
     private val cursorKey = JBPasswordField()
     private val runMode = ComboBox(AgentRunMode.entries.toTypedArray()).apply {
         renderer = SimpleListCellRenderer.create("") { it.label }
@@ -82,7 +83,7 @@ class AgentConfigurable : Configurable {
                 add(auto)
                 add(autoStatus)
             })
-            .addComponent(comment("Procura o Cursor CLI e o Antigravity CLI instalados e testa cada um, com o modelo padrão, até um responder. Se nenhum responder, termine abaixo."))
+            .addComponent(comment("Procura o ${AgentProvider.entries.joinToString(", ") { "${it.title} CLI" }} instalados e testa cada um, com o modelo padrão, até um responder. Se nenhum responder, termine abaixo."))
             .addComponent(autoFailure)
             .addComponent(TitledSeparator("CLI de IA"))
             .addLabeledComponent("CLI:", provider)
@@ -98,6 +99,8 @@ class AgentConfigurable : Configurable {
             .addComponentToRightColumn(comment("Opcional, como no --model do CLI. Vazio usa o modelo padrão da sua conta."))
             .addLabeledComponent("Tempo máximo (min):", timeout)
             .addComponentToRightColumn(comment("Uma tarefa que passar disso é interrompida."))
+            .addLabeledComponent("Argumentos extras:", extraArgs)
+            .addComponentToRightColumn(comment("Vão para o CLI antes do pedido, separados por espaço; aspas agrupam."))
             .addLabeledComponent("Onde rodar a IA:", runMode)
             .addComponentToRightColumn(JBLabel("<html>${InterceptorPanel.RUN_MODE_HINT}</html>").apply {
                 componentStyle = UIUtil.ComponentStyle.SMALL
@@ -130,6 +133,7 @@ class AgentConfigurable : Configurable {
             executable.text.trim() != AgentSettings.executable.orEmpty() ||
             model.text.trim() != AgentSettings.model.orEmpty() ||
             (timeout.value as Int) != AgentSettings.timeoutMinutes ||
+            extraArgs.text.trim() != AgentSettings.extraArgs.orEmpty() ||
             runMode.selectedItem != AgentSettings.runMode ||
             String(cursorKey.password).trim() != savedKey
 
@@ -140,6 +144,7 @@ class AgentConfigurable : Configurable {
         AgentSettings.executable = executable.text
         AgentSettings.model = model.text
         AgentSettings.timeoutMinutes = timeout.value as Int
+        AgentSettings.extraArgs = extraArgs.text
         AgentSettings.runMode = runMode.selectedItem as AgentRunMode
         AgentSettings.cursorApiKey = String(cursorKey.password)
         savedKey = AgentSettings.cursorApiKey.orEmpty()
@@ -153,6 +158,7 @@ class AgentConfigurable : Configurable {
         executable.text = AgentSettings.executable.orEmpty()
         model.text = AgentSettings.model.orEmpty()
         timeout.value = AgentSettings.timeoutMinutes
+        extraArgs.text = AgentSettings.extraArgs.orEmpty()
         runMode.selectedItem = AgentSettings.runMode
         savedKey = AgentSettings.cursorApiKey.orEmpty()
         cursorKey.text = savedKey

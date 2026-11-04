@@ -11,7 +11,6 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.ui.SimpleToolWindowPanel
 import com.intellij.openapi.ui.TextFieldWithBrowseButton
-import com.intellij.openapi.wm.ToolWindowManager
 import com.intellij.ui.ColoredListCellRenderer
 import com.intellij.ui.JBColor
 import com.intellij.ui.ScrollPaneFactory
@@ -26,12 +25,15 @@ import com.intellij.ui.components.panels.VerticalLayout
 import com.intellij.util.ui.FormBuilder
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
+import com.intellij.util.ui.WrapLayout
+import com.mio.irondome.base.FitWidthPanel
 import com.mio.irondome.base.IronDomeIcons
 import com.mio.irondome.base.MechanismList
 import com.mio.irondome.base.ReviewToolWindowFactory
 import com.mio.irondome.base.SummaryHeader
 import com.mio.irondome.base.Tone
 import com.mio.irondome.base.refreshAction
+import com.mio.irondome.base.wrapping
 import java.awt.BorderLayout
 import java.awt.FlowLayout
 import java.awt.event.MouseAdapter
@@ -51,10 +53,7 @@ object InterceptorTab {
 
     /** Abre o painel do Iron Dome IA na aba Interceptador. */
     fun show(project: Project) {
-        val toolWindow = ToolWindowManager.getInstance(project).getToolWindow(ReviewToolWindowFactory.ID) ?: return
-        toolWindow.activate {
-            toolWindow.contentManager.findContent(TITLE)?.let(toolWindow.contentManager::setSelectedContent)
-        }
+        ReviewToolWindowFactory.showTab(project, TITLE)
     }
 }
 
@@ -89,7 +88,8 @@ class InterceptorPanel(private val project: Project) : SimpleToolWindowPanel(tru
     }
     private val found = JBLabel().apply { componentStyle = UIUtil.ComponentStyle.SMALL }
     private val model = JBTextField().apply { emptyText.text = "Padrão do CLI" }
-    private val timeout = JSpinner(SpinnerNumberModel(AgentSettings.DEFAULT_TIMEOUT_MINUTES, 1, 240, 5))
+    private val timeout = JSpinner(SpinnerNumberModel(AgentSettings.DEFAULT_TIMEOUT_MINUTES, 1, AgentSettings.MAX_TIMEOUT_MINUTES, 5))
+    private val extraArgs = JBTextField().apply { emptyText.text = "Ex.: --approve-mcps" }
     private val cursorKey = JBPasswordField()
     private val cursorKeyLabel = JBLabel("Chave de API do Cursor:")
     private val cursorKeyHint = comment("Opcional: sem ela, vale o login do agent login. Fica no cofre de senhas da IDE.")
@@ -107,6 +107,7 @@ class InterceptorPanel(private val project: Project) : SimpleToolWindowPanel(tru
     }
     private val terminalButton = JButton("Testar no Terminal", AllIcons.Debugger.Console).apply { addActionListener { testTerminal() } }
     private val terminalStatus = JBLabel()
+    private var shown: List<Any?> = emptyList()
     /** Por que a configuração automática não passou, no cabeçalho até a IA ficar pronta. */
     private var autoFailure: String? = null
     private val features = JBLabel()
@@ -126,33 +127,34 @@ class InterceptorPanel(private val project: Project) : SimpleToolWindowPanel(tru
             .addComponentToRightColumn(found)
             .addLabeledComponent("Modelo:", model)
             .addLabeledComponent("Tempo máximo (min):", timeout)
+            .addLabeledComponent("Argumentos extras:", extraArgs)
             .addLabeledComponent(cursorKeyLabel, cursorKey)
             .addComponentToRightColumn(cursorKeyHint)
-            .addComponentToRightColumn(JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(8), 0)).apply {
+            .addComponentToRightColumn(JPanel(WrapLayout(FlowLayout.LEFT, JBUI.scale(8), JBUI.scale(2))).apply {
                 add(testButton)
                 add(status)
             })
             .panel
         val form = FormBuilder.createFormBuilder()
             .addComponent(TitledSeparator("CLI de IA"))
-            .addComponent(JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(8), 0)).apply {
+            .addComponent(JPanel(WrapLayout(FlowLayout.LEFT, JBUI.scale(8), JBUI.scale(2))).apply {
                 add(autoButton)
                 add(autoStatus)
             })
-            .addComponent(comment("Procura o Cursor CLI e o Antigravity CLI instalados e testa cada um, com o modelo padrão, até um responder. Se nenhum responder, abre a configuração manual."))
+            .addComponent(comment("Procura o ${AgentProvider.entries.joinToString(", ") { "${it.title} CLI" }} instalados e testa cada um, com o modelo padrão, até um responder. Se nenhum responder, abre a configuração manual."))
             .addComponent(manualLink)
             .addComponent(manualPanel)
             .addComponent(TitledSeparator("Execução"))
             .addLabeledComponent("Onde rodar a IA:", runMode)
             .addComponentToRightColumn(comment(RUN_MODE_HINT))
-            .addComponentToRightColumn(JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(8), 0)).apply {
+            .addComponentToRightColumn(JPanel(WrapLayout(FlowLayout.LEFT, JBUI.scale(8), JBUI.scale(2))).apply {
                 add(terminalButton)
                 add(terminalStatus)
             })
             .addComponent(TitledSeparator("Ações com IA"))
             .addComponent(features)
             .addComponent(TitledSeparator("Execuções recentes"))
-            .addComponent(ScrollPaneFactory.createScrollPane(runs).apply { preferredSize = JBUI.size(400, 200) })
+            .addComponent(ScrollPaneFactory.createScrollPane(runs).apply { preferredSize = JBUI.size(120, 200) })
             .addComponent(comment("Duplo clique abre o registro: o pedido, os passos, os arquivos alterados e a resposta. Ficam em iron-dome/ia/."))
             .panel
             .apply { border = JBUI.Borders.empty(8, 12) }
@@ -161,7 +163,7 @@ class InterceptorPanel(private val project: Project) : SimpleToolWindowPanel(tru
                 add(header)
                 add(AgentProgressPanel(project, InterceptorTab.TITLE, this@InterceptorPanel))
             }, BorderLayout.NORTH)
-            add(ScrollPaneFactory.createScrollPane(form, true), BorderLayout.CENTER)
+            add(ScrollPaneFactory.createScrollPane(FitWidthPanel(form), true), BorderLayout.CENTER)
         })
         toolbar = ActionManager.getInstance().createActionToolbar(
             "IronDome.InterceptorToolbar",
@@ -178,7 +180,7 @@ class InterceptorPanel(private val project: Project) : SimpleToolWindowPanel(tru
                 },
             ),
             true,
-        ).apply { targetComponent = this@InterceptorPanel }.component
+        ).apply { targetComponent = this@InterceptorPanel }.wrapping().component
         runs.addMouseListener(object : MouseAdapter() {
             override fun mouseClicked(e: MouseEvent) {
                 if (e.clickCount == 2) runs.selectedValue?.let { runner.open(it.path) }
@@ -186,7 +188,12 @@ class InterceptorPanel(private val project: Project) : SimpleToolWindowPanel(tru
         })
         ApplicationManager.getApplication().messageBus.connect(this).subscribe(
             AgentSettings.Listener.TOPIC,
-            AgentSettings.Listener { ApplicationManager.getApplication().invokeLater({ updateState() }, project.disposed) },
+            AgentSettings.Listener {
+                ApplicationManager.getApplication().invokeLater({
+                    if (persisted() != shown) loadFields()
+                    updateState()
+                }, project.disposed)
+            },
         )
         project.messageBus.connect(this).subscribe(AgentRunner.RUNS, AgentRunner.Listener { ApplicationManager.getApplication().invokeLater({ reload() }, project.disposed) })
         val wsl = AgentLaunch.wslSupported
@@ -271,13 +278,26 @@ class InterceptorPanel(private val project: Project) : SimpleToolWindowPanel(tru
 
     override fun dispose() = Unit
 
+    /** O que está salvo e os campos mostram; se mudar sem passar pelo painel, como em Settings, os campos são relidos. */
+    private fun persisted(): List<Any?> = listOf(
+        AgentSettings.provider,
+        AgentSettings.host,
+        AgentSettings.wslDistro,
+        AgentSettings.executable,
+        AgentSettings.model,
+        AgentSettings.timeoutMinutes,
+        AgentSettings.extraArgs,
+    )
+
     private fun loadFields() {
+        shown = persisted()
         provider.selectedItem = AgentSettings.provider
         host.selectedItem = AgentSettings.host
         distro.selectedItem = AgentSettings.wslDistro
         executable.text = AgentSettings.executable.orEmpty()
         model.text = AgentSettings.model.orEmpty()
         timeout.value = AgentSettings.timeoutMinutes
+        extraArgs.text = AgentSettings.extraArgs.orEmpty()
         ApplicationManager.getApplication().executeOnPooledThread {
             val key = AgentSettings.cursorApiKey.orEmpty()
             ApplicationManager.getApplication().invokeLater({ cursorKey.text = key }, project.disposed)
@@ -364,6 +384,8 @@ class InterceptorPanel(private val project: Project) : SimpleToolWindowPanel(tru
         AgentSettings.executable = executable.text
         AgentSettings.model = model.text
         AgentSettings.timeoutMinutes = timeout.value as Int
+        AgentSettings.extraArgs = extraArgs.text
+        shown = persisted()
         val key = String(cursorKey.password)
         testButton.isEnabled = false
         showStatus("Testando ${AgentSettings.provider.title}…", null)
@@ -457,6 +479,7 @@ class InterceptorPanel(private val project: Project) : SimpleToolWindowPanel(tru
         fun comment(text: String) = JBLabel("<html>$text</html>").apply {
             componentStyle = UIUtil.ComponentStyle.SMALL
             foreground = UIUtil.getContextHelpForeground()
+            setAllowAutoWrapping(true)
         }
     }
 }

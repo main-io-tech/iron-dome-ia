@@ -13,6 +13,11 @@ enum class AgentProvider(val title: String, val executables: List<String>, val i
         listOf("agent", "cursor-agent"),
         "Instale o Cursor CLI (no PowerShell: irm 'https://cursor.com/install?win32=true' | iex) e rode agent login, ou informe uma chave de API do Cursor.",
     ),
+    CLAUDE(
+        "Claude Code",
+        listOf("claude"),
+        "Instale o Claude Code (npm install -g @anthropic-ai/claude-code ou o instalador nativo) e entre uma vez com claude.",
+    ),
     ANTIGRAVITY(
         "Antigravity",
         listOf("agy"),
@@ -59,8 +64,19 @@ data class AgentTask(
 
 object AgentCommand {
 
-    /** O comando completo; [executable] já resolvido, [model] vazio usa o padrão do CLI. */
-    fun build(provider: AgentProvider, executable: String, task: AgentTask, workspace: String, model: String?, timeoutMinutes: Int): List<String> {
+    /**
+     * O comando completo; [executable] já resolvido, [model] vazio usa o padrão do CLI e [extraArgs] entram antes do
+     * prompt, como nas configurações.
+     */
+    fun build(
+        provider: AgentProvider,
+        executable: String,
+        task: AgentTask,
+        workspace: String,
+        model: String?,
+        timeoutMinutes: Int,
+        extraArgs: List<String> = emptyList(),
+    ): List<String> {
         val prompt = oneLine(task.prompt)
         val chosenModel = model?.trim()?.takeIf { it.isNotEmpty() }
         return when (provider) {
@@ -74,6 +90,15 @@ object AgentCommand {
                 add(workspace)
                 if (task.write) add("--force") else addAll(listOf("--mode", "ask"))
                 chosenModel?.let { addAll(listOf("--model", it)) }
+                addAll(extraArgs)
+                add(prompt)
+            }
+            // Sem a permissão, o modo sem janela do Claude Code recusa sozinho o que pediria aprovação, como escrever.
+            AgentProvider.CLAUDE -> buildList {
+                addAll(listOf(executable, "-p", "--output-format", "stream-json", "--verbose"))
+                if (task.write) addAll(listOf("--permission-mode", "bypassPermissions"))
+                chosenModel?.let { addAll(listOf("--model", it)) }
+                addAll(extraArgs)
                 add(prompt)
             }
             AgentProvider.ANTIGRAVITY -> buildList {
@@ -87,14 +112,21 @@ object AgentCommand {
                 // Sem janela não há quem aprove: como o --force do Cursor, só nas tarefas que alteram arquivos.
                 if (task.write) add("--dangerously-skip-permissions")
                 chosenModel?.let { addAll(listOf("--model", it)) }
+                addAll(extraArgs)
             }
         }
     }
 
+    /** Os argumentos extras das configurações, separados por espaço, com aspas simples ou duplas agrupando. */
+    fun splitArgs(text: String?): List<String> {
+        if (text.isNullOrBlank()) return emptyList()
+        return Regex(""""([^"]*)"|'([^']*)'|(\S+)""").findAll(text).map { m -> m.groupValues.drop(1).first { it.isNotEmpty() } }.toList()
+    }
+
     /**
-     * O comando para o terminal da IDE, numa linha, com as aspas de [shell]. O Cursor abre interativo, para o
-     * usuário acompanhar e responder, ou, sem [interactive] (no teste), roda o pedido e termina; o Antigravity
-     * roda o pedido e mostra a resposta em texto.
+     * O comando para o terminal da IDE, numa linha, com as aspas de [shell]. O Cursor e o Claude Code abrem
+     * interativos, para o usuário acompanhar e responder, ou, sem [interactive] (no teste), rodam o pedido e
+     * terminam; o Antigravity roda o pedido e mostra a resposta em texto.
      */
     fun terminal(
         provider: AgentProvider,
@@ -104,12 +136,20 @@ object AgentCommand {
         timeoutMinutes: Int,
         shell: ShellKind,
         interactive: Boolean = true,
+        extraArgs: List<String> = emptyList(),
     ): String {
         val chosenModel = model?.trim()?.takeIf { it.isNotEmpty() }
         val args = when (provider) {
             AgentProvider.CURSOR -> buildList {
                 if (!interactive) addAll(listOf("-p", "--force", "--trust", "--output-format", "text"))
                 chosenModel?.let { addAll(listOf("--model", it)) }
+                addAll(extraArgs)
+                add(oneLine(prompt))
+            }
+            AgentProvider.CLAUDE -> buildList {
+                if (!interactive) addAll(listOf("-p", "--permission-mode", "bypassPermissions"))
+                chosenModel?.let { addAll(listOf("--model", it)) }
+                addAll(extraArgs)
                 add(oneLine(prompt))
             }
             AgentProvider.ANTIGRAVITY -> buildList {
@@ -118,6 +158,7 @@ object AgentCommand {
                 add("--print-timeout")
                 add("${timeoutMinutes}m")
                 chosenModel?.let { addAll(listOf("--model", it)) }
+                addAll(extraArgs)
             }
         }
         val quoted = (listOf(executable) + args).map { quote(it, shell) }
@@ -191,17 +232,49 @@ object AgentEvents {
             ?: return AgentEvent.Other(text)
         if (json.has("event")) return antigravity(json, text)
         return when (json.str("type")) {
-            "system" -> AgentEvent.Init(json.str("model"))
-            "assistant" -> messageText(json)?.let(AgentEvent::Text)
+            "system" -> json.str("subtype").takeIf { it == null || it == "init" }?.let { AgentEvent.Init(json.str("model")) }
+            "assistant" -> messageText(json)?.let(AgentEvent::Text) ?: claudeTools(json).firstOrNull()
             "tool_call" -> tool(json)
             "result" -> AgentEvent.Result(
                 json.str("result").orEmpty(),
-                json.get("is_error")?.takeIf { it.isJsonPrimitive }?.asBoolean == true || json.str("subtype") == "error",
+                json.get("is_error")?.takeIf { it.isJsonPrimitive }?.asBoolean == true || json.str("subtype")?.startsWith("error") == true,
             )
-            "user", "thinking" -> null
+            "user", "thinking", "stream_event", "rate_limit_event" -> null
             else -> AgentEvent.Other(text)
         }
     }
+
+    /** Como [parse], com todos os eventos da linha: no Claude Code, uma mensagem traz o texto e as ferramentas juntos. */
+    fun parseAll(line: String): List<AgentEvent> {
+        val json = runCatching { JsonParser.parseString(line.trim()) }.getOrNull()?.takeIf { it.isJsonObject }?.asJsonObject
+        if (json == null || json.str("type") != "assistant") return listOfNotNull(parse(line))
+        return listOfNotNull(messageText(json)?.let(AgentEvent::Text)) + claudeTools(json)
+    }
+
+    /** Os blocos `tool_use` de uma mensagem do Claude Code, nos tipos do registro e do Interceptador. */
+    private fun claudeTools(json: JsonObject): List<AgentEvent.Tool> {
+        val content = json.getAsJsonObject("message")?.get("content") as? JsonArray ?: return emptyList()
+        return content.mapNotNull { block ->
+            val obj = (block as? JsonObject)?.takeIf { it.str("type") == "tool_use" } ?: return@mapNotNull null
+            val name = obj.str("name").orEmpty()
+            val input = obj.getAsJsonObject("input")
+            val path = input?.let { it.str("file_path") ?: it.str("path") ?: it.str("notebook_path") }
+            AgentEvent.Tool(true, CLAUDE_TOOLS[name] ?: name.replaceFirstChar(Char::lowercase), path)
+        }
+    }
+
+    private val CLAUDE_TOOLS = mapOf(
+        "Read" to "read",
+        "Write" to "write",
+        "Edit" to "edit",
+        "MultiEdit" to "multiEdit",
+        "NotebookEdit" to "edit",
+        "Bash" to "shell",
+        "PowerShell" to "shell",
+        "Grep" to "grep",
+        "Glob" to "glob",
+        "LS" to "ls",
+    )
 
     /**
      * O `stream-json` do Antigravity CLI: `init`, `step_update` (texto em `text_delta`, ferramentas em
@@ -266,7 +339,7 @@ object AgentEvents {
     private fun messageText(json: JsonObject): String? {
         val content = json.getAsJsonObject("message")?.get("content") ?: return null
         val text = when {
-            content.isJsonArray -> (content as JsonArray).mapNotNull { block -> (block as? JsonObject)?.str("text") }.joinToString("")
+            content.isJsonArray -> (content as JsonArray).mapNotNull { block -> (block as? JsonObject)?.takeIf { it.str("type") != "tool_use" }?.str("text") }.joinToString("")
             content.isJsonPrimitive -> content.asString
             else -> null
         }

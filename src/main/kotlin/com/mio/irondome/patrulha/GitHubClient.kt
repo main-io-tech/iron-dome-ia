@@ -369,6 +369,8 @@ class GitHubClient(private val apiUrl: String, private val graphQlUrl: String, p
             url = json.string("html_url"),
             updatedAt = json.optString("updated_at").orEmpty(),
             draft = json.get("draft")?.takeUnless { it is JsonNull }?.asBoolean == true,
+            createdAt = json.optString("created_at").orEmpty(),
+            headOwner = (head.get("repo") as? JsonObject)?.getAsJsonObject("owner")?.optString("login").orEmpty(),
         )
     }
 

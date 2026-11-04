@@ -13,6 +13,7 @@ import com.intellij.openapi.vcs.FileStatus
 import com.intellij.openapi.vcs.changes.ChangeListListener
 import com.intellij.openapi.vcs.changes.ChangeListManager
 import com.intellij.openapi.vfs.VfsUtilCore
+import com.intellij.util.ui.WrapLayout
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.PsiManager
 import com.intellij.psi.search.FilenameIndex
@@ -96,7 +97,7 @@ class ProjectClassesPanel(private val project: Project, private val onAnalyze: (
     private val count = JBLabel().apply { foreground = UIUtil.getContextHelpForeground() }
 
     init {
-        val controls = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(8), JBUI.scale(4))).apply {
+        val controls = JPanel(WrapLayout(FlowLayout.LEFT, JBUI.scale(8), JBUI.scale(4))).apply {
             add(loadButton)
             add(search)
             add(showTests)
