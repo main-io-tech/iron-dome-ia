@@ -11,7 +11,7 @@ class PatrulhaTab : ReviewToolWindowTab {
 
     override val title: String = TITLE
     override val icon: Icon = IronDomeIcons.patrulha
-    override val description = "Os pull requests abertos no GitHub: comente com o Radar, envie os pedidos de alteração e verifique se foram atendidos"
+    override val description = "Os pull requests abertos no GitHub: comente o código no modo revisão do PR, envie os pedidos de alteração e verifique se foram atendidos"
 
     override fun createComponent(project: Project, toolWindow: ToolWindow): JComponent = PatrulhaPanel(project)
 

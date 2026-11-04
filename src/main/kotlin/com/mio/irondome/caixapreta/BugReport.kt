@@ -11,6 +11,7 @@ enum class Mechanism(val title: String, val packageName: String, val contents: S
     SENTINELA("Sentinela", "sentinela", "aba Sentinela e o diff dos arquivos não commitados"),
     ESCUDO("Escudo", "escudo", "execução dos testes JUnit, formatação do @DisplayName e a aba Escudo"),
     PATRULHA("Patrulha", "patrulha", "pull requests do GitHub, envio dos pedidos de alteração e a verificação deles"),
+    INTERCEPTOR("Interceptador", "interceptor", "integração com a IA pelo Cursor CLI ou Antigravity CLI: configuração, execução e registro"),
     BASE("Base", "base", "tool window, abas extras, barra flutuante do editor e componentes visuais compartilhados"),
     CAIXA_PRETA("Caixa-Preta", "caixapreta", "o próprio Reportar Bug: formulário, capturas e envio ao Linear");
 

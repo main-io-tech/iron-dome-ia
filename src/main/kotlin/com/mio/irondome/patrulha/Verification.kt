@@ -46,6 +46,58 @@ object CodeCheck {
     private fun normalize(text: String): List<String> = text.replace("\r\n", "\n").split('\n').map { it.trimEnd() }
 }
 
+/** O pedido como comentário do Radar do PR [number], para montar o texto do GitHub do mesmo jeito que no envio. */
+fun ChangeRequest.toComment(number: Int) = ReviewComment(
+    id = id,
+    filePath = path,
+    startLine = (startLine - 1).coerceAtLeast(0),
+    endLine = (endLine - 1).coerceAtLeast(0),
+    snippet = snippet,
+    text = text,
+    target = target,
+    pullRequest = number,
+    suggestion = suggestion,
+)
+
+/** O pedido comparado com o comentário dele no GitHub, que o revisor pode ter editado ou apagado lá. */
+object RemoteSync {
+
+    /**
+     * [comments] são os comentários do PR no GitHub, pelo id. Sem o do pedido, ele foi apagado; com outro
+     * texto, foi editado, e o `.md` passa a ter o texto do GitHub. Pedidos no texto geral da revisão não
+     * têm comentário próprio e ficam como estão.
+     */
+    fun apply(request: ChangeRequest, comments: Map<Long, GitHubClient.PostedComment>): ChangeRequest {
+        val id = request.commentId ?: return request
+        if (request.deleted) return request
+        val comment = comments[id] ?: return request.copy(remote = RemoteStatus.DELETED, remoteUpdatedAt = null)
+        val (text, suggestion) = ReviewPlan.parseBody(comment.body)
+        if (text == request.text.trim() && suggestion.trimEnd() == request.suggestion.trimEnd()) return request
+        return request.copy(text = text, suggestion = suggestion.trimEnd(), remote = RemoteStatus.EDITED, remoteUpdatedAt = comment.updatedAt)
+    }
+}
+
+/** Onde o trecho de um pedido está no código de agora, que pode ter mudado desde o envio. */
+object SnippetLocator {
+
+    /**
+     * Linhas 0-based do trecho em [text], na ocorrência mais perto de [recorded] (as linhas do envio); sem
+     * o trecho no texto, as linhas gravadas, limitadas ao tamanho do arquivo.
+     */
+    fun locate(text: String, snippet: String, recorded: IntRange): IntRange {
+        val lines = normalize(text)
+        val lastLine = (lines.size - 1).coerceAtLeast(0)
+        val fallback = recorded.first.coerceIn(0, lastLine)..recorded.last.coerceIn(recorded.first.coerceIn(0, lastLine), lastLine)
+        val wanted = normalize(snippet)
+        if (snippet.isBlank() || wanted.size > lines.size) return fallback
+        val found = (0..lines.size - wanted.size).filter { index -> lines.subList(index, index + wanted.size) == wanted }
+        val start = found.minByOrNull { kotlin.math.abs(it - recorded.first) } ?: return fallback
+        return start..start + wanted.size - 1
+    }
+
+    private fun normalize(text: String): List<String> = text.replace("\r\n", "\n").split('\n').map { it.trimEnd() }
+}
+
 /** A conversa do pedido no PR: resolvida, respondida por outra pessoa ou ainda aberta. */
 object ThreadCheck {
 
@@ -87,6 +139,24 @@ object ReviewPlan {
 
     fun marker(id: String) = "<!-- iron-dome:$id -->"
 
+    private val MARKER = Regex("""<!--\s*iron-dome:[^>]*-->""")
+    private val OUTSIDE_DIFF = Regex("""^\*\*Linhas? [^*\n]+\*\* \(fora do diff\):\n\n(`{3,4})[^\n]*\n.*?\n\1[ \t]*(\n|$)""", RegexOption.DOT_MATCHES_ALL)
+    private val SUGGESTION_BLOCK = Regex("""(`{3,4})suggestion[^\n]*\n(.*?)\1[ \t]*$""", RegexOption.DOT_MATCHES_ALL)
+    private val EXAMPLE_BLOCK = Regex("""\*\*Como sugiro que fique:\*\*\s*\n(`{3,4})[^\n]*\n(.*?)\1[ \t]*$""", RegexOption.DOT_MATCHES_ALL)
+
+    /**
+     * O texto e o código sugerido de volta, a partir do comentário como está no GitHub, que pode ter sido
+     * editado lá. Desfaz o que [bodyFor] monta: a marca do id, o trecho citado fora do diff e o bloco
+     * `suggestion` ou o código de exemplo. Um texto em outro formato vem inteiro, sem sugestão.
+     */
+    fun parseBody(body: String): Pair<String, String> {
+        var text = MARKER.replace(body.replace("\r\n", "\n"), "").trim()
+        OUTSIDE_DIFF.find(text)?.let { text = text.substring(it.range.last + 1).trim() }
+        val block = SUGGESTION_BLOCK.find(text) ?: EXAMPLE_BLOCK.find(text) ?: return text to ""
+        val code = block.groupValues[2].removeSuffix("\n")
+        return text.removeRange(block.range).trim() to code
+    }
+
     fun plan(comments: List<ReviewComment>, files: List<ChangedFile>): List<PlannedRequest> {
         val byPath = files.associateBy { it.path }
         return comments.map { comment ->
@@ -95,13 +165,23 @@ object ReviewPlan {
             val last = comment.endLine + 1
             when {
                 comment.target == CommentTarget.LINES && file != null && (first..last).all { it in file.commentableLines } ->
-                    PlannedRequest(comment, Placement.INLINE, withMarker(inline(comment), comment.id), first.takeIf { it < last }, last)
-                comment.target == CommentTarget.LINES && file != null ->
-                    PlannedRequest(comment, Placement.FILE, withMarker(outsideDiff(comment, first, last), comment.id), null, null)
-                comment.target == CommentTarget.FILE && file != null ->
-                    PlannedRequest(comment, Placement.FILE, withMarker(comment.text.trim() + example(comment), comment.id), null, null)
-                else -> PlannedRequest(comment, Placement.BODY, bodyItem(comment, first, last), null, null)
+                    PlannedRequest(comment, Placement.INLINE, bodyFor(comment, Placement.INLINE), first.takeIf { it < last }, last)
+                comment.target != CommentTarget.PACKAGE && file != null ->
+                    PlannedRequest(comment, Placement.FILE, bodyFor(comment, Placement.FILE), null, null)
+                else -> PlannedRequest(comment, Placement.BODY, bodyFor(comment, Placement.BODY), null, null)
             }
+        }
+    }
+
+    /** O texto de [comment] no GitHub em [placement], com a marca do id quando é um comentário próprio. */
+    fun bodyFor(comment: ReviewComment, placement: Placement): String {
+        val first = comment.startLine + 1
+        val last = comment.endLine + 1
+        return when {
+            placement == Placement.INLINE -> withMarker(inline(comment), comment.id)
+            placement == Placement.FILE && comment.target == CommentTarget.LINES -> withMarker(outsideDiff(comment, first, last), comment.id)
+            placement == Placement.FILE -> withMarker(comment.text.trim() + example(comment), comment.id)
+            else -> bodyItem(comment, first, last)
         }
     }
 

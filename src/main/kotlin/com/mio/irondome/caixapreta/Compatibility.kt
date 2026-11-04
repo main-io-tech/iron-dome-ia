@@ -10,6 +10,7 @@ import com.intellij.ui.jcef.JBCefApp
 import com.mio.irondome.base.IdeSupport
 import com.mio.irondome.base.ReviewToolWindowTab
 import com.mio.irondome.base.TabFailures
+import com.mio.irondome.interceptor.AgentSettings
 
 /** [INFO] é uma configuração opcional; só [WARNING] e [ERROR] merecem aviso ao abrir o projeto. */
 enum class CheckStatus(val label: String) {
@@ -44,6 +45,9 @@ data class Environment(
     val missingApis: Map<String, List<String>> = emptyMap(),
     /** Abas que não abriram por faltar na IDE uma classe ou método que elas usam. */
     val ideVersionFailures: Set<String> = emptySet(),
+    /** O CLI de IA escolhido e onde ele foi encontrado; nulo se não foi. */
+    val agentProvider: String = "Cursor",
+    val agentCli: String? = null,
 ) {
     val olderThanTested: Boolean get() = IdeSupport.isOlder(ideBuild, IdeSupport.TESTED_BUILD)
 }
@@ -74,6 +78,8 @@ object Compatibility {
             ideBuild = app.build.asStringWithoutProductCode(),
             missingApis = IdeSupport.missing,
             ideVersionFailures = TabFailures.fromIdeVersion,
+            agentProvider = AgentSettings.provider.title,
+            agentCli = runCatching { AgentSettings.resolveExecutable()?.toString() }.getOrNull(),
         )
     }
 
@@ -89,8 +95,19 @@ object Compatibility {
         impacto(env),
         escudo(env),
         patrulha(env),
+        interceptor(env),
         caixaPreta(env),
     ).map { check -> ideVersion(env, check.mechanism) ?: check }
+
+    /** Opcional: sem o CLI, as ações de IA caem no fluxo manual de copiar o pedido. */
+    private fun interceptor(env: Environment): CompatibilityCheck = when (val cli = env.agentCli) {
+        null -> CompatibilityCheck(
+            Mechanism.INTERCEPTOR, CheckStatus.INFO,
+            "${env.agentProvider} CLI não encontrado: as ações com IA ficam indisponíveis ou só copiam o pedido.",
+            "Instale o CLI ou informe o caminho em Settings > Tools > Iron Dome IA > Interceptador (IA).",
+        )
+        else -> CompatibilityCheck(Mechanism.INTERCEPTOR, CheckStatus.OK, "${env.agentProvider} CLI em $cli.")
+    }
 
     /** Os que merecem aviso ao abrir o projeto. */
     fun problems(checks: List<CompatibilityCheck>) = checks.filter { it.status == CheckStatus.WARNING || it.status == CheckStatus.ERROR }

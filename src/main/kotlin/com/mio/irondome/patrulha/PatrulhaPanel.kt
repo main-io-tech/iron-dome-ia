@@ -15,6 +15,7 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.service
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorManager
+import com.intellij.openapi.fileTypes.FileTypeManager
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.progress.ProcessCanceledException
@@ -24,6 +25,7 @@ import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.ui.SimpleToolWindowPanel
+import com.intellij.openapi.vcs.FileStatus
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFileManager
 import com.intellij.openapi.vfs.newvfs.BulkFileListener
@@ -41,11 +43,16 @@ import com.mio.irondome.base.SummaryHeader
 import com.mio.irondome.base.Tone
 import com.mio.irondome.base.plural
 import com.mio.irondome.base.refreshAction
+import com.mio.irondome.interceptor.AgentRunner
+import com.mio.irondome.interceptor.AgentTask
 import com.mio.irondome.radar.CommentStatus
 import com.mio.irondome.radar.CommentTarget
 import com.mio.irondome.radar.ReviewComment
 import com.mio.irondome.radar.ReviewCommentService
 import com.mio.irondome.radar.ReviewCommentsListener
+import com.mio.irondome.radar.TargetComments
+import git4idea.repo.GitRepository
+import git4idea.repo.GitRepositoryChangeListener
 import org.jetbrains.plugins.github.api.GithubServerPath
 import org.jetbrains.plugins.github.authentication.AuthorizationType
 import org.jetbrains.plugins.github.authentication.GHAccountsUtil
@@ -57,11 +64,13 @@ import java.awt.event.MouseEvent
 import javax.swing.Icon
 import javax.swing.JPanel
 import javax.swing.SwingUtilities
+import javax.swing.event.TreeExpansionEvent
+import javax.swing.event.TreeExpansionListener
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.DefaultTreeModel
 
 /**
- * Aba Patrulha: os PRs abertos no GitHub, os comentários do Radar ainda não enviados a cada um e os
+ * Aba Patrulha: os PRs abertos no GitHub, os comentários do modo revisão ainda não enviados a cada um e os
  * pedidos de alteração já enviados, com o que as verificações dizem sobre eles.
  */
 class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, true), Disposable {
@@ -74,13 +83,25 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
         val drafts: List<ReviewComment>,
         val active: Boolean,
         val checkedOut: Boolean,
+        val historyShown: Boolean,
     )
 
     private class Section(val title: String, val icon: Icon, val count: Int)
 
     private class DraftItem(val number: Int, val comment: ReviewComment)
 
-    private class RequestItem(val number: Int, val request: ChangeRequest)
+    private class RequestItem(val number: Int, val request: ChangeRequest, val inEditor: Boolean)
+
+    /** A pasta dos arquivos alterados do PR: [files] nulo enquanto carrega ou se deu [error]. */
+    private class FilesItem(val number: Int, val files: PullRequestFiles?, val error: String?)
+
+    /** [comments] conta rascunhos e pedidos dos arquivos da pasta. */
+    private class DirItem(val number: Int, val folder: FileFolder, val comments: Int)
+
+    /** [comments] conta rascunhos e pedidos do arquivo. */
+    private class FileItem(val number: Int, val file: ChangedFile, val comments: Int)
+
+    private class LoadingItem(val text: String)
 
     private val patrulha = PatrulhaService.getInstance(project)
     private val radar = project.service<ReviewCommentService>()
@@ -101,6 +122,13 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
     private var loading = false
     private var rebuildQueued = false
 
+    private val filesLoading = mutableSetOf<Int>()
+    private val filesErrors = mutableMapOf<Int, String>()
+    /** PRs com a pasta de arquivos aberta, para ela continuar aberta quando a árvore é refeita. */
+    private val expandedFiles = mutableSetOf<Int>()
+    /** Pastas dos arquivos alterados que o usuário fechou, como `número:caminho`; as outras abrem sozinhas. */
+    private val collapsedDirs = mutableSetOf<String>()
+
     private companion object {
         /** Quantos arquivos o aviso do stash lista antes do "e mais". */
         const val STASH_PREVIEW = 8
@@ -114,7 +142,7 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
         val actions = DefaultActionGroup(
             action(
                 "Revisar Este PR",
-                "Faz o checkout do PR, se precisar (com o que não está commitado no stash), e liga o Radar a ele: os comentários novos vão para o PR",
+                "Faz o checkout do PR, se precisar (com o que não está commitado no stash), e entra no modo revisão do PR: os comentários feitos no editor vão para o PR, não para a IA",
                 IronDomeIcons.patrulha,
                 enabled = { selectedPr()?.pr != null }, text = {
                     val item = selectedPr()
@@ -124,12 +152,44 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
                         else -> "Atualizar ou Encerrar Revisão"
                     }
                 }) { toggleReview() },
+            action("Ver Alterações", "Abre o diff dos arquivos do PR, no arquivo selecionado ou no primeiro; as setas passam pelos demais", AllIcons.Actions.Diff,
+                enabled = { selectedPr()?.pr != null && context != null }) {
+                val pr = selectedPr()?.pr
+                if (pr != null) {
+                    val path = when (val item = selectedNode()?.userObject) {
+                        is FileItem -> item.file.path
+                        is DirItem -> item.folder.allFiles.firstOrNull()?.path
+                        else -> null
+                    }
+                    showDiff(pr, path)
+                }
+            },
+            action(
+                "Revisar com IA",
+                "A IA configurada lê os arquivos alterados do PR e propõe comentários, que entram como rascunhos para você revisar antes de enviar",
+                IronDomeIcons.ia,
+                enabled = {
+                    val runner = AgentRunner.getInstance(project)
+                    selectedPr()?.let { it.active && it.checkedOut } == true && runner.running == null && runner.available()
+                },
+            ) { reviewWithAi() },
             action("Enviar ao GitHub", "Envia os comentários não enviados deste PR como uma revisão", AllIcons.Actions.Upload,
                 enabled = { selectedPr()?.let { it.pr != null && it.drafts.isNotEmpty() } == true }) { send() },
+            action("Editar", "Edita o comentário selecionado: o rascunho no editor, ou o pedido já enviado, também no GitHub", AllIcons.Actions.Edit,
+                enabled = { selectedNode()?.userObject.let { it is DraftItem || (it is RequestItem && !it.request.deleted) } }) { editSelected() },
+            action("Excluir Pedido", "Tira o pedido do .md e, se você quiser, apaga o comentário no GitHub", AllIcons.General.Remove,
+                enabled = { selectedNode()?.userObject is RequestItem }) { deleteSelected() },
+            action(
+                "Mostrar no Editor",
+                "Mostra ou oculta no código os pedidos enviados: o histórico do PR inteiro, ou só o pedido selecionado",
+                AllIcons.Actions.Show,
+                enabled = { historyTarget() != null },
+                text = { if (historyTarget()?.second == true) "Ocultar no Editor" else "Mostrar no Editor" },
+            ) { toggleHistory() },
             Separator.getInstance(),
             action("Verificar Pedidos", "Confere no head atual do PR e nas conversas se os pedidos foram atendidos", AllIcons.Actions.Checked,
                 enabled = { selectedPr()?.record?.requests?.isNotEmpty() == true && context != null }) { verify() },
-            action("Pedir Parecer da IA", "Copia um pedido para a IA avaliar cada pedido no .md e abre o arquivo", AllIcons.Actions.Lightning,
+            action("Pedir Parecer da IA", "A IA configurada avalia cada pedido e escreve o parecer no .md; sem o CLI, copia o pedido para colar na sua IA", IronDomeIcons.ia,
                 enabled = { selectedPr()?.record != null }) { askAi() },
             action("Abrir .md dos Pedidos", "Abre iron-dome/pull-requests/pr-<número>.md", AllIcons.Actions.EditSource,
                 enabled = { selectedPr()?.record != null }) { selectedPr()?.let { openRecord(it.number) } },
@@ -146,9 +206,18 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
         val connection = project.messageBus.connect(this)
         connection.subscribe(ReviewCommentsListener.TOPIC, ReviewCommentsListener { scheduleRebuild() })
         connection.subscribe(PatrulhaService.TOPIC, PatrulhaService.Listener { scheduleRebuild() })
+        connection.subscribe(GitRepository.GIT_REPO_CHANGE, GitRepositoryChangeListener { scheduleRebuild() })
         connection.subscribe(VirtualFileManager.VFS_CHANGES, object : BulkFileListener {
             override fun after(events: List<VFileEvent>) {
-                if (events.any { "/${ReviewCommentService.REVIEW_DIR}/${PullRequestRecord.DIR}/" in it.path.replace('\\', '/') }) scheduleRebuild()
+                val changed = events.mapNotNull { event ->
+                    event.path.replace('\\', '/').takeIf { "/${ReviewCommentService.REVIEW_DIR}/${PullRequestRecord.DIR}/" in it }
+                        ?.substringAfterLast('/')?.let(PullRequestRecord::numberOf)
+                }
+                if (changed.isEmpty()) return
+                ApplicationManager.getApplication().invokeLater({
+                    changed.distinct().filter(patrulha::isHistoryShown).forEach(patrulha::historyChanged)
+                }, project.disposed)
+                scheduleRebuild()
             }
         })
         refresh()
@@ -191,7 +260,9 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
                 openPrs = prs
                 problem = error
                 needsToken = restricted
+                filesErrors.clear()
                 rebuild()
+                if (error == null) syncQuietly(prs.map { it.number })
             }
 
             override fun onThrowable(error: Throwable) {
@@ -226,12 +297,14 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
                 drafts = radar.pullRequestComments(number),
                 active = radar.activePullRequest == number,
                 checkedOut = pr != null && pr.headSha == head,
+                historyShown = patrulha.isHistoryShown(number),
             )
         }
     }
 
     private fun rebuild() {
         val selected = selectedPr()?.number
+        val selectedKey = selectedNode()?.userObject?.let(::keyOf)
         val expanded = TreeUtil.collectExpandedUserObjects(tree).mapNotNull { (it as? PrItem)?.number }.toSet()
         val items = items()
         val root = DefaultMutableTreeNode()
@@ -239,8 +312,9 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
         val closed = items.filter { it.pr == null }
         fun addPr(parent: DefaultMutableTreeNode, item: PrItem) {
             val node = DefaultMutableTreeNode(item)
+            item.pr?.let { pr -> node.add(filesNode(item, pr)) }
             item.drafts.forEach { node.add(DefaultMutableTreeNode(DraftItem(item.number, it))) }
-            item.record?.requests?.forEach { node.add(DefaultMutableTreeNode(RequestItem(item.number, it))) }
+            item.record?.requests?.forEach { node.add(DefaultMutableTreeNode(RequestItem(item.number, it, patrulha.isInEditor(item.number, it.id)))) }
             parent.add(node)
         }
         if (open.isNotEmpty()) {
@@ -255,13 +329,112 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
         }
         model.setRoot(root)
         TreeUtil.expand(tree, 1)
-        TreeUtil.treeNodeTraverser(root).filter(DefaultMutableTreeNode::class.java).forEach { node ->
+        val nodes = TreeUtil.treeNodeTraverser(root).filter(DefaultMutableTreeNode::class.java).toList()
+        nodes.forEach { node ->
             val item = node.userObject as? PrItem ?: return@forEach
             if (item.number in expanded || item.active || item.number == selected) tree.expandPath(TreeUtil.getPathFromRoot(node))
-            if (item.number == selected) tree.selectionPath = TreeUtil.getPathFromRoot(node)
         }
+        nodes.forEach { node ->
+            val item = node.userObject as? FilesItem ?: return@forEach
+            if (item.number in expandedFiles) {
+                tree.expandPath(TreeUtil.getPathFromRoot(node))
+                expandFolders(node)
+            }
+        }
+        val reselect = nodes.firstOrNull { selectedKey != null && keyOf(it.userObject) == selectedKey }
+            ?: nodes.firstOrNull { (it.userObject as? PrItem)?.number == selected }
+        reselect?.let { tree.selectionPath = TreeUtil.getPathFromRoot(it) }
         updateEmptyText()
         updateHeader(items)
+        items.firstOrNull { it.active }?.pr?.let(::ensureFiles)
+    }
+
+    /** Para a seleção sobreviver à árvore refeita. */
+    private fun keyOf(item: Any?): String? = when (item) {
+        is PrItem -> "pr:${item.number}"
+        is FilesItem -> "files:${item.number}"
+        is DirItem -> "dir:${dirKey(item)}"
+        is FileItem -> "file:${item.number}:${item.file.path}"
+        is DraftItem -> "draft:${item.number}:${item.comment.id}"
+        is RequestItem -> "request:${item.number}:${item.request.id}"
+        else -> null
+    }
+
+    private fun filesNode(item: PrItem, pr: PullRequest): DefaultMutableTreeNode {
+        val files = patrulha.cachedFiles(pr.number, pr.headSha)
+        val node = DefaultMutableTreeNode(FilesItem(pr.number, files, filesErrors[pr.number]))
+        if (files == null) {
+            node.add(DefaultMutableTreeNode(LoadingItem(filesErrors[pr.number] ?: "Carregando os arquivos do GitHub…")))
+            return node
+        }
+        val requests = item.record?.active.orEmpty()
+        val comments = files.files.associate { file ->
+            file.path to item.drafts.count { it.filePath == file.path } + requests.count { it.path == file.path }
+        }
+        fun add(parent: DefaultMutableTreeNode, folder: FileFolder) {
+            folder.folders.forEach { sub ->
+                val child = DefaultMutableTreeNode(DirItem(pr.number, sub, sub.allFiles.sumOf { comments[it.path] ?: 0 }))
+                add(child, sub)
+                parent.add(child)
+            }
+            folder.files.forEach { parent.add(DefaultMutableTreeNode(FileItem(pr.number, it, comments[it.path] ?: 0))) }
+        }
+        add(node, ChangedFileTree.build(files.files))
+        return node
+    }
+
+    private fun dirKey(item: DirItem) = "${item.number}:${item.folder.path}"
+
+    /** Abre as pastas abaixo de [node], menos as que o usuário fechou e o que está dentro delas. */
+    private fun expandFolders(node: DefaultMutableTreeNode) {
+        node.children().asSequence().filterIsInstance<DefaultMutableTreeNode>().forEach { child ->
+            val item = child.userObject as? DirItem ?: return@forEach
+            if (dirKey(item) in collapsedDirs) return@forEach
+            tree.expandPath(TreeUtil.getPathFromRoot(child))
+            expandFolders(child)
+        }
+    }
+
+    /** Lê os arquivos do PR no GitHub em segundo plano, uma vez por head do PR. */
+    private fun ensureFiles(pr: PullRequest) {
+        val context = context?.takeIf { it.account != null } ?: return
+        if (patrulha.cachedFiles(pr.number, pr.headSha) != null || pr.number in filesErrors || !filesLoading.add(pr.number)) return
+        object : Task.Backgroundable(project, "Patrulha: lendo os arquivos do PR #${pr.number}", true) {
+            override fun run(indicator: ProgressIndicator) {
+                patrulha.files(context, pr)
+            }
+
+            override fun onSuccess() {
+                filesErrors.remove(pr.number)
+            }
+
+            override fun onThrowable(error: Throwable) {
+                filesErrors[pr.number] = "Não foi possível ler os arquivos: ${error.message ?: error.javaClass.simpleName}"
+            }
+
+            override fun onFinished() {
+                filesLoading.remove(pr.number)
+                rebuild()
+            }
+        }.queue()
+    }
+
+    /** Abre o diff do PR no arquivo [path], ou no primeiro, lendo os arquivos antes se ainda não vieram. */
+    private fun showDiff(pr: PullRequest, path: String? = null) {
+        val context = context ?: return
+        val cached = patrulha.cachedFiles(pr.number, pr.headSha)
+        if (cached != null) {
+            project.service<PullRequestDiff>().show(context, pr, cached, cached.files.indexOfFirst { it.path == path }.coerceAtLeast(0))
+            return
+        }
+        background("Lendo os arquivos do PR #${pr.number}", { patrulha.files(context, pr) }) { files ->
+            if (files.files.isEmpty()) {
+                notify("PR #${pr.number} sem arquivos alterados", pr.title, NotificationType.INFORMATION)
+            } else {
+                project.service<PullRequestDiff>().show(context, pr, files, files.files.indexOfFirst { it.path == path }.coerceAtLeast(0))
+            }
+            rebuild()
+        }
     }
 
     private fun updateEmptyText() {
@@ -287,7 +460,7 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
 
     private fun updateHeader(items: List<PrItem>) {
         val context = context
-        val requests = items.flatMap { it.record?.requests.orEmpty() }
+        val requests = items.flatMap { it.record?.active.orEmpty() }
         val done = requests.count { it.likelyDone }
         val pending = requests.count { it.likelyPending }
         val waiting = requests.size - done - pending
@@ -295,7 +468,7 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
         val active = items.firstOrNull { it.active }
         val subtitle = listOfNotNull(
             context?.account?.let { "Conta @${it.name}" },
-            active?.let { "revisando o PR #${it.number}: os comentários novos do Radar vão para ele" },
+            active?.let { "modo revisão do PR #${it.number}: os comentários feitos no editor vão para ele" },
         ).joinToString(" · ").ifEmpty { null }
         val warning = when {
             context == null && !loading -> "O projeto não tem um remote do GitHub. A Patrulha lê os PRs do remote origin ou do primeiro remote do GitHub."
@@ -339,7 +512,7 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
             return
         }
         if (item.checkedOut || context == null) {
-            radar.startPullRequestReview(pr.number)
+            startReview(pr.number, context?.repository?.let(PatrulhaService::refOf))
             return
         }
         enterPr(context, pr)
@@ -361,9 +534,20 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
         background("Conferindo as alterações locais", { patrulha.localChanges(context) }) { changes ->
             if (changes.files.isNotEmpty() && !confirmStash(pr, changes)) return@background
             val title = "Fazendo o checkout do PR #${pr.number}"
-            background(title, { patrulha.enter(context, pr.number, stash = changes.files.isNotEmpty()) }) { result ->
-                radar.startPullRequestReview(pr.number)
-                val branch = PatrulhaService.branchName(pr.number)
+            val branch = PatrulhaService.branchName(pr.number)
+            // Antes do checkout: a troca de branch que ele causa não pode encerrar a revisão de outro PR.
+            val previousRef = radar.activePullRequest.takeIf { it != 0 }?.let(patrulha::reviewRef)
+            patrulha.setReviewRef(branch)
+            val work = {
+                try {
+                    patrulha.enter(context, pr.number, stash = changes.files.isNotEmpty())
+                } catch (e: Throwable) {
+                    patrulha.setReviewRef(previousRef)
+                    throw e
+                }
+            }
+            background(title, work) { result ->
+                startReview(pr.number, branch)
                 val stashNote = when {
                     result.stash.isEmpty() -> null
                     result.restorable -> "Suas alterações estão no stash \"${result.stashMessage}\" e voltam quando você encerrar a revisão."
@@ -371,7 +555,8 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
                 }
                 notify(
                     "Revisando o PR #${pr.number} na branch $branch",
-                    listOfNotNull(pr.title, "Os comentários novos do Radar vão para o PR.", stashNote).joinToString(" "),
+                    listOfNotNull(pr.title, "Modo revisão ligado: os comentários feitos no editor vão para o PR, não para a IA.", stashNote)
+                        .joinToString(" "),
                     NotificationType.INFORMATION,
                 )
                 refresh()
@@ -405,7 +590,7 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
         val context = context
         val point = patrulha.returnPoint()
         if (context == null || point == null || point.pullRequest != number) {
-            radar.stopPullRequestReview()
+            stopReview(number)
             return
         }
         val drafts = radar.pullRequestComments(number).size
@@ -429,7 +614,7 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
         )
         when (choice) {
             Messages.YES -> {
-                radar.stopPullRequestReview()
+                stopReview(number)
                 FileDocumentManager.getInstance().saveAllDocuments()
                 background("Voltando para ${point.ref}", { patrulha.leave(context) }) { warning ->
                     notify(
@@ -441,7 +626,7 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
                 }
             }
             Messages.NO -> {
-                radar.stopPullRequestReview()
+                stopReview(number)
                 patrulha.forgetReturnPoint()
                 if (point.stash.isNotEmpty()) {
                     notify(
@@ -451,6 +636,138 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
                     )
                 }
             }
+        }
+    }
+
+    /**
+     * A IA revisa o PR no checkout e devolve comentários em JSON, que viram rascunhos do modo revisão. Só no
+     * modo revisão e no head do PR, para as linhas baterem com o GitHub.
+     */
+    private fun reviewWithAi() {
+        val item = selectedPr() ?: return
+        val pr = item.pr ?: return
+        val context = context ?: return
+        val runner = AgentRunner.getInstance(project)
+        background("Preparando a revisão do PR #${pr.number} para a IA", { patrulha.files(context, pr) }) { files ->
+            val instructions = runner.writeInstructions(AiReview.fileName(pr.number), AiReview.instructions(pr, files)) ?: return@background
+            runner.run(
+                AgentTask(
+                    "Revisão do PR #${pr.number}",
+                    "Revise o pull request seguindo as instruções em $instructions e responda só com o JSON pedido.",
+                    write = false,
+                ),
+            ) { result -> if (result.ok) addAiDrafts(pr.number, AiReview.parse(result.answer)) }
+        }
+    }
+
+    private fun addAiDrafts(number: Int, comments: List<AiComment>) {
+        if (radar.activePullRequest != number) {
+            notify("Revisão da IA descartada", "O modo revisão do PR #$number foi encerrado antes de a IA terminar.", NotificationType.WARNING)
+            return
+        }
+        val added = comments.mapNotNull { comment ->
+            val file = radar.findFile(comment.path)?.takeUnless { it.isDirectory } ?: return@mapNotNull null
+            val document = FileDocumentManager.getInstance().getDocument(file) ?: return@mapNotNull null
+            val last = (comment.endLine - 1).coerceAtMost(document.lineCount - 1)
+            val first = (comment.startLine - 1).coerceAtMost(last)
+            if (first < 0) return@mapNotNull null
+            radar.addComment(file, document, first..last, comment.comment, discuss = false, suggestion = comment.suggestion)
+        }
+        val skipped = comments.size - added.size
+        notify(
+            if (added.isEmpty()) "A IA não apontou nada no PR #$number" else "${plural(added.size, "rascunho", "rascunhos")} da IA no PR #$number",
+            listOfNotNull(
+                "Revise, edite ou remova cada um antes de Enviar ao GitHub.".takeIf { added.isNotEmpty() },
+                "$skipped ${if (skipped == 1) "comentário apontava" else "comentários apontavam"} para arquivos fora do projeto.".takeIf { skipped > 0 },
+            ).joinToString(" ").ifEmpty { "Nenhum problema encontrado nos arquivos alterados." },
+            NotificationType.INFORMATION,
+        )
+        rebuild()
+    }
+
+    /** Com a revisão, o histórico do PR aparece no editor; ao encerrar, sai. Sair de [ref] encerra a revisão. */
+    private fun startReview(number: Int, ref: String?) {
+        patrulha.setReviewRef(ref)
+        radar.startPullRequestReview(number)
+        patrulha.setHistoryShown(number, true)
+        syncQuietly(listOf(number))
+    }
+
+    private fun stopReview(number: Int) {
+        radar.stopPullRequestReview()
+        patrulha.setHistoryShown(number, false)
+    }
+
+    private fun editSelected() {
+        when (val item = selectedNode()?.userObject) {
+            is DraftItem -> TargetComments.edit(project, item.comment)
+            is RequestItem -> SentRequestEditor.edit(project, item.number, item.request)
+        }
+    }
+
+    /** Apagar no GitHub some com a conversa do comentário, então só acontece com a escolha explícita. */
+    private fun deleteSelected() {
+        val item = selectedNode()?.userObject as? RequestItem ?: return
+        val request = item.request
+        val onGitHubPossible = request.commentId != null && !request.deleted
+        val choice = if (onGitHubPossible) {
+            Messages.showYesNoCancelDialog(
+                project,
+                "Excluir o pedido ${request.id} (${request.path}, ${request.location}) do PR #${item.number}?\n\n" +
+                    "Apagar também no GitHub remove o comentário e a conversa dele do PR.",
+                "Excluir ${request.id}",
+                "Apagar no GitHub e no .md",
+                "Só Tirar do .md",
+                "Cancelar",
+                Messages.getWarningIcon(),
+            )
+        } else {
+            if (Messages.showOkCancelDialog(
+                    project,
+                    "Tirar o pedido ${request.id} do .md do PR #${item.number}?" +
+                        if (request.deleted) " O comentário já foi apagado no GitHub." else " Ele está no texto geral da revisão, que fica como está no GitHub.",
+                    "Excluir ${request.id}",
+                    "Tirar do .md",
+                    "Cancelar",
+                    Messages.getWarningIcon(),
+                ) == Messages.OK
+            ) Messages.NO else Messages.CANCEL
+        }
+        if (choice != Messages.YES && choice != Messages.NO) return
+        val onGitHub = choice == Messages.YES
+        val context = context
+        background("Excluindo ${request.id} do PR #${item.number}", { patrulha.deleteRequest(context, item.number, request.id, onGitHub) }) {
+            radar.refreshPaths(listOf(request.path))
+            notify(
+                "${request.id} excluído do PR #${item.number}",
+                if (onGitHub) "O comentário foi apagado no GitHub e o pedido saiu do .md." else "O pedido saiu do .md; o GitHub ficou como estava.",
+                NotificationType.INFORMATION,
+            )
+            rebuild()
+        }
+    }
+
+    /**
+     * O que Mostrar/Ocultar no Editor alterna, e se está no editor agora: um pedido selecionado, ou o
+     * histórico do PR quando a seleção é o PR.
+     */
+    private fun historyTarget(): Pair<Any, Boolean>? = when (val item = selectedNode()?.userObject) {
+        is RequestItem -> item to patrulha.isInEditor(item.number, item.request.id)
+        is PrItem -> if (item.record?.requests.isNullOrEmpty()) null else item to patrulha.isHistoryShown(item.number)
+        else -> null
+    }
+
+    private fun toggleHistory() {
+        val (item, shown) = historyTarget() ?: return
+        when (item) {
+            is RequestItem -> if (shown) {
+                patrulha.setRequestsHidden(item.number, listOf(item.request.id), true)
+            } else {
+                patrulha.setRequestsHidden(item.number, listOf(item.request.id), false)
+                patrulha.setHistoryShown(item.number, true)
+                navigate(item.request.path, (item.request.startLine - 1).takeIf { item.request.target == CommentTarget.LINES })
+            }
+            is PrItem -> patrulha.setHistoryShown(item.number, !shown)
         }
     }
 
@@ -487,18 +804,29 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
     private fun verify() {
         val item = selectedPr() ?: return
         val context = context ?: return
+        val before = item.record?.requests.orEmpty().associateBy { it.id }
         background("Verificando os pedidos do PR #${item.number}", { patrulha.verify(context, item.number) }) { record ->
-            val done = record.requests.count { it.likelyDone }
-            val pending = record.requests.count { it.likelyPending }
-            val waiting = record.requests.size - done - pending
+            val active = record.active
+            val done = active.count { it.likelyDone }
+            val pending = active.count { it.likelyPending }
+            val waiting = active.size - done - pending
             val summary = listOfNotNull(
                 done.takeIf { it > 0 }?.let { plural(it, "atendido", "atendidos") },
                 pending.takeIf { it > 0 }?.let { "$it sem alteração no código" },
                 waiting.takeIf { it > 0 }?.let { "$it sem sinal ainda" },
             ).joinToString(", ")
+            val remote = remoteChanges(
+                record.requests.filter { now ->
+                    val old = before[now.id]
+                    old == null || now.remote != old.remote || now.text != old.text || now.suggestion != old.suggestion
+                },
+            )
             notify(
                 "PR #${item.number}: ${summary.ifEmpty { "nenhum pedido" }}",
-                "Código conferido no head ${record.requests.firstNotNullOfOrNull { it.codeCommit }?.take(7) ?: "atual"} e conversas lidas no GitHub.",
+                listOfNotNull(
+                    "Código conferido no head ${active.firstNotNullOfOrNull { it.codeCommit }?.take(7) ?: "atual"} e conversas lidas no GitHub.",
+                    remote,
+                ).joinToString(" "),
                 if (pending > 0) NotificationType.WARNING else NotificationType.INFORMATION,
                 NotificationAction.createSimpleExpiring("Pedir Parecer da IA") { askAi(item.number) },
                 NotificationAction.createSimple("Abrir .md") { openRecord(item.number) },
@@ -507,10 +835,56 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
         }
     }
 
+    /** "P3 foi editado e P5 apagado no GitHub.", para os pedidos que mudaram lá desde a última leitura. */
+    private fun remoteChanges(changed: List<ChangeRequest>): String? {
+        val edited = changed.filter { it.remote == RemoteStatus.EDITED }.map { it.id }
+        val deleted = changed.filter { it.deleted }.map { it.id }
+        val parts = listOfNotNull(
+            edited.takeIf { it.isNotEmpty() }?.let { "${it.joinToString()} ${if (it.size == 1) "foi editado" else "foram editados"}" },
+            deleted.takeIf { it.isNotEmpty() }?.let { "${it.joinToString()} ${if (it.size == 1) "apagado" else "apagados"}" },
+        )
+        return if (parts.isEmpty()) null else parts.joinToString(" e ") + " no GitHub."
+    }
+
+    /** Em segundo plano e sem aviso, a não ser que o revisor tenha editado ou apagado algo no GitHub. */
+    private fun syncQuietly(numbers: Collection<Int>) {
+        val context = context?.takeIf { it.account != null } ?: return
+        val wanted = numbers.filter { number -> patrulha.record(number)?.requests?.any { it.commentId != null && !it.deleted } == true }
+        if (wanted.isEmpty()) return
+        object : Task.Backgroundable(project, "Patrulha: sincronizando os pedidos com o GitHub", true) {
+            private val results = mutableListOf<PatrulhaService.SyncResult>()
+
+            override fun run(indicator: ProgressIndicator) {
+                wanted.forEach { number -> runCatching { patrulha.sync(context, number) }.onSuccess { if (it.changed) results += it } }
+            }
+
+            override fun onSuccess() {
+                results.forEach { result ->
+                    val changed = patrulha.record(result.number)?.requests.orEmpty().filter { it.id in result.edited || it.id in result.deleted }
+                    notify(
+                        "PR #${result.number} mudou no GitHub",
+                        remoteChanges(changed).orEmpty() + " O .md e o histórico no editor já estão atualizados.",
+                        NotificationType.INFORMATION,
+                        NotificationAction.createSimple("Abrir .md") { openRecord(result.number) },
+                    )
+                }
+                if (results.isNotEmpty()) rebuild()
+            }
+        }.queue()
+    }
+
     private fun askAi(number: Int? = selectedPr()?.number) {
         number ?: return
         val prompt = "Verifique os pedidos de alteração do PR #$number em ${ReviewCommentService.REVIEW_DIR}/${PullRequestRecord.DIR}/" +
             "${PullRequestRecord.fileName(number)}, seguindo as instruções do arquivo."
+        val runner = AgentRunner.getInstance(project)
+        if (runner.available()) {
+            runner.run(
+                AgentTask("Parecer dos pedidos do PR #$number", "$prompt Escreva só no campo de parecer e no checklist de cada pedido.", write = true),
+                "Abrir .md" to { _ -> openRecord(number) },
+            ) { patrulha.historyChanged(number) }
+            return
+        }
         CopyPasteManager.getInstance().setContents(StringSelection(prompt))
         openRecord(number)
         notify(
@@ -555,9 +929,32 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
                 when (val item = (tree.getPathForLocation(e.x, e.y)?.lastPathComponent as? DefaultMutableTreeNode)?.userObject) {
                     is DraftItem -> navigate(item.comment.filePath, item.comment.startLine.takeIf { item.comment.target == CommentTarget.LINES })
                     is RequestItem -> navigate(item.request.path, (item.request.startLine - 1).takeIf { item.request.target == CommentTarget.LINES })
+                    is FileItem -> openPrs.firstOrNull { it.number == item.number }?.let { showDiff(it, item.file.path) }
                     else -> return
                 }
                 e.consume()
+            }
+        })
+        tree.addTreeSelectionListener { selectedPr()?.pr?.let(::ensureFiles) }
+        tree.addTreeExpansionListener(object : TreeExpansionListener {
+            override fun treeExpanded(event: TreeExpansionEvent) {
+                val node = event.path.lastPathComponent as? DefaultMutableTreeNode ?: return
+                when (val item = node.userObject) {
+                    is PrItem -> item.pr?.let(::ensureFiles)
+                    is FilesItem -> {
+                        expandedFiles += item.number
+                        openPrs.firstOrNull { it.number == item.number }?.let(::ensureFiles)
+                        expandFolders(node)
+                    }
+                    is DirItem -> collapsedDirs -= dirKey(item)
+                }
+            }
+
+            override fun treeCollapsed(event: TreeExpansionEvent) {
+                when (val item = (event.path.lastPathComponent as? DefaultMutableTreeNode)?.userObject) {
+                    is FilesItem -> expandedFiles -= item.number
+                    is DirItem -> collapsedDirs += dirKey(item)
+                }
             }
         })
     }
@@ -582,6 +979,7 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
 
     private fun selectedUrl(): String? = when (val item = selectedNode()?.userObject) {
         is RequestItem -> item.request.url
+        is FilesItem, is DirItem, is FileItem -> selectedPr()?.pr?.url?.let { "$it/files" }
         else -> selectedPr()?.let { it.pr?.url ?: it.record?.url }
     }
 
@@ -655,8 +1053,83 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
                     if (item.comment.suggestion.isNotBlank()) row.pill("Com código sugerido", Tone.PURPLE)
                     row.detail(item.comment.text.trim().lines().first().take(160))
                 }
-                is RequestItem -> describeRequest(row, item.request)
+                is RequestItem -> {
+                    describeRequest(row, item.request)
+                    if (item.request.target != CommentTarget.PACKAGE && !item.inEditor) row.pill("Oculto no editor", Tone.GRAY)
+                }
+                is FilesItem -> describeFiles(row, item)
+                is DirItem -> describeDir(row, item)
+                is FileItem -> describeFile(row, item)
+                is LoadingItem -> {
+                    row.icon(AllIcons.Process.Step_1)
+                    row.text(item.text, SimpleTextAttributes.GRAYED_ITALIC_ATTRIBUTES)
+                }
             }
+        }
+
+        private fun describeFiles(row: Row, item: FilesItem) {
+            row.icon(AllIcons.Actions.Diff)
+            row.text("Arquivos alterados", SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
+            val files = item.files ?: return
+            row.pill(plural(files.files.size, "arquivo", "arquivos"), Tone.GRAY)
+            changes(row, files.additions, files.deletions)
+            diffBar(row, files.additions, files.deletions)
+            val added = files.files.count { it.added }
+            val removed = files.files.count { it.removed }
+            val renamed = files.files.count { it.status == "renamed" }
+            if (added > 0) row.pill(plural(added, "novo", "novos"), Tone.GREEN)
+            if (removed > 0) row.pill(plural(removed, "removido", "removidos"), Tone.RED)
+            if (renamed > 0) row.pill(plural(renamed, "renomeado", "renomeados"), Tone.PURPLE)
+            row.tooltip("Agrupados por pasta. Duplo clique num arquivo abre o diff do PR; as setas do diff passam pelos demais.")
+        }
+
+        private fun describeDir(row: Row, item: DirItem) {
+            val folder = item.folder
+            row.icon(AllIcons.Nodes.Folder)
+            val parts = folder.name.split('/')
+            if (parts.size > 1) row.text(parts.dropLast(1).joinToString("/") + "/", SimpleTextAttributes.GRAYED_ATTRIBUTES)
+            row.text(parts.last(), SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
+            row.pill(folder.allFiles.size.toString(), Tone.GRAY)
+            changes(row, folder.additions, folder.deletions)
+            if (item.comments > 0) row.pill(plural(item.comments, "comentário", "comentários"), Tone.PURPLE)
+            row.tooltip(folder.path)
+        }
+
+        private fun describeFile(row: Row, item: FileItem) {
+            val file = item.file
+            val name = file.path.substringAfterLast('/')
+            row.icon(FileTypeManager.getInstance().getFileTypeByFileName(name).icon)
+            val status = when {
+                file.added -> FileStatus.ADDED
+                file.removed -> FileStatus.DELETED
+                else -> FileStatus.MODIFIED
+            }
+            row.text(name, SimpleTextAttributes(if (file.removed) SimpleTextAttributes.STYLE_STRIKEOUT else SimpleTextAttributes.STYLE_PLAIN, status.color))
+            if (!file.status.equals("modified", ignoreCase = true)) {
+                row.pill(
+                    file.statusLabel,
+                    when {
+                        file.added -> Tone.GREEN
+                        file.removed -> Tone.RED
+                        else -> Tone.PURPLE
+                    },
+                )
+            }
+            changes(row, file.additions, file.deletions)
+            if (item.comments > 0) row.pill(plural(item.comments, "comentário", "comentários"), Tone.PURPLE)
+            file.previousPath?.let { row.detail("antes: $it") }
+            row.tooltip(file.path)
+        }
+
+        /** A proporção de linhas adicionadas e removidas, como no diffstat do GitHub. */
+        private fun diffBar(row: Row, additions: Int, deletions: Int) {
+            if (additions + deletions == 0) return
+            row.bar(listOf(Segment(additions, Tone.GREEN.accent), Segment(deletions, Tone.RED.accent)), width = 40)
+        }
+
+        private fun changes(row: Row, additions: Int, deletions: Int) {
+            if (additions > 0) row.text("+$additions", SimpleTextAttributes(SimpleTextAttributes.STYLE_BOLD, Tone.GREEN.foreground))
+            if (deletions > 0) row.text("−$deletions", SimpleTextAttributes(SimpleTextAttributes.STYLE_BOLD, Tone.RED.foreground))
         }
 
         private fun describePr(row: Row, item: PrItem) {
@@ -666,8 +1139,9 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
             if (item.pr?.draft == true) row.pill("Rascunho", Tone.GRAY)
             if (item.active) row.pill("Em revisão", Tone.PURPLE, bold = true)
             if (item.checkedOut) row.pill("No checkout", Tone.TEAL)
+            if (item.historyShown && item.record?.requests?.isNotEmpty() == true) row.pill("Histórico no editor", Tone.BLUE)
             if (item.drafts.isNotEmpty()) row.pill(plural(item.drafts.size, "não enviado", "não enviados"), CommentStatus.UNSAVED.tone)
-            val requests = item.record?.requests.orEmpty()
+            val requests = item.record?.active.orEmpty()
             if (requests.isNotEmpty()) {
                 val done = requests.count { it.likelyDone }
                 val pending = requests.count { it.likelyPending }
@@ -681,13 +1155,28 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
         private fun describeRequest(row: Row, request: ChangeRequest) {
             row.icon(
                 when {
+                    request.deleted -> AllIcons.General.Remove
                     request.likelyDone -> AllIcons.General.InspectionsOK
                     request.likelyPending -> AllIcons.General.Warning
                     else -> AllIcons.General.Information
                 },
             )
-            row.text(request.id, SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
+            row.text(
+                request.id,
+                if (request.deleted) SimpleTextAttributes(SimpleTextAttributes.STYLE_STRIKEOUT or SimpleTextAttributes.STYLE_BOLD, null)
+                else SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES,
+            )
             row.text("${request.path}, ${request.location}", SimpleTextAttributes.GRAYED_ATTRIBUTES)
+            when (request.remote) {
+                RemoteStatus.DELETED -> {
+                    row.pill(request.remote.label, Tone.RED, bold = true)
+                    row.detail(request.text.lines().first().take(160))
+                    row.tooltip("O revisor apagou este comentário no GitHub. Ele fica no .md como registro, fora das contas; use Excluir Pedido para tirá-lo.")
+                    return
+                }
+                RemoteStatus.EDITED -> row.pill(request.remote.label, Tone.BLUE)
+                RemoteStatus.SYNCED -> Unit
+            }
             row.pill("Código: ${request.code.label}", codeTone(request.code))
             row.pill("Conversa: ${request.thread.label}", threadTone(request.thread))
             row.pill("IA: ${request.ai.label}", aiTone(request.ai))

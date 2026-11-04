@@ -22,6 +22,7 @@ class CompatibilityTest {
         extraTabs = setOf("Raio de Impacto", "Escudo", "Patrulha"),
         tabFailures = emptyMap(),
         linearConfigured = true,
+        agentCli = "C:/Users/dev/.local/bin/agent.exe",
     )
 
     private fun check(env: Environment, mechanism: Mechanism) = Compatibility.evaluate(env).single { it.mechanism == mechanism }
@@ -89,10 +90,12 @@ class CompatibilityTest {
 
     @Test
     fun optionalSettingsAreInformationOnlyAndDoNotWarn() {
-        val env = healthy.copy(vcs = emptyList(), linearConfigured = false)
+        val env = healthy.copy(vcs = emptyList(), linearConfigured = false, agentCli = null)
 
         assertEquals(CheckStatus.INFO, check(env, Mechanism.SENTINELA).status)
         assertEquals(CheckStatus.INFO, check(env, Mechanism.CAIXA_PRETA).status)
+        assertEquals(CheckStatus.INFO, check(env, Mechanism.INTERCEPTOR).status)
+        assertTrue(check(env, Mechanism.INTERCEPTOR).fix!!.contains("Interceptador (IA)"))
         assertTrue(Compatibility.problems(Compatibility.evaluate(env)).isEmpty())
     }
 

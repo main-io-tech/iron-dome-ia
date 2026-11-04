@@ -30,13 +30,43 @@ data class PullRequest(
     val url: String,
     val updatedAt: String,
     val draft: Boolean,
+    val baseSha: String = "",
 )
 
-/** Arquivo alterado no PR; [patch] é o diff unificado do GitHub, ausente em arquivos binários ou grandes. */
-data class ChangedFile(val path: String, val status: String, val patch: String?) {
+/**
+ * Arquivo alterado no PR; [patch] é o diff unificado do GitHub, ausente em arquivos binários ou grandes.
+ * [status] é o do GitHub (`added`, `modified`, `removed`, `renamed`...); [previousPath], o nome antigo de um
+ * renomeado.
+ */
+data class ChangedFile(
+    val path: String,
+    val status: String,
+    val patch: String?,
+    val additions: Int = 0,
+    val deletions: Int = 0,
+    val previousPath: String? = null,
+) {
 
     /** Linhas (1-based) do lado novo que aparecem no diff: só nelas o GitHub aceita comentário de linha. */
     val commentableLines: Set<Int> by lazy { DiffLines.rightSide(patch) }
+
+    val added: Boolean get() = status == "added"
+    val removed: Boolean get() = status == "removed"
+
+    val statusLabel: String
+        get() = when (status) {
+            "added" -> "Novo"
+            "removed" -> "Removido"
+            "renamed" -> "Renomeado"
+            "copied" -> "Copiado"
+            else -> "Alterado"
+        }
+}
+
+/** Os arquivos de um PR no [headSha] em que foram lidos; [mergeBase] é a base do diff, como no GitHub. */
+data class PullRequestFiles(val headSha: String, val mergeBase: String, val files: List<ChangedFile>) {
+    val additions: Int get() = files.sumOf { it.additions }
+    val deletions: Int get() = files.sumOf { it.deletions }
 }
 
 object DiffLines {

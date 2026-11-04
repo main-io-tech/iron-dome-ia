@@ -5,6 +5,17 @@ import com.intellij.util.messages.Topic
 /** O que o comentário aponta: um trecho, um arquivo inteiro ou um pacote (pasta) inteiro. */
 enum class CommentTarget { LINES, FILE, PACKAGE }
 
+/** Quem marcou o alvo: o usuário no Radar ou outro mecanismo, como o Escudo nos testes fora da convenção. */
+enum class CommentOrigin(val label: String) {
+    RADAR("Radar"),
+    ESCUDO("Escudo"),
+    ;
+
+    companion object {
+        fun ofLabel(label: String): CommentOrigin? = entries.firstOrNull { it.label.equals(label.trim(), ignoreCase = true) }
+    }
+}
+
 /**
  * Linhas são 0-based; `filePath` é relativo à raiz do projeto, com `/`. Em [CommentTarget.PACKAGE],
  * `filePath` é a pasta; fora de [CommentTarget.LINES], linhas e trecho ficam vazios.
@@ -39,10 +50,11 @@ class ReviewComment(
      * as linhas comentadas, como a sugestão do GitHub.
      */
     var suggestion: String = "",
+    var origin: CommentOrigin = CommentOrigin.RADAR,
 ) {
     /** O comentário como foi gravado no `.md`, para regravá-lo igual quando outro arquivo é salvo. */
     fun asExported(): ReviewComment? = exported?.let {
-        ReviewComment(id, reviewId, filePath, it.startLine, it.endLine, it.snippet, it.text, resolved, it.discuss, target = target)
+        ReviewComment(id, reviewId, filePath, it.startLine, it.endLine, it.snippet, it.text, resolved, it.discuss, target = target, origin = origin)
     }
 
     companion object {
@@ -79,6 +91,7 @@ class SavedComment(
     val discuss: Boolean,
     val text: String,
     val target: CommentTarget = CommentTarget.LINES,
+    val origin: CommentOrigin = CommentOrigin.RADAR,
 )
 
 class ReviewState {

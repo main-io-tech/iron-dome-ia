@@ -9,6 +9,7 @@ import com.intellij.openapi.editor.markup.TextAttributes
 import com.intellij.util.ui.JBFont
 import com.intellij.util.ui.JBUI
 import com.mio.irondome.base.IronDomeIcons
+import com.mio.irondome.base.Tone
 import java.awt.BasicStroke
 import java.awt.Color
 import java.awt.Font
@@ -26,29 +27,34 @@ import javax.swing.Icon
  * topo do arquivo, quando o alvo é o arquivo inteiro.
  * Resolvidos aparecem recolhidos numa barra de uma linha; o cabeçalho alterna e o Ocultar tira do editor,
  * de forma reversível pela aba Radar.
- * Pendentes e não salvos têm o botão Editar.
+ * Pendentes e não salvos têm o botão Editar. Um [card] de outro mecanismo se comporta como resolvido, com
+ * o selo e as ações dele.
  */
 class ReviewCommentRenderer(
     val comment: ReviewComment,
     markedForRemoval: Boolean,
     unsaved: Boolean,
     private val indentPx: Int,
+    val card: EditorCard? = null,
 ) : EditorCustomElementRenderer {
 
     enum class Hit { NONE, TOGGLE, HIDE, EDIT }
 
     private val status = when {
+        card != null -> CommentStatus.RESOLVED
         markedForRemoval -> CommentStatus.REMOVING
         unsaved -> CommentStatus.UNSAVED
         comment.resolved -> CommentStatus.RESOLVED
         else -> CommentStatus.PENDING
     }
     private val resolved = status == CommentStatus.RESOLVED
-    private val editable = status == CommentStatus.PENDING || status == CommentStatus.UNSAVED
-    private val buttonLabel: String? = when {
-        resolved -> HIDE_LABEL
-        editable -> EDIT_LABEL
-        else -> null
+    private val editable = card == null && (status == CommentStatus.PENDING || status == CommentStatus.UNSAVED)
+    /** Da direita para a esquerda no cabeçalho. */
+    private val buttons: List<Pair<String, Hit>> = when {
+        card != null -> listOfNotNull(HIDE_LABEL to Hit.HIDE, (EDIT_LABEL to Hit.EDIT).takeIf { card.onEdit != null })
+        resolved -> listOf(HIDE_LABEL to Hit.HIDE)
+        editable -> listOf(EDIT_LABEL to Hit.EDIT)
+        else -> emptyList()
     }
     private val collapsed = resolved && !comment.expanded
     private val modeLabel: String? = if (comment.discuss && !resolved) DISCUSS_LABEL else null
@@ -56,16 +62,27 @@ class ReviewCommentRenderer(
     private val body = comment.text.trim().lines()
     private val headerText =
         if (collapsed) summaryOf(body)
+        else if (card != null) card.subtitle
         else if (comment.pullRequest != 0) "Pedido para o PR #${comment.pullRequest}${if (comment.target == CommentTarget.FILE) " · arquivo inteiro" else ""}"
+        else if (comment.origin == CommentOrigin.ESCUDO) "Alvo marcado pelo Escudo · ${ReviewCommentService.reviewName(comment.reviewId)}"
         else if (comment.target == CommentTarget.FILE) "Alvo: arquivo inteiro · ${ReviewCommentService.reviewName(comment.reviewId)}"
         else "Alvo para a IA · ${ReviewCommentService.reviewName(comment.reviewId)}"
+    /** Quem marcou, quando não foi o usuário. */
+    private val originLabel: String? = comment.origin.takeIf { card == null && it != CommentOrigin.RADAR }?.label
     private val unsentToPullRequest = comment.pullRequest != 0 && status == CommentStatus.UNSAVED
-    private val statusLabel = if (unsentToPullRequest) PULL_REQUEST_UNSENT else status.label
-    private val accent: Color = if (unsentToPullRequest) ReviewColors.pullRequestAccent else status.accent
-    private val background: Color = if (unsentToPullRequest) ReviewColors.pullRequestBackground else status.background
-    private val badgeBackground: Color = if (unsentToPullRequest) ReviewColors.pullRequestBadgeBackground else status.badgeBackground
-    private val badgeForeground: Color = if (unsentToPullRequest) ReviewColors.pullRequestBadgeForeground else status.badgeForeground
-    private val icon: Icon = if (comment.pullRequest != 0) IronDomeIcons.patrulha else ReviewIcons.comment
+    private val statusLabel = card?.badge ?: if (unsentToPullRequest) PULL_REQUEST_UNSENT else status.label
+    private val accent: Color = card?.tone?.accent ?: if (unsentToPullRequest) ReviewColors.pullRequestAccent else status.accent
+    private val background: Color =
+        if (card != null || unsentToPullRequest) ReviewColors.pullRequestBackground else status.background
+    private val badgeBackground: Color =
+        card?.tone?.background ?: if (unsentToPullRequest) ReviewColors.pullRequestBadgeBackground else status.badgeBackground
+    private val badgeForeground: Color =
+        card?.tone?.foreground ?: if (unsentToPullRequest) ReviewColors.pullRequestBadgeForeground else status.badgeForeground
+    private val icon: Icon = when {
+        comment.pullRequest != 0 -> IronDomeIcons.patrulha
+        comment.origin == CommentOrigin.ESCUDO -> IronDomeIcons.escudo
+        else -> ReviewIcons.comment
+    }
     private val suggestion: List<String> =
         if (comment.pullRequest != 0 && comment.suggestion.isNotBlank()) comment.suggestion.trimEnd().lines() else emptyList()
     private val chevron: Icon? = when {
@@ -96,7 +113,7 @@ class ReviewCommentRenderer(
         val codeLineHeight = codeMetrics.height
     }
 
-    private class Geometry(val card: Rectangle, val header: Rectangle, val headerCenter: Int, val button: Rectangle?)
+    private class Geometry(val card: Rectangle, val header: Rectangle, val headerCenter: Int, val buttons: List<Pair<Rectangle, Pair<String, Hit>>>)
 
     override fun calcWidthInPixels(inlay: Inlay<*>): Int {
         val fonts = Fonts(inlay.editor)
@@ -106,7 +123,8 @@ class ReviewCommentRenderer(
             fonts.subtitleMetrics.stringWidth(headerText) + 2 * gap() +
             badgeWidth(fonts, statusLabel) +
             (modeLabel?.let { gap() + badgeWidth(fonts, it) } ?: 0) +
-            (if (buttonLabel != null) 2 * gap() + buttonWidth(fonts, buttonLabel) else 0)
+            (originLabel?.let { gap() + badgeWidth(fonts, it) } ?: 0) +
+            (if (buttons.isNotEmpty()) gap() + buttons.sumOf { gap() + buttonWidth(fonts, it.first) } else 0)
         val text = if (collapsed) 0 else body.maxOfOrNull { fonts.bodyMetrics.stringWidth(it) } ?: 0
         val code = suggestion.maxOfOrNull { fonts.codeMetrics.stringWidth(it.expandTabs()) }?.let { it + 2 * padding() } ?: 0
         return indentPx + accentWidth() + 2 * padding() + maxOf(header, text, code, JBUI.scale(320))
@@ -125,14 +143,11 @@ class ReviewCommentRenderer(
 
     /** [point] em coordenadas do `contentComponent` do editor, como [Inlay.getBounds]. */
     fun hitTest(inlay: Inlay<*>, point: Point): Hit {
-        if (buttonLabel == null) return Hit.NONE
+        if (buttons.isEmpty()) return Hit.NONE
         val bounds = inlay.bounds ?: return Hit.NONE
         val geometry = geometry(bounds, Fonts(inlay.editor))
-        return when {
-            geometry.button?.contains(point) == true -> if (resolved) Hit.HIDE else Hit.EDIT
-            resolved && geometry.header.contains(point) -> Hit.TOGGLE
-            else -> Hit.NONE
-        }
+        geometry.buttons.firstOrNull { it.first.contains(point) }?.let { return it.second.second }
+        return if (resolved && geometry.header.contains(point)) Hit.TOGGLE else Hit.NONE
     }
 
     override fun paint(inlay: Inlay<*>, g: Graphics, targetRegion: Rectangle, textAttributes: TextAttributes) {
@@ -197,9 +212,13 @@ class ReviewCommentRenderer(
                     g2, fonts, cursor, headerCenter, it,
                     ReviewColors.discussBadgeBackground, ReviewColors.discussBadgeForeground,
                 )
+                cursor += badgeWidth(fonts, it) + gap()
             }
-            if (geometry.button != null && buttonLabel != null) {
-                paintButton(g2, fonts, geometry.button, buttonLabel, editor.colorsScheme.defaultForeground)
+            originLabel?.let {
+                paintBadge(g2, fonts, cursor, headerCenter, it, Tone.GREEN.background, Tone.GREEN.foreground)
+            }
+            geometry.buttons.forEach { (rect, button) ->
+                paintButton(g2, fonts, rect, button.first, editor.colorsScheme.defaultForeground)
             }
 
             if (collapsed) return
@@ -239,11 +258,13 @@ class ReviewCommentRenderer(
         val header =
             if (collapsed) Rectangle(card)
             else Rectangle(card.x, card.y, card.width, headerTop + fonts.headerHeight + separatorGap() - card.y)
-        val button = buttonLabel?.let { label ->
-            val width = buttonWidth(fonts, label)
-            Rectangle(card.x + card.width - padding() - width, headerCenter - fonts.buttonHeight / 2, width, fonts.buttonHeight)
+        var right = card.x + card.width - padding()
+        val placed = buttons.map { button ->
+            val width = buttonWidth(fonts, button.first)
+            right -= width
+            (Rectangle(right, headerCenter - fonts.buttonHeight / 2, width, fonts.buttonHeight) to button).also { right -= gap() }
         }
-        return Geometry(card, header, headerCenter, button)
+        return Geometry(card, header, headerCenter, placed)
     }
 
     private fun paintSuggestion(g2: Graphics2D, fonts: Fonts, editor: Editor, left: Int, top: Int, width: Int) {

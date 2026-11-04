@@ -24,6 +24,8 @@ import com.intellij.ui.components.JBTextArea
 import com.intellij.util.ui.JBFont
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
+import com.mio.irondome.base.IronDomeIcons
+import com.mio.irondome.interceptor.AgentRunner
 import java.awt.BorderLayout
 import java.awt.FlowLayout
 import java.awt.Font
@@ -82,6 +84,15 @@ internal class ErrorLogDialog private constructor(private val project: Project, 
         }
     }
 
+    /** Só com a IA configurada e testada, na aba Interceptador. */
+    private val analyzeAction = object : AbstractAction("Analisar com IA", IronDomeIcons.ia) {
+        override fun actionPerformed(e: ActionEvent) {
+            val group = list.selectedValue ?: return
+            close(OK_EXIT_CODE)
+            BugAnalysis.analyzeError(project, group)
+        }
+    }
+
     init {
         title = "Logs de Erro do Iron Dome IA"
         isModal = false
@@ -104,6 +115,7 @@ internal class ErrorLogDialog private constructor(private val project: Project, 
                 copy(model.items)
             }
         },
+        analyzeAction,
         object : AbstractAction("Abrir idea.log") {
             override fun actionPerformed(e: ActionEvent) {
                 val log = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(PluginLog.file) ?: return
@@ -171,6 +183,7 @@ internal class ErrorLogDialog private constructor(private val project: Project, 
     private fun showDetail() {
         val group = list.selectedValue
         reportAction.isEnabled = group != null
+        analyzeAction.isEnabled = group != null && AgentRunner.getInstance(project).available()
         detail.text = group?.let(PluginLog::describe).orEmpty()
         detail.caretPosition = 0
     }

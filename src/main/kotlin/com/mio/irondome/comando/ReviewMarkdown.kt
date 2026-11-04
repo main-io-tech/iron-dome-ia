@@ -1,5 +1,6 @@
 package com.mio.irondome.comando
 
+import com.mio.irondome.radar.CommentOrigin
 import com.mio.irondome.radar.CommentTarget
 import com.mio.irondome.radar.ReviewComment
 import com.mio.irondome.radar.SavedComment
@@ -82,6 +83,7 @@ object ReviewMarkdown {
         Regex("""^### \[([ xX])] (C\d+) — (?:linhas? (\d+)(?:–(\d+))?|($WHOLE_FILE|$WHOLE_PACKAGE))""")
     private const val COMMENT_LABEL = "**Comentário:**"
     private const val MODE_LABEL = "**Modo:**"
+    private const val ORIGIN_LABEL = "**Origem:**"
     private val displayTimestamp = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm:ss")
 
     /** O aviso para a IA que [render] põe nos comentários de discutir antes de alterar ainda pendentes. */
@@ -121,6 +123,8 @@ object ReviewMarkdown {
                 text != null -> text += line
                 line == COMMENT_LABEL -> parsing.text = mutableListOf()
                 line.startsWith(MODE_LABEL) -> parsing.discuss = DISCUSS_MODE in line
+                line.startsWith(ORIGIN_LABEL) ->
+                    CommentOrigin.ofLabel(line.removePrefix(ORIGIN_LABEL).substringBefore(" (").substringBefore(" —"))?.let { parsing.origin = it }
             }
         }
         flush()
@@ -129,6 +133,7 @@ object ReviewMarkdown {
 
     private class ParsedComment(val heading: MatchResult) {
         var discuss = false
+        var origin = CommentOrigin.RADAR
         var text: MutableList<String>? = null
 
         fun toSaved(path: String): SavedComment {
@@ -147,6 +152,7 @@ object ReviewMarkdown {
                 discuss = discuss,
                 text = text.orEmpty().joinToString("\n").trim(),
                 target = target,
+                origin = origin,
             )
         }
     }
@@ -177,6 +183,10 @@ object ReviewMarkdown {
                 appendLine()
                 appendLine("**Modo:** ${if (comment.discuss) DISCUSS_MODE else APPLY_MODE}")
                 appendLine()
+                if (comment.origin == CommentOrigin.ESCUDO) {
+                    appendLine("$ORIGIN_LABEL ${CommentOrigin.ESCUDO.label} (marcado automaticamente pelo Escudo, não pelo revisor: classe de teste fora da convenção do @DisplayName)")
+                    appendLine()
+                }
                 if (comment.discuss && !comment.resolved) {
                     appendLine("> $DISCUSS_NOTICE")
                     appendLine()

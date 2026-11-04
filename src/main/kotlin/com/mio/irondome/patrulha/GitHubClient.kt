@@ -34,7 +34,16 @@ class GitHubClient(private val apiUrl: String, private val graphQlUrl: String, p
     /** Comentário de linha numa revisão; [startLine] só quando o trecho tem mais de uma linha. Linhas 1-based. */
     class InlineComment(val path: String, val startLine: Int?, val line: Int, val body: String)
 
-    class PostedComment(val id: Long, val url: String, val path: String, val line: Int?, val body: String)
+    /** [subjectType] é `line` nos comentários de linha e `file` nos do arquivo inteiro. */
+    class PostedComment(
+        val id: Long,
+        val url: String,
+        val path: String,
+        val line: Int?,
+        val body: String,
+        val subjectType: String = "line",
+        val updatedAt: String? = null,
+    )
 
     class Review(val id: Long, val url: String)
 
@@ -58,12 +67,24 @@ class GitHubClient(private val apiUrl: String, private val graphQlUrl: String, p
             val batch = request("GET", "${repoPath(repo)}/pulls/$number/files?per_page=100&page=$page").asJsonArray
             batch.forEach { item ->
                 val file = item.asJsonObject
-                files += ChangedFile(file.string("filename"), file.string("status"), file.optString("patch"))
+                files += ChangedFile(
+                    path = file.string("filename"),
+                    status = file.string("status"),
+                    patch = file.optString("patch"),
+                    additions = file.get("additions")?.takeUnless { it is JsonNull }?.asInt ?: 0,
+                    deletions = file.get("deletions")?.takeUnless { it is JsonNull }?.asInt ?: 0,
+                    previousPath = file.optString("previous_filename"),
+                )
             }
             if (batch.size() < 100) break
         }
         return files
     }
+
+    /** O ancestral comum de [base] e [head]: o GitHub compara o PR com ele, não com a ponta da base. */
+    fun mergeBase(repo: GitHubRepo, base: String, head: String): String =
+        request("GET", "${repoPath(repo)}/compare/${encode(base)}...${encode(head)}").asJsonObject
+            .getAsJsonObject("merge_base_commit").string("sha")
 
     /** Conteúdo do arquivo em [ref], ou nulo se ele não existe lá. */
     fun fileContent(repo: GitHubRepo, path: String, ref: String): String? {
@@ -119,6 +140,30 @@ class GitHubClient(private val apiUrl: String, private val graphQlUrl: String, p
             addProperty("body", body)
         }
         return postedComment(request("POST", "${repoPath(repo)}/pulls/$number/comments", payload).asJsonObject)
+    }
+
+    fun reviewComment(repo: GitHubRepo, id: Long): PostedComment =
+        postedComment(request("GET", "${repoPath(repo)}/pulls/comments/$id").asJsonObject)
+
+    fun updateReviewComment(repo: GitHubRepo, id: Long, body: String): PostedComment =
+        postedComment(request("PATCH", "${repoPath(repo)}/pulls/comments/$id", JsonObject().apply { addProperty("body", body) }).asJsonObject)
+
+    /** Apagado antes, por outra pessoa no GitHub, também conta como apagado. */
+    fun deleteReviewComment(repo: GitHubRepo, id: Long) {
+        val response = send("DELETE", apiUrl.trimEnd('/') + "${repoPath(repo)}/pulls/comments/$id", null, JSON)
+        if (response.statusCode() == 404) return
+        check(response)
+    }
+
+    /** Todos os comentários de linha e de arquivo do PR, de todas as revisões, como estão agora no GitHub. */
+    fun pullRequestComments(repo: GitHubRepo, number: Int): List<PostedComment> {
+        val comments = mutableListOf<PostedComment>()
+        for (page in 1..MAX_PAGES) {
+            val batch = request("GET", "${repoPath(repo)}/pulls/$number/comments?per_page=100&page=$page").asJsonArray
+            batch.forEach { comments += postedComment(it.asJsonObject) }
+            if (batch.size() < 100) break
+        }
+        return comments
     }
 
     fun reviewThreads(repo: GitHubRepo, number: Int): List<ReviewThread> {
@@ -179,6 +224,7 @@ class GitHubClient(private val apiUrl: String, private val graphQlUrl: String, p
             headRef = head.string("ref"),
             headSha = head.string("sha"),
             baseRef = json.getAsJsonObject("base").string("ref"),
+            baseSha = json.getAsJsonObject("base").optString("sha").orEmpty(),
             url = json.string("html_url"),
             updatedAt = json.optString("updated_at").orEmpty(),
             draft = json.get("draft")?.takeUnless { it is JsonNull }?.asBoolean == true,
@@ -191,6 +237,8 @@ class GitHubClient(private val apiUrl: String, private val graphQlUrl: String, p
         path = json.optString("path").orEmpty(),
         line = json.get("line")?.takeUnless { it is JsonNull }?.asInt,
         body = json.optString("body").orEmpty(),
+        subjectType = json.optString("subject_type") ?: "line",
+        updatedAt = json.optString("updated_at"),
     )
 
     private fun request(method: String, path: String, payload: JsonObject? = null): JsonElement {

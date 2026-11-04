@@ -42,6 +42,18 @@ class ReviewMouseListener : EditorMouseListener {
         if (renderer != null) {
             val project = editor.project?.takeIf { !it.isDisposed } ?: return
             val service = project.service<ReviewCommentService>()
+            val card = renderer.card
+            if (card != null) {
+                when (hitOf(e)) {
+                    ReviewCommentRenderer.Hit.TOGGLE -> card.onToggle()
+                    ReviewCommentRenderer.Hit.HIDE -> card.onHide()
+                    ReviewCommentRenderer.Hit.EDIT -> card.onEdit?.invoke()
+                    ReviewCommentRenderer.Hit.NONE -> return
+                }
+                setHandCursor(editor, false)
+                e.consume()
+                return
+            }
             when (hitOf(e)) {
                 ReviewCommentRenderer.Hit.TOGGLE -> service.toggleExpanded(renderer.comment)
                 ReviewCommentRenderer.Hit.HIDE -> service.hide(listOf(renderer.comment))

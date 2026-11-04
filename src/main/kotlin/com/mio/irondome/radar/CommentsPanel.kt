@@ -102,6 +102,7 @@ class CommentsPanel(private val project: Project) : SimpleToolWindowPanel(true, 
         "IronDome.CommentsToolbar",
         DefaultActionGroup(
             refreshAction { refresh() },
+            ActionManager.getInstance().getAction("IronDome.FireWithAi"),
             CommonActionsManager.getInstance().createExpandAllAction(DefaultTreeExpander(tree), tree),
             CommonActionsManager.getInstance().createCollapseAllAction(DefaultTreeExpander(tree), tree),
             Separator.getInstance(),
@@ -326,6 +327,7 @@ class CommentsPanel(private val project: Project) : SimpleToolWindowPanel(true, 
         discuss = comment.discuss,
         status = service.statusOf(comment),
         target = comment.target,
+        origin = comment.origin,
         live = comment,
         saved = null,
         inEditor = !comment.dismissed,
@@ -345,6 +347,7 @@ class CommentsPanel(private val project: Project) : SimpleToolWindowPanel(true, 
             discuss = comment.discuss,
             status = if (comment.resolved) CommentStatus.RESOLVED else CommentStatus.PENDING,
             target = comment.target,
+            origin = comment.origin,
             live = live,
             saved = comment,
             inEditor = live != null && !live.dismissed,
@@ -495,6 +498,7 @@ class CommentsPanel(private val project: Project) : SimpleToolWindowPanel(true, 
         val discuss: Boolean,
         val status: CommentStatus,
         val target: CommentTarget,
+        val origin: CommentOrigin,
         val live: ReviewComment?,
         /** Como está no `.md`, para revisões encerradas: permite trazer de volta ao editor. */
         val saved: SavedComment?,
@@ -541,10 +545,11 @@ class CommentsPanel(private val project: Project) : SimpleToolWindowPanel(true, 
                 }
                 is CommentItem -> {
                     val resolved = item.status == CommentStatus.RESOLVED
-                    row.icon(ReviewIcons.comment)
+                    row.icon(if (item.origin == CommentOrigin.ESCUDO) IronDomeIcons.escudo else ReviewIcons.comment)
                     row.text(item.id, SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
                     row.text(ReviewMarkdown.describe(item.target, item.startLine, item.endLine), SimpleTextAttributes.GRAYED_ATTRIBUTES)
                     row.pill(item.status.label, item.status.tone, bold = true)
+                    if (item.origin != CommentOrigin.RADAR) row.pill("Marcado pelo ${item.origin.label}", Tone.GREEN)
                     if (item.discuss && !resolved) row.pill("Discutir antes", ReviewColors.discussTone)
                     if (resolved && !item.inEditor) row.pill("Oculto no editor", Tone.GRAY)
                     row.detail(

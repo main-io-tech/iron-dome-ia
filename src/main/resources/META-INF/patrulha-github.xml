@@ -3,5 +3,11 @@
 
     <extensions defaultExtensionNs="com.mio.irondome">
         <toolWindowTab implementation="com.mio.irondome.patrulha.PatrulhaTab"/>
+        <editorCardProvider implementation="com.mio.irondome.patrulha.PullRequestCards"/>
     </extensions>
+
+    <projectListeners>
+        <listener class="com.mio.irondome.patrulha.ReviewBranchWatcher"
+                  topic="git4idea.repo.GitRepositoryChangeListener"/>
+    </projectListeners>
 </idea-plugin>

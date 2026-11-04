@@ -13,7 +13,10 @@ import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
+import com.intellij.openapi.wm.ToolWindowManager
 import com.intellij.ui.content.ContentFactory
+import com.mio.irondome.interceptor.InterceptorPanel
+import com.mio.irondome.interceptor.InterceptorTab
 import com.mio.irondome.radar.CommentsPanel
 import com.mio.irondome.sentinela.ChangesPanel
 import javax.swing.Icon
@@ -26,7 +29,7 @@ class ReviewToolWindowFactory : ToolWindowFactory, DumbAware {
         actions.getAction(TabErrorPanel.REPORT_BUG_ACTION)?.let { toolWindow.setTitleActions(listOf(it)) }
         val gear = listOf(TabErrorPanel.COMPATIBILITY_ACTION, TabErrorPanel.ERROR_LOG_ACTION).mapNotNull(actions::getAction)
         if (gear.isNotEmpty()) toolWindow.setAdditionalGearActions(DefaultActionGroup(gear))
-        add(toolWindow, "Radar", IronDomeIcons.radar, "Os alvos marcados para a IA: comentários da revisão aberta e o histórico") {
+        add(toolWindow, RADAR, IronDomeIcons.radar, "Os alvos marcados para a IA: comentários da revisão aberta e o histórico") {
             CommentsPanel(project)
         }
         add(toolWindow, "Sentinela", IronDomeIcons.sentinela, "O perímetro vigiado: arquivos com alterações ainda não commitadas") {
@@ -34,6 +37,9 @@ class ReviewToolWindowFactory : ToolWindowFactory, DumbAware {
         }
         for (tab in ReviewToolWindowTab.EP_NAME.extensionList) {
             add(toolWindow, tab.title, tab.icon, tab.description) { tab.createComponent(project, toolWindow) }
+        }
+        add(toolWindow, InterceptorTab.TITLE, IronDomeIcons.interceptador, "A IA: qual CLI usar, o teste da integração e as execuções recentes") {
+            InterceptorPanel(project)
         }
     }
 
@@ -61,7 +67,16 @@ class ReviewToolWindowFactory : ToolWindowFactory, DumbAware {
 
     companion object {
         const val ID = "Iron Dome IA"
+        const val RADAR = "Radar"
         private val LOG = logger<ReviewToolWindowFactory>()
+
+        /** Abre o painel do Iron Dome IA na aba [title]. */
+        fun showTab(project: Project, title: String) {
+            val toolWindow = ToolWindowManager.getInstance(project).getToolWindow(ID) ?: return
+            toolWindow.activate {
+                toolWindow.contentManager.findContent(title)?.let(toolWindow.contentManager::setSelectedContent)
+            }
+        }
     }
 }
 

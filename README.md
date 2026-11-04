@@ -24,6 +24,7 @@
   <a href="#sentinela">Sentinela</a> &nbsp;·&nbsp;
   <a href="#escudo">Escudo</a> &nbsp;·&nbsp;
   <a href="#patrulha">Patrulha</a> &nbsp;·&nbsp;
+  <a href="#interceptador">Interceptador</a> &nbsp;·&nbsp;
   <a href="#instalacao">Instalação</a> &nbsp;·&nbsp;
   <a href="#configure-sua-ia">Configure sua IA</a> &nbsp;·&nbsp;
   <a href="#faq">FAQ</a>
@@ -91,7 +92,8 @@ Cada mecanismo é independente e tem uma aba própria no painel lateral **Iron D
 | 💥 [**Raio de Impacto**](#raio-de-impacto) | Mede o estrago que uma mudança pode causar antes de você mexer na classe. | Aba Raio de Impacto |
 | 👁️ [**Sentinela**](#sentinela) | Vigia o perímetro: tudo o que ainda não foi commitado, com o diff a um clique. | Aba Sentinela |
 | 🛡️ [**Escudo**](#escudo) | Executa os testes JUnit e mostra o resultado agrupado e com os nomes formatados. | Aba Escudo |
-| 🛰️ [**Patrulha**](#patrulha) | Revisa os pull requests abertos no GitHub com o Radar, envia os pedidos de alteração e confere depois se foram atendidos. | Aba Patrulha |
+| 🛰️ [**Patrulha**](#patrulha) | Revisa os pull requests abertos no GitHub no modo revisão do PR, envia os pedidos de alteração e confere depois se foram atendidos. | Aba Patrulha |
+| 🚀 [**Interceptador**](#interceptador) | Chama a IA pelo Cursor CLI ou Antigravity CLI para disparar alvos, revisar PRs, dar parecer, explicar falhas de teste e analisar bugs. | Ações com IA nas abas |
 | 🏰 [**Base**](#base) | O painel lateral e os componentes visuais que os mecanismos compartilham. | Lateral da IDE |
 | 📦 [**Caixa-Preta**](#caixa-preta) | Reporta bugs do próprio plugin: um `.md` dizendo onde foi o bug, com print, GIF e erros do log, enviado ao Linear. E confere se a IDE tem o que cada mecanismo precisa. | Topo do painel e menu Help |
 
@@ -373,6 +375,12 @@ class FreteServiceTest { ... }
 - 🎨 **Chaves coloridas:** cada chave vira uma etiqueta com cor própria, sempre a mesma para a mesma chave.
 - ⚠️ **Convenção cobrada:** classes sem `@DisplayName` ou sem chave vão para o grupo **Sem chave**, o
   topo da aba avisa quantas estão fora da convenção e os detalhes sugerem o `@DisplayName` de cada uma.
+- 🔧 **Deixar no Padrão:** marca as classes fora da convenção (as da seleção ou, sem nenhuma nela, todas) como
+  alvos na revisão aberta do Radar, na linha do `@DisplayName` ou da declaração da classe. Esses alvos vêm
+  assinalados como do Escudo: ícone do Escudo e etiqueta **Escudo** no editor, **Marcado pelo Escudo** na aba
+  Radar e `**Origem:** Escudo` no `.md`, para a IA saber que não foi o revisor que pediu. O pedido traz as chaves
+  que o projeto já usa, para a IA reaproveitar, e manda alterar só o `@DisplayName`. Mesmo no modo revisão de um
+  PR, eles vão para o Radar, não para o PR, e uma classe que já tem alvo aberto do Escudo não é marcada de novo.
 
 ### Nomes dos testes formatados
 
@@ -419,18 +427,27 @@ O painel de detalhes repete a formatação no título e, quando o nome tem essa 
 
 ## 🛰️ Patrulha
 
-A aba Patrulha leva o Radar para os pull requests do GitHub: você comenta o código do PR na IDE, do mesmo
-jeito que comenta para a IA, envia tudo como uma revisão e depois confere se cada pedido foi atendido.
+A aba Patrulha revisa os pull requests do GitHub na IDE: no modo revisão do PR, os comentários que você faz
+no editor vão para o PR, e não para a IA; você envia tudo como uma revisão e depois confere se cada pedido
+foi atendido.
 
 1. **Escolha o PR.** A aba lista os PRs abertos do remote do GitHub, com o autor, as branches e quantos
-   pedidos já foram atendidos. A conta é a que você já usa no IntelliJ (**Settings > Version Control >
+   pedidos já foram atendidos. Em cada PR, **Arquivos alterados** mostra o que mudou agrupado por pasta, com as
+   pastas de um filho só juntas numa linha (como `src/main/kotlin/com/mio`): cada pasta soma os arquivos, as
+   linhas `+`/`−` e os comentários, e cada arquivo vem com a cor e a etiqueta do status (novo, alterado,
+   removido, renomeado). Pastas fechadas continuam fechadas quando a lista atualiza; duplo clique ou **Ver
+   Alterações** abre o diff do PR numa aba, comparando com a mesma base do GitHub, e as setas do diff
+   passam pelos demais arquivos. A conta é a que você já usa no IntelliJ (**Settings > Version Control >
    GitHub**). Se a organização bloquear o login pelo navegador (restrição a OAuth Apps), use **Entrar com
    Token** na aba, com um token pessoal classic com escopo `repo`.
-2. **Revise.** **Revisar Este PR** traz o código do PR para a branch local `pr-<número>` e liga o Radar
-   ao PR; se você já está no código do PR, só liga. O que não estiver commitado (fora de `iron-dome/` e
+2. **Revise.** **Revisar Este PR** traz o código do PR para a branch local `pr-<número>` e entra no modo
+   revisão do PR; se você já está no código do PR, só entra no modo revisão. O que não estiver commitado (fora de `iron-dome/` e
    `.idea/`) vai para o stash, com a lista dos arquivos e a sua aprovação antes. Não há botão de checkout
    à parte: se o PR receber commits novos, o mesmo botão vira **Atualizar ou Encerrar Revisão**.
-   **Encerrar Revisão** oferece voltar para a branch de antes e devolver o stash. Com a revisão ligada, o formulário de comentário fica roxo, com o título *Comentário para o PR #n*
+   **Encerrar Revisão** oferece voltar para a branch de antes e devolver o stash. O modo revisão só vale na
+   branch do PR: trocar de branch por fora da Patrulha (pelo Git da IDE ou pelo terminal) encerra a revisão na
+   hora, e o aviso oferece **Voltar ao PR #n** e, se você voltou para a branch de antes, **Devolver as
+   Alterações do Stash**. No modo revisão, o formulário de comentário fica roxo, com o título *Comentário para o PR #n*
    e o botão **Adicionar ao PR**, e os comentários ganham a etiqueta *Pedido para o PR #n · Não enviado*,
    fora do `.md` da IA. **Sugerir código** abre um editor de verdade sobre uma cópia do arquivo, com o
    trecho comentado destacado e editável e o resto do arquivo recolhido e só de leitura: Ctrl+Espaço,
@@ -441,7 +458,16 @@ jeito que comenta para a IA, envia tudo como uma revisão e depois confere se ca
    alterações** e **Só comentar** e publica a revisão. Linhas que o PR altera viram comentários de linha;
    linhas fora do diff e arquivos inteiros, comentários do arquivo; pacotes e arquivos fora do PR entram no
    texto geral.
-4. **Verifique.** Os pedidos ficam em `iron-dome/pull-requests/pr-<número>.md`. **Verificar Pedidos**
+4. **Acompanhe no código.** Com a revisão ligada, os pedidos já enviados aparecem no editor como cartões
+   recolhidos, onde o trecho está agora, com o status (*Enviado*, *Atendido*, *Sem alteração*). O
+   cabeçalho expande, **Ocultar** tira o cartão e **Editar** troca o texto e o código sugerido também no
+   GitHub. Na aba, **Mostrar/Ocultar no Editor** vale para o histórico do PR inteiro ou para um pedido, e
+   **Editar** serve para rascunhos e pedidos enviados.
+   Se o revisor **editar ou apagar** o comentário direto no GitHub, a Patrulha sincroniza ao atualizar a
+   aba, ao iniciar a revisão e em **Verificar Pedidos**: o `.md` passa a ter o texto do GitHub (*Editado no
+   GitHub*), e os apagados ficam riscados (*Apagado no GitHub*), fora das contas e sem Editar.
+   **Excluir Pedido** tira um pedido do `.md` e, se você escolher, apaga o comentário no GitHub também.
+5. **Verifique.** Os pedidos ficam em `iron-dome/pull-requests/pr-<número>.md`. **Verificar Pedidos**
    confere cada um de três jeitos:
 
 | Verificação | Como funciona |
@@ -474,6 +500,41 @@ compartilham os mesmos componentes visuais, para tudo ter a mesma cara:
   saber o que pede atenção.
 - 🧰 **Barra flutuante do editor**, no canto superior direito: **Inspecionar Diff** quando o arquivo tem
   alterações não commitadas, e **Disparar Este Arquivo** e **Disparar Todos** enquanto há alvos não disparados.
+
+---
+
+<a id="interceptador"></a>
+
+## 🚀 Interceptador (IA)
+
+O Interceptador chama a IA direto da IDE, pelo CLI do **Cursor** (`agent`) ou do **Antigravity** (`agy`), rodando
+na sua máquina sobre o projeto aberto. Cada execução aparece na barra de progresso, pode ser cancelada e fica
+registrada em `iron-dome/ia/` com o pedido, os passos, os arquivos alterados e a resposta (**Ver Resposta**).
+
+| Onde | Ação | A IA pode alterar arquivos? |
+| --- | --- | --- |
+| 📡 Radar e barra do editor | **Disparar com IA**: dispara os alvos e a IA executa a ordem de interceptação, marcando `[x]` nos atendidos | Sim |
+| 🛰️ Patrulha | **Pedir Parecer da IA**: a IA avalia cada pedido enviado e escreve o parecer no `.md` do PR | Só o `.md` |
+| 🛰️ Patrulha | **Revisar com IA** (no modo revisão): a IA lê os arquivos alterados e propõe comentários, que viram rascunhos para você revisar antes de enviar | Não |
+| 🛡️ Escudo | **Explicar Falha com IA**: causa, onde e a correção proposta; a resposta oferece **Corrigir com IA** | Não (Corrigir: sim) |
+| 📦 Caixa-Preta | **Analisar com IA**, no bug gerado e em Ver Logs de Erro: causa provável e correção; no bug, a análise entra no fim do `bug.md` | Não |
+
+Na primeira vez que a aba **Interceptador** abre, a IA se configura sozinha: o plugin procura o Cursor CLI e o
+Antigravity CLI instalados e testa cada um, com o modelo padrão, até um responder. Se nenhum responder, a
+configuração manual abre já com o motivo de cada falha no cabeçalho. **Configurar Automaticamente** refaz essa
+busca a qualquer hora, também em Settings.
+
+Na configuração manual, na aba **Interceptador** do painel (ou em **Settings > Tools > Iron Dome IA > Interceptador (IA)**): o
+CLI, o executável (vazio procura no PATH e nas pastas de instalação), o modelo, o tempo máximo e,
+opcionalmente, a chave de API do Cursor (sem ela, vale o `agent login`). **Salvar e Testar** faz uma pergunta curta
+à IA: **os botões de IA só se habilitam depois que o teste passa**, e trocar o CLI, o executável, o modelo ou a
+chave pede um teste novo. A aba mostra o estado (*IA não configurada*, *Teste a integração*, *IA pronta*), quais
+ações estão habilitadas e as execuções recentes, que abrem com duplo clique. Sem a IA testada, **Pedir Parecer
+da IA** continua copiando o pedido para você colar na sua IA.
+
+> [!NOTE]
+> O `agy -p` do Antigravity pode travar quando chamado por outro programa
+> ([issue 318](https://github.com/google-antigravity/antigravity-cli/issues/318)); o tempo máximo interrompe a execução.
 
 ---
 

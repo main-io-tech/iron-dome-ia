@@ -102,6 +102,25 @@ class ReviewCommentServiceTest : HeavyPlatformTestCase() {
         assertTrue(parsed.getValue("C3").discuss)
     }
 
+    fun testEscudoTargetsGoToTheRadarMarkedAsEscudoEvenDuringPullRequestReview() {
+        service.startPullRequestReview(7)
+        val document = FileDocumentManager.getInstance().getDocument(first)!!
+        val escudo = service.addComment(first, document, 1..1, "deixar `FirstTest` no padrão", discuss = false, origin = CommentOrigin.ESCUDO)!!
+        service.stopPullRequestReview()
+
+        assertEquals(0, escudo.pullRequest)
+        assertTrue(escudo.id.startsWith("C"))
+        assertTrue(service.hasOpenComment("src/First.kt", CommentOrigin.ESCUDO, "`FirstTest`"))
+        assertFalse(service.hasOpenComment("src/First.kt", CommentOrigin.ESCUDO, "`OtherTest`"))
+        service.exportAll()
+        val markdown = Files.readString(reviewFile())
+        assertTrue(markdown.contains("**Origem:** Escudo"))
+        assertEquals(CommentOrigin.ESCUDO, ReviewMarkdown.parse(markdown).single().origin)
+
+        service.loadState(XmlSerializer.deserialize(XmlSerializer.serialize(service.state), ReviewState::class.java))
+        assertEquals(CommentOrigin.ESCUDO, service.activeComments().single().origin)
+    }
+
     fun testAiResolvesPackageComment() {
         val packageComment = service.addTargetComment(first.parent, "separar o pacote", discuss = false)!!
         comment(first, "corrigir a")

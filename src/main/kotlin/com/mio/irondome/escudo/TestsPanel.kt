@@ -50,6 +50,8 @@ import com.mio.irondome.base.Stat
 import com.mio.irondome.base.SummaryHeader
 import com.mio.irondome.base.Tone
 import com.mio.irondome.base.plural
+import com.mio.irondome.interceptor.AgentRunner
+import com.mio.irondome.interceptor.FireWithAiAction
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.event.KeyAdapter
@@ -114,6 +116,40 @@ class TestsPanel(private val project: Project) : SimpleToolWindowPanel(true, tru
             }
             override fun actionPerformed(e: AnActionEvent) = open(selectedItem())
         }
+        val explainAction = object : DumbAwareAction(
+            "Explicar Falha com IA",
+            "A IA configurada explica por que os testes selecionados falharam e propõe a correção, sem alterar arquivos",
+            IronDomeIcons.ia,
+        ) {
+            override fun getActionUpdateThread() = ActionUpdateThread.EDT
+            override fun update(e: AnActionEvent) {
+                val runner = AgentRunner.getInstance(project)
+                e.presentation.isEnabled = selectedItem()?.outcome == TestOutcome.FAILED && runner.running == null && runner.available()
+                e.presentation.description = if (runner.available()) {
+                    "A IA configurada explica por que os testes selecionados falharam e propõe a correção, sem alterar arquivos"
+                } else {
+                    FireWithAiAction.NOT_READY
+                }
+            }
+            override fun actionPerformed(e: AnActionEvent) {
+                selectedItem()?.let { FailureExplanation.explain(project, it) }
+            }
+        }
+        val conventionAction = object : DumbAwareAction(
+            "Deixar no Padrão",
+            "Marca no Radar, como alvos do Escudo, as classes de teste fora da convenção do @DisplayName, para a IA corrigir ao disparar",
+            AllIcons.Actions.QuickfixBulb,
+        ) {
+            override fun getActionUpdateThread() = ActionUpdateThread.EDT
+            override fun update(e: AnActionEvent) {
+                val outside = outsideConvention()
+                e.presentation.isEnabled = outside.isNotEmpty() && !running
+                e.presentation.text = if (outside.size > 1) "Deixar no Padrão (${outside.size})" else "Deixar no Padrão"
+            }
+            override fun actionPerformed(e: AnActionEvent) {
+                ConventionTargets.mark(project, outsideConvention(), results.mapNotNull { it.classKey }.distinct().sorted())
+            }
+        }
         toolbar = ActionManager.getInstance().createActionToolbar(
             "IronDome.TestsToolbar",
             DefaultActionGroup(
@@ -137,6 +173,8 @@ class TestsPanel(private val project: Project) : SimpleToolWindowPanel(true, tru
                         process?.destroyProcess()
                     }
                 },
+                explainAction,
+                conventionAction,
                 Separator.getInstance(),
                 object : DumbAwareToggleAction("Mostrar Só as Falhas", "Esconde as classes e os testes que passaram", AllIcons.General.Filter) {
                     override fun getActionUpdateThread() = ActionUpdateThread.EDT
@@ -162,7 +200,7 @@ class TestsPanel(private val project: Project) : SimpleToolWindowPanel(true, tru
             add(header, BorderLayout.NORTH)
             add(splitter, BorderLayout.CENTER)
         })
-        installNavigation(openAction)
+        installNavigation(openAction, explainAction)
         tree.addTreeSelectionListener { updateDetails() }
 
         val connection = project.messageBus.connect(this)
@@ -261,7 +299,8 @@ class TestsPanel(private val project: Project) : SimpleToolWindowPanel(true, tru
         val outside = classes.count { it.convention != Convention.OK }
         val warning = if (outside == 0) null else
             "${plural(outside, "classe de teste fora", "classes de teste fora")} da convenção: coloque " +
-                "${TestResults.CONVENTION_EXAMPLE} na classe. A chave agrupa os testes."
+                "${TestResults.CONVENTION_EXAMPLE} na classe. A chave agrupa os testes. " +
+                "Deixar no Padrão marca as classes no Radar para a IA corrigir."
         val stats = statsOf(tests)
         val bar = barOf(tests)
         when {
@@ -321,6 +360,12 @@ class TestsPanel(private val project: Project) : SimpleToolWindowPanel(true, tru
         }
         selection?.let { tree.selectionPath = it }
         updateDetails()
+    }
+
+    /** As classes fora da convenção da seleção; sem nenhuma nela, as de toda a execução. */
+    private fun outsideConvention(): List<TestNode> {
+        fun outside(nodes: List<TestNode>) = nodes.flatMap { it.classes }.filter { it.convention != Convention.OK }
+        return outside(listOfNotNull(selectedItem())).ifEmpty { outside(results) }
     }
 
     private fun visible(nodes: List<TestNode>): List<TestNode> =
@@ -413,6 +458,10 @@ class TestsPanel(private val project: Project) : SimpleToolWindowPanel(true, tru
             append("<code>${escape("@DisplayName(\"[Chave] $description\")")}</code></li>")
         }
         append("</ul>")
+        append(
+            "<p>${gray("<b>Deixar no Padrão</b>, na barra, marca estas classes como alvos no Radar, assinalados como do Escudo. " +
+                "Ao disparar a ordem de interceptação, a IA ajusta só o <code>@DisplayName</code>.")}</p>",
+        )
     }
 
     private fun open(item: TestNode?) {
@@ -423,7 +472,7 @@ class TestsPanel(private val project: Project) : SimpleToolWindowPanel(true, tru
         target?.takeIf { it.canNavigate() }?.navigate(true)
     }
 
-    private fun installNavigation(openAction: DumbAwareAction) {
+    private fun installNavigation(openAction: DumbAwareAction, explainAction: DumbAwareAction) {
         tree.addMouseListener(object : MouseAdapter() {
             override fun mousePressed(e: MouseEvent) {
                 if (!SwingUtilities.isRightMouseButton(e)) return
@@ -448,7 +497,7 @@ class TestsPanel(private val project: Project) : SimpleToolWindowPanel(true, tru
                 }
             }
         })
-        PopupHandler.installPopupMenu(tree, DefaultActionGroup(openAction), "IronDome.TestsPopup")
+        PopupHandler.installPopupMenu(tree, DefaultActionGroup(openAction, explainAction), "IronDome.TestsPopup")
     }
 
     private fun itemOf(value: Any?) = (value as? DefaultMutableTreeNode)?.userObject as? TestNode

@@ -4,6 +4,8 @@ import com.google.gson.GsonBuilder
 import com.google.gson.JsonParser
 import com.mio.irondome.radar.CommentTarget
 import java.time.LocalDateTime
+import java.time.OffsetDateTime
+import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 enum class CodeStatus(val label: String) {
@@ -24,6 +26,13 @@ enum class ThreadStatus(val label: String) {
     OPEN("Aberta"),
     REPLIED("Respondida"),
     RESOLVED("Resolvida"),
+}
+
+/** O comentário do pedido no GitHub, comparado com o `.md` na última sincronização. */
+enum class RemoteStatus(val label: String) {
+    SYNCED("Sincronizado"),
+    EDITED("Editado no GitHub"),
+    DELETED("Apagado no GitHub"),
 }
 
 enum class AiVerdict(val label: String) {
@@ -57,7 +66,13 @@ data class ChangeRequest(
     val aiNote: String = "",
     /** Código de exemplo enviado com o pedido; vazio quando não houve. */
     val suggestion: String = "",
+    val remote: RemoteStatus = RemoteStatus.SYNCED,
+    /** Quando o comentário foi alterado no GitHub, como o GitHub informa (`updated_at`). */
+    val remoteUpdatedAt: String? = null,
 ) {
+    /** Apagado no GitHub: fica no `.md` como registro, mas fora das contas e das verificações. */
+    val deleted: Boolean get() = remote == RemoteStatus.DELETED
+
     val location: String
         get() = when (target) {
             CommentTarget.LINES -> if (startLine == endLine) "linha $startLine" else "linhas $startLine–$endLine"
@@ -67,12 +82,14 @@ data class ChangeRequest(
 
     /** Feito por pelo menos um dos sinais: o código mudou, a conversa foi resolvida ou a IA confirmou. */
     val likelyDone: Boolean
-        get() = code == CodeStatus.CHANGED || code == CodeStatus.AS_SUGGESTED || code == CodeStatus.FILE_REMOVED ||
-            thread == ThreadStatus.RESOLVED || ai == AiVerdict.DONE
+        get() = !deleted && (
+            code == CodeStatus.CHANGED || code == CodeStatus.AS_SUGGESTED || code == CodeStatus.FILE_REMOVED ||
+                thread == ThreadStatus.RESOLVED || ai == AiVerdict.DONE
+            )
 
     /** Nenhum sinal de que foi feito, depois de pelo menos uma verificação com commits novos. */
     val likelyPending: Boolean
-        get() = !likelyDone && (code == CodeStatus.UNCHANGED || code == CodeStatus.MOVED || ai == AiVerdict.NOT_DONE)
+        get() = !deleted && !likelyDone && (code == CodeStatus.UNCHANGED || code == CodeStatus.MOVED || ai == AiVerdict.NOT_DONE)
 }
 
 /** Os pedidos de um PR, gravados em `iron-dome/pull-requests/pr-<número>.md`. */
@@ -85,6 +102,9 @@ data class PullRequestRecord(
     val requests: List<ChangeRequest>,
     val checkedAt: String? = null,
 ) {
+    /** Os pedidos que contam: sem os apagados no GitHub. */
+    val active: List<ChangeRequest> get() = requests.filterNot { it.deleted }
+
     companion object {
         const val DIR = "pull-requests"
 
@@ -113,6 +133,8 @@ object ChangeRequestMarkdown {
         val text: String, val commit: String, val comment: Long?, val url: String?, val sentAt: String,
         val code: String, val codeCommit: String?, val thread: String, val lastReply: String?,
         val suggestion: String? = null,
+        val remote: String? = null,
+        val remoteUpdatedAt: String? = null,
     )
 
     fun render(record: PullRequestRecord): String = buildString {
@@ -125,8 +147,8 @@ object ChangeRequestMarkdown {
         appendLine("> confira no código atual da branch `${record.headRef}` se a alteração pedida foi feita; se o checkout local")
         appendLine("> estiver desatualizado, atualize a branch antes. Marque `[x]` em $AI_LABEL quando foi feita e deixe `[ ]`")
         appendLine("> quando não foi, e escreva o motivo numa linha em $NOTE_LABEL. Quando o pedido tiver **Código sugerido**,")
-        appendLine("> ele é um exemplo: uma solução equivalente também atende. Não altere o código nem o restante deste")
-        appendLine("> arquivo.")
+        appendLine("> ele é um exemplo: uma solução equivalente também atende. Pedidos **Apagados no GitHub** não precisam")
+        appendLine("> ser avaliados. Não altere o código nem o restante deste arquivo.")
         appendLine()
         appendLine("PR: ${record.url}")
         appendLine()
@@ -135,7 +157,8 @@ object ChangeRequestMarkdown {
         appendLine("| Pedido | Onde | Código | Conversa | IA |")
         appendLine("| --- | --- | --- | --- | --- |")
         record.requests.forEach { request ->
-            appendLine("| ${request.id} | `${request.path}`, ${request.location} | ${request.code.label} | ${request.thread.label} | ${request.ai.label} |")
+            val id = if (request.deleted) "~~${request.id}~~ (${request.remote.label})" else request.id
+            appendLine("| $id | `${request.path}`, ${request.location} | ${request.code.label} | ${request.thread.label} | ${request.ai.label} |")
         }
         record.requests.forEach { request ->
             appendLine()
@@ -160,6 +183,9 @@ object ChangeRequestMarkdown {
             }
             appendLine()
             appendLine("- **Enviado:** ${formatDate(request.sentAt)}, no commit `${request.commit.take(7)}`${request.url?.let { " · [ver no GitHub]($it)" }.orEmpty()}")
+            if (request.remote != RemoteStatus.SYNCED) {
+                appendLine("- **No GitHub:** ${request.remote.label}${request.remoteUpdatedAt?.let { " em ${formatDate(it)}" }.orEmpty()}")
+            }
             appendLine("- **Código:** ${request.code.label}${request.codeCommit?.let { ", no commit `${it.take(7)}`" }.orEmpty()}")
             appendLine("- **Conversa no PR:** ${request.thread.label}${request.lastReply?.let { ". Última resposta: $it" }.orEmpty()}")
             appendLine("- [${if (request.ai == AiVerdict.DONE) "x" else " "}] $AI_LABEL")
@@ -219,6 +245,7 @@ object ChangeRequestMarkdown {
         request.id, request.path, request.target.name, request.startLine, request.endLine, request.snippet, request.text,
         request.commit, request.commentId, request.url, request.sentAt, request.code.name, request.codeCommit,
         request.thread.name, request.lastReply, request.suggestion.ifBlank { null },
+        request.remote.name.takeIf { request.remote != RemoteStatus.SYNCED }, request.remoteUpdatedAt,
     )
 
     private fun request(meta: RequestMeta, ai: AiVerdict, note: String) = ChangeRequest(
@@ -240,12 +267,19 @@ object ChangeRequestMarkdown {
         ai = ai,
         aiNote = note,
         suggestion = meta.suggestion.orEmpty(),
+        remote = enumOr(meta.remote, RemoteStatus.SYNCED),
+        remoteUpdatedAt = meta.remoteUpdatedAt,
     )
 
     private inline fun <reified T : Enum<T>> enumOr(name: String?, default: T): T =
         enumValues<T>().firstOrNull { it.name == name } ?: default
 
-    private fun formatDate(iso: String): String = runCatching { LocalDateTime.parse(iso).format(DATE) }.getOrDefault(iso)
+    /** Datas locais do plugin ou, como as do GitHub, com fuso (`2026-11-03T20:00:00Z`), no fuso da máquina. */
+    private fun formatDate(iso: String): String =
+        runCatching { LocalDateTime.parse(iso) }
+            .recoverCatching { OffsetDateTime.parse(iso).atZoneSameInstant(ZoneId.systemDefault()).toLocalDateTime() }
+            .map { it.format(DATE) }
+            .getOrDefault(iso)
 
     private fun String.oneLine() = lines().joinToString(" ") { it.trim() }.trim()
 }

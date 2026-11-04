@@ -1,5 +1,6 @@
 package com.mio.irondome.patrulha
 
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.PersistentStateComponent
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.State
@@ -24,6 +25,7 @@ import org.jetbrains.plugins.github.util.GHCompatibilityUtil
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.LocalDateTime
+import java.util.concurrent.ConcurrentHashMap
 
 /** Repositório do projeto no GitHub, com o remote de onde veio e a conta do IntelliJ que o acessa. */
 class RepoContext(val repository: GitRepository, val remote: String, val repo: GitHubRepo, val account: GithubAccount?)
@@ -51,6 +53,16 @@ class PatrulhaService(private val project: Project) : PersistentStateComponent<P
 
     class PatrulhaState {
         var returnPoint: ReturnPoint? = null
+
+        /** Onde o modo revisão começou: a branch ou `@<sha>`, sem branch. Vazio nos estados antigos. */
+        var reviewRef: String = ""
+
+        /** PRs com o histórico de pedidos no editor, pelo número. */
+        var historyPrs: MutableSet<String> = mutableSetOf()
+
+        /** Pedidos ocultos do editor e expandidos nele, como `12:P3`. */
+        var hiddenRequests: MutableSet<String> = mutableSetOf()
+        var expandedRequests: MutableSet<String> = mutableSetOf()
     }
 
     /** O que [enter] fez: o stash criado agora (vazio se não houve) e se ele vai voltar em [leave]. */
@@ -58,13 +70,127 @@ class PatrulhaService(private val project: Project) : PersistentStateComponent<P
 
     private var state = PatrulhaState()
 
+    private val filesCache = ConcurrentHashMap<Int, PullRequestFiles>()
+
+    /** Os arquivos já lidos do PR, se ainda valem para o head [headSha]. */
+    fun cachedFiles(number: Int, headSha: String): PullRequestFiles? = filesCache[number]?.takeIf { it.headSha == headSha }
+
+    /** Os arquivos alterados no PR e a base do diff, do GitHub; guardados até o head do PR mudar. */
+    fun files(context: RepoContext, pr: PullRequest): PullRequestFiles {
+        cachedFiles(pr.number, pr.headSha)?.let { return it }
+        val client = client(context)
+        val files = client.files(context.repo, pr.number)
+        val mergeBase = pr.baseSha.takeIf { it.isNotEmpty() }
+            ?.let { base -> runCatching { client.mergeBase(context.repo, base, pr.headSha) }.getOrDefault(base) }
+            .orEmpty()
+        return PullRequestFiles(pr.headSha, mergeBase, files).also { filesCache[pr.number] = it }
+    }
+
     override fun getState(): PatrulhaState = state
 
     override fun loadState(state: PatrulhaState) {
         this.state = state
     }
 
+    fun isHistoryShown(number: Int): Boolean = number.toString() in state.historyPrs
+
+    /** Os `.md` dos PRs com o histórico no editor; lê só esses, porque o editor pede a cada redesenho. */
+    fun historyRecords(): List<PullRequestRecord> = state.historyPrs.mapNotNull { it.toIntOrNull()?.let(::record) }
+
+    /** Liga ou desliga os pedidos enviados ao PR [number] como cartões no editor. */
+    fun setHistoryShown(number: Int, shown: Boolean) {
+        val changed = if (shown) state.historyPrs.add(number.toString()) else state.historyPrs.remove(number.toString())
+        if (changed) historyChanged(number)
+    }
+
+    fun isRequestHidden(number: Int, id: String): Boolean = key(number, id) in state.hiddenRequests
+
+    /** O cartão está no editor: o histórico do PR está ligado e o pedido não foi ocultado. */
+    fun isInEditor(number: Int, id: String): Boolean = isHistoryShown(number) && !isRequestHidden(number, id)
+
+    fun setRequestsHidden(number: Int, ids: Collection<String>, hidden: Boolean) {
+        val keys = ids.map { key(number, it) }
+        val changed = if (hidden) state.hiddenRequests.addAll(keys) else state.hiddenRequests.removeAll(keys.toSet())
+        if (changed) historyChanged(number)
+    }
+
+    fun isRequestExpanded(number: Int, id: String): Boolean = key(number, id) in state.expandedRequests
+
+    fun toggleRequestExpanded(number: Int, id: String) {
+        val key = key(number, id)
+        if (!state.expandedRequests.remove(key)) state.expandedRequests += key
+        historyChanged(number)
+    }
+
+    /** Redesenha os cartões do PR [number] nos editores abertos, por exemplo depois que o `.md` mudou no disco. */
+    fun historyChanged(number: Int) {
+        val paths = record(number)?.requests?.map { it.path }.orEmpty()
+        project.service<ReviewCommentService>().refreshPaths(paths)
+        project.messageBus.syncPublisher(TOPIC).recordsChanged()
+    }
+
+    private fun key(number: Int, id: String) = "$number:$id"
+
+    /**
+     * Troca o texto e o código sugerido de um pedido já enviado, no comentário do GitHub e no `.md`. Devolve
+     * um aviso quando o pedido está no texto geral da revisão, que só pode ser editado pelo GitHub.
+     */
+    fun editRequest(context: RepoContext, number: Int, id: String, text: String, suggestion: String): String? {
+        val record = record(number) ?: throw PatrulhaException("Nenhum pedido enviado ao PR #$number.")
+        val request = record.requests.firstOrNull { it.id == id } ?: throw PatrulhaException("O pedido $id não está mais no PR #$number.")
+        if (request.deleted) throw PatrulhaException("O comentário de $id foi apagado no GitHub: não há o que editar lá.")
+        val updated = request.copy(
+            text = text.trim(),
+            suggestion = suggestion.trimEnd().takeUnless { it == request.snippet.trimEnd() }.orEmpty(),
+            remote = RemoteStatus.SYNCED,
+            remoteUpdatedAt = null,
+        )
+        val commentId = request.commentId
+        val warning = if (commentId != null) {
+            val client = client(context)
+            val current = try {
+                client.reviewComment(context.repo, commentId)
+            } catch (e: GitHubException) {
+                if (e.status != 404) throw e
+                write(record.copy(requests = record.requests.map { if (it.id == id) it.copy(remote = RemoteStatus.DELETED) else it }))
+                throw PatrulhaException("O comentário de $id foi apagado no GitHub enquanto você editava: o pedido ficou como apagado.")
+            }
+            val placement = if (current.subjectType == "file") Placement.FILE else Placement.INLINE
+            client.updateReviewComment(context.repo, commentId, ReviewPlan.bodyFor(updated.toComment(number), placement))
+            null
+        } else {
+            "O pedido $id está no texto geral da revisão: o .md foi atualizado, mas no GitHub edite o texto da revisão pelo navegador."
+        }
+        write(record.copy(requests = record.requests.map { if (it.id == id) updated else it }))
+        return warning
+    }
+
     fun returnPoint(): ReturnPoint? = state.returnPoint
+
+    /** Onde o modo revisão do PR [number] vale; sair dali encerra a revisão. */
+    fun reviewRef(number: Int): String = state.reviewRef.ifEmpty { branchName(number) }
+
+    fun setReviewRef(ref: String?) {
+        state.reviewRef = ref.orEmpty()
+    }
+
+    /** Troca para [ref], uma branch ou `@<sha>`, como na volta para a revisão de um PR. */
+    fun switchTo(context: RepoContext, ref: String) {
+        val root = context.repository.root
+        git(GitLineHandler(project, root, GitCommand.CHECKOUT).apply { addParameters(ref.removePrefix("@")) })
+        context.repository.update()
+        VfsUtil.markDirtyAndRefresh(false, true, true, root)
+    }
+
+    /** Devolve o stash de [point], quando o usuário saiu do PR por conta própria; devolve o aviso, se falhar. */
+    fun restoreStash(context: RepoContext, point: ReturnPoint): String? {
+        val warning = runCatching { popStash(context, point.stash) }.exceptionOrNull()?.let {
+            "As alterações continuam no stash \"${point.stashMessage}\": ${it.message}"
+        }
+        context.repository.update()
+        VfsUtil.markDirtyAndRefresh(false, true, true, context.repository.root)
+        return warning
+    }
 
     fun forgetReturnPoint() {
         state.returnPoint = null
@@ -267,8 +393,10 @@ class PatrulhaService(private val project: Project) : PersistentStateComponent<P
         val me = client.currentUser()
         val contents = mutableMapOf<Pair<String, String>, String?>()
         fun content(path: String, ref: String) = contents.getOrPut(path to ref) { client.fileContent(context.repo, path, ref) }
+        val remote = client.pullRequestComments(context.repo, number).associateBy { it.id }
 
-        val checked = record.requests.map { request ->
+        val checked = record.requests.map { RemoteSync.apply(it, remote) }.map { request ->
+            if (request.deleted) return@map request
             val needsCode = request.target != CommentTarget.PACKAGE && pr.headSha != request.commit
             val head = if (needsCode) content(request.path, pr.headSha) else null
             val sent = if (needsCode && request.target == CommentTarget.FILE) content(request.path, request.commit) else null
@@ -282,6 +410,39 @@ class PatrulhaService(private val project: Project) : PersistentStateComponent<P
                 requests = checked, checkedAt = LocalDateTime.now().toString(),
             ),
         )
+    }
+
+    /** O que a sincronização encontrou de novo: pedidos editados e apagados no GitHub desde a última vez. */
+    class SyncResult(val number: Int, val edited: List<String>, val deleted: List<String>) {
+        val changed: Boolean get() = edited.isNotEmpty() || deleted.isNotEmpty()
+    }
+
+    /** Traz para o `.md` o que o revisor editou ou apagou nos comentários do PR direto no GitHub. */
+    fun sync(context: RepoContext, number: Int): SyncResult {
+        val record = record(number) ?: return SyncResult(number, emptyList(), emptyList())
+        if (record.requests.none { it.commentId != null && !it.deleted }) return SyncResult(number, emptyList(), emptyList())
+        val remote = client(context).pullRequestComments(context.repo, number).associateBy { it.id }
+        val synced = record.requests.map { RemoteSync.apply(it, remote) }
+        val changed = synced.zip(record.requests).filter { (now, before) -> now != before }.map { it.first }
+        if (changed.isNotEmpty()) write(record.copy(requests = synced))
+        return SyncResult(number, changed.filterNot { it.deleted }.map { it.id }, changed.filter { it.deleted }.map { it.id })
+    }
+
+    /**
+     * Tira o pedido do `.md`; com [onGitHub], apaga também o comentário no PR, o que some com a conversa dele.
+     * Pedidos no texto geral da revisão só saem do `.md`.
+     */
+    fun deleteRequest(context: RepoContext?, number: Int, id: String, onGitHub: Boolean) {
+        val record = record(number) ?: return
+        val request = record.requests.firstOrNull { it.id == id } ?: return
+        val commentId = request.commentId
+        if (onGitHub && commentId != null && !request.deleted) {
+            val repo = context ?: throw PatrulhaException("O projeto não tem um remote do GitHub.")
+            client(repo).deleteReviewComment(repo.repo, commentId)
+        }
+        state.hiddenRequests.remove(key(number, id))
+        state.expandedRequests.remove(key(number, id))
+        write(record.copy(requests = record.requests.filterNot { it.id == id }))
     }
 
     fun records(): List<PullRequestRecord> {
@@ -312,6 +473,9 @@ class PatrulhaService(private val project: Project) : PersistentStateComponent<P
         Files.writeString(file, ChangeRequestMarkdown.render(merged))
         LocalFileSystem.getInstance().refreshNioFiles(listOf(file), true, false, null)
         project.messageBus.syncPublisher(TOPIC).recordsChanged()
+        if (isHistoryShown(record.number)) {
+            ApplicationManager.getApplication().invokeLater({ historyChanged(record.number) }, project.disposed)
+        }
         return merged
     }
 
@@ -326,6 +490,9 @@ class PatrulhaService(private val project: Project) : PersistentStateComponent<P
         const val DEFAULT_BODY = "Pedidos de alteração enviados pelo Iron Dome IA."
 
         fun branchName(number: Int) = "pr-$number"
+
+        /** A branch atual ou, sem branch, `@<sha>` do commit. */
+        fun refOf(repository: GitRepository): String? = repository.currentBranchName ?: repository.currentRevision?.let { "@$it" }
 
         /** Revisões do Radar e pedidos dos PRs ficam fora do stash, e as configurações da IDE também. */
         private val WORK_PATHS = arrayOf(".", ":(exclude)${ReviewCommentService.REVIEW_DIR}", ":(exclude).idea")

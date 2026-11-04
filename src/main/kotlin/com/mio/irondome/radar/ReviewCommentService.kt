@@ -6,6 +6,8 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.State
 import com.intellij.openapi.components.Storage
 import com.intellij.openapi.components.StoragePathMacros
+import com.intellij.openapi.diagnostic.ControlFlowException
+import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.editor.Document
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.EditorFactory
@@ -238,9 +240,12 @@ class ReviewCommentService(private val project: Project) : PersistentStateCompon
         text: String,
         discuss: Boolean,
         suggestion: String = "",
+        origin: CommentOrigin = CommentOrigin.RADAR,
     ): ReviewComment? {
         val path = relativePath(file) ?: return null
-        val (id, reviewId) = nextIdentity()
+        // Só o que o usuário comenta vai para o PR em revisão; os outros mecanismos falam com a IA.
+        val pullRequest = if (origin == CommentOrigin.RADAR) state.activePullRequest else 0
+        val (id, reviewId) = nextIdentity(pullRequest)
         val snippet = linesText(document, lines.first, lines.last)
         val comment = ReviewComment(
             id = id,
@@ -251,8 +256,9 @@ class ReviewCommentService(private val project: Project) : PersistentStateCompon
             snippet = snippet,
             text = text,
             discuss = discuss,
-            pullRequest = state.activePullRequest,
-            suggestion = suggestionFor(state.activePullRequest, suggestion, snippet),
+            pullRequest = pullRequest,
+            suggestion = suggestionFor(pullRequest, suggestion, snippet),
+            origin = origin,
         )
         state.comments += comment
         markers[comment] = createMarker(document, comment)
@@ -280,6 +286,12 @@ class ReviewCommentService(private val project: Project) : PersistentStateCompon
         notifyChanged()
         return comment
     }
+
+    /** Alvo ainda não interceptado de [origin] em [path] que cita [mention], na revisão aberta ou em rascunho. */
+    fun hasOpenComment(path: String, origin: CommentOrigin, mention: String): Boolean =
+        state.comments.any {
+            it.filePath == path && it.origin == origin && !it.resolved && !it.removing && it.pullRequest == 0 && mention in it.text
+        }
 
     fun isEditable(comment: ReviewComment): Boolean =
         !comment.resolved && !comment.removing && comment in state.comments
@@ -388,6 +400,7 @@ class ReviewCommentService(private val project: Project) : PersistentStateCompon
                 resolved = true,
                 discuss = comment.discuss,
                 target = comment.target,
+                origin = comment.origin,
             ).also { it.exported = ExportedVersion.of(it) }
         }
         if (restored.isEmpty()) return
@@ -431,6 +444,35 @@ class ReviewCommentService(private val project: Project) : PersistentStateCompon
                 ),
             )
         }
+        for (card in providedCards(path, document)) {
+            val lines = card.lines
+            if (lines == null) {
+                inlayModel.addBlockElement(0, false, true, 0, ReviewCommentRenderer(card.comment, false, false, 0, card))
+                continue
+            }
+            val last = lines.last.coerceIn(0, maxOf(document.lineCount - 1, 0))
+            val first = lines.first.coerceIn(0, last)
+            inlayModel.addBlockElement(
+                document.getLineEndOffset(last),
+                true,
+                false,
+                0,
+                ReviewCommentRenderer(card.comment, false, false, indentOf(editor, document.getLineStartOffset(first)), card),
+            )
+        }
+    }
+
+    /** Um provedor com erro não pode impedir os cartões do Radar de aparecerem. */
+    private fun providedCards(path: String, document: Document): List<EditorCard> =
+        EditorCardProvider.EP_NAME.extensionList.flatMap { provider ->
+            runCatching { provider.cards(project, path, document) }
+                .onFailure { if (it is ControlFlowException) throw it else LOG.warn("Cartões de ${provider.javaClass.simpleName} falharam", it) }
+                .getOrDefault(emptyList())
+        }
+
+    /** Redesenha os editores abertos dos arquivos [paths], por exemplo quando os cartões de outro mecanismo mudam. */
+    fun refreshPaths(paths: Collection<String>) {
+        paths.distinct().forEach { path -> documentOf(path)?.let(::refreshEditors) }
     }
 
     /**
@@ -493,8 +535,8 @@ class ReviewCommentService(private val project: Project) : PersistentStateCompon
     }
 
     /** Id e revisão do próximo comentário: os de PR têm numeração própria e ficam fora das revisões da IA. */
-    private fun nextIdentity(): Pair<String, Int> {
-        if (state.activePullRequest != 0) return "P${state.nextPullRequestCommentId++}" to 0
+    private fun nextIdentity(pullRequest: Int = state.activePullRequest): Pair<String, Int> {
+        if (pullRequest != 0) return "P${state.nextPullRequestCommentId++}" to 0
         // Abrir uma revisão nova reinicia a numeração, então precisa vir antes do id.
         val reviewId = openReview()
         return "C${state.nextCommentId++}" to reviewId
@@ -655,6 +697,7 @@ class ReviewCommentService(private val project: Project) : PersistentStateCompon
     companion object {
         const val REVIEW_DIR = "iron-dome"
         private const val REVIEW_PREFIX = "ordem-interceptacao-"
+        private val LOG = logger<ReviewCommentService>()
 
         fun reviewName(reviewId: Int): String = "$REVIEW_PREFIX$reviewId"
 

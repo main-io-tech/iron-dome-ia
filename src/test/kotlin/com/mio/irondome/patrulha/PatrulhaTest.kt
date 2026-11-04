@@ -3,6 +3,7 @@ package com.mio.irondome.patrulha
 import com.mio.irondome.radar.CommentTarget
 import com.mio.irondome.radar.ReviewComment
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -142,6 +143,98 @@ class PatrulhaTest {
         assertTrue(planned.getValue("P2").body.contains("**Como sugiro que fique:**\n\n```kt\n$code\n```"))
         assertTrue("suggestion" !in planned.getValue("P2").body)
         assertTrue(ReviewPlan.reviewBody("", planned.values.toList()).contains("  ```kt\n  fun a() = 1\n  ```"))
+    }
+
+    @Test
+    fun changedFilesShowTheirStatusAndThePrTotals() {
+        val files = PullRequestFiles(
+            "abc", "base",
+            listOf(
+                ChangedFile("src/Novo.kt", "added", null, additions = 30),
+                ChangedFile("src/Frete.kt", "modified", null, additions = 5, deletions = 2),
+                ChangedFile("src/Velho.kt", "removed", null, deletions = 40),
+                ChangedFile("src/Pedido.kt", "renamed", null, additions = 1, deletions = 1, previousPath = "src/Ordem.kt"),
+            ),
+        )
+
+        assertEquals(listOf("Novo", "Alterado", "Removido", "Renomeado"), files.files.map { it.statusLabel })
+        assertEquals(36, files.additions)
+        assertEquals(43, files.deletions)
+        assertTrue(files.files[0].added)
+        assertTrue(files.files[2].removed)
+    }
+
+    @Test
+    fun snippetIsFoundWhereTheCodeIsNowOrStaysOnTheRecordedLines() {
+        val now = "import a\n\nfun a() {}\nval total = itens.sum()\nfun b() {}\nval total = itens.sum()"
+
+        assertEquals("a ocorrência mais perto das linhas gravadas", 5..5, SnippetLocator.locate(now, "val total = itens.sum()", 6..6))
+        assertEquals(3..3, SnippetLocator.locate(now, "val total = itens.sum()", 1..1))
+        assertEquals("sem o trecho, as linhas gravadas", 2..3, SnippetLocator.locate(now, "outro", 2..3))
+        assertEquals("limitadas ao fim do arquivo", 5..5, SnippetLocator.locate(now, "outro", 40..42))
+    }
+
+    @Test
+    fun editingRebuildsTheSameGitHubTextAsSending() {
+        val files = listOf(ChangedFile("src/Frete.kt", "modified", "@@ -1,2 +1,3 @@\n a\n+b\n c"))
+        val comment = ReviewComment(id = "P1", filePath = "src/Frete.kt", startLine = 1, endLine = 1, text = "use o peso", suggestion = "val p = 1")
+
+        val sent = ReviewPlan.plan(listOf(comment), files).single()
+
+        assertEquals(sent.body, ReviewPlan.bodyFor(comment, sent.placement))
+    }
+
+    @Test
+    fun theGitHubTextGoesBackToTextAndSuggestionInEveryFormat() {
+        val code = "    val total = itens.sumOf { it.peso }"
+        val inline = ReviewComment(id = "P1", filePath = "src/Frete.kt", startLine = 1, endLine = 1, text = "use o peso", suggestion = code)
+        val outside = ReviewComment(id = "P2", filePath = "src/Frete.kt", startLine = 9, endLine = 10, snippet = "a\nb", text = "fora", suggestion = code)
+        val wholeFile = ReviewComment(id = "P3", filePath = "src/Frete.kt", text = "arquivo", target = CommentTarget.FILE, suggestion = "fun a() = 1")
+        val plain = ReviewComment(id = "P4", filePath = "src/Frete.kt", startLine = 1, endLine = 1, text = "só texto\ncom duas linhas")
+
+        assertEquals("use o peso" to code, ReviewPlan.parseBody(ReviewPlan.bodyFor(inline, Placement.INLINE)))
+        assertEquals("fora" to code, ReviewPlan.parseBody(ReviewPlan.bodyFor(outside, Placement.FILE)))
+        assertEquals("arquivo" to "fun a() = 1", ReviewPlan.parseBody(ReviewPlan.bodyFor(wholeFile, Placement.FILE)))
+        assertEquals("só texto\ncom duas linhas" to "", ReviewPlan.parseBody(ReviewPlan.bodyFor(plain, Placement.INLINE)))
+        assertEquals("escrito à mão no GitHub" to "", ReviewPlan.parseBody("escrito à mão no GitHub"))
+    }
+
+    @Test
+    fun syncFindsCommentsEditedOrDeletedOnGitHub() {
+        val sent = request("P1", commentId = 10).copy(suggestion = "val p = 1")
+        val sameBody = ReviewPlan.bodyFor(sent.toComment(3), Placement.INLINE)
+        fun remote(body: String) = mapOf(10L to GitHubClient.PostedComment(10, "u", "src/Frete.kt", 5, body, updatedAt = "2026-11-03T20:00:00Z"))
+
+        assertEquals("o mesmo texto não muda nada", sent, RemoteSync.apply(sent, remote(sameBody)))
+        val edited = RemoteSync.apply(sent, remote("Considere o peso e o volume\n\n```suggestion\nval p = 2\n```\n\n${ReviewPlan.marker("P1")}"))
+        assertEquals(RemoteStatus.EDITED, edited.remote)
+        assertEquals("Considere o peso e o volume", edited.text)
+        assertEquals("val p = 2", edited.suggestion)
+        assertEquals("2026-11-03T20:00:00Z", edited.remoteUpdatedAt)
+        val deleted = RemoteSync.apply(sent, emptyMap())
+        assertTrue(deleted.deleted)
+        assertFalse("apagado não conta como atendido", deleted.copy(code = CodeStatus.CHANGED).likelyDone)
+        assertEquals("no texto geral da revisão não há o que sincronizar", request("P2", commentId = null), RemoteSync.apply(request("P2", commentId = null), emptyMap()))
+    }
+
+    @Test
+    fun remoteStatusSurvivesTheMarkdownAndDeletedRequestsLeaveTheCounts() {
+        val record = PullRequestRecord(
+            3, "t", "u", "h", "b",
+            listOf(
+                request("P1").copy(remote = RemoteStatus.EDITED, remoteUpdatedAt = "2026-11-03T20:00:00Z"),
+                request("P2").copy(remote = RemoteStatus.DELETED),
+            ),
+        )
+        val markdown = ChangeRequestMarkdown.render(record)
+
+        val parsed = ChangeRequestMarkdown.parse(markdown)!!
+
+        assertEquals(listOf(RemoteStatus.EDITED, RemoteStatus.DELETED), parsed.requests.map { it.remote })
+        assertEquals("2026-11-03T20:00:00Z", parsed.requests[0].remoteUpdatedAt)
+        assertEquals(listOf("P1"), parsed.active.map { it.id })
+        assertTrue(markdown.contains("| ~~P2~~ (Apagado no GitHub) |"))
+        assertTrue(markdown.contains("- **No GitHub:** Editado no GitHub em "))
     }
 
     @Test

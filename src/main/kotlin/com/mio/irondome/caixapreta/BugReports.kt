@@ -24,6 +24,7 @@ import com.intellij.openapi.wm.ToolWindowManager
 import com.intellij.ui.jcef.JBCefApp
 import com.mio.irondome.base.ReviewToolWindowFactory
 import com.mio.irondome.base.TabFailures
+import com.mio.irondome.interceptor.AgentRunner
 import java.awt.image.BufferedImage
 import java.nio.file.Files
 import java.nio.file.Path
@@ -195,6 +196,11 @@ object BugReports {
     private fun Notification.addOpenActions(project: Project, dir: Path) = apply {
         addAction(NotificationAction.createSimple("Abrir ${BugReportMarkdown.FILE_NAME}") { openReport(project, dir) })
         addAction(NotificationAction.createSimple("Abrir Pasta") { RevealFileAction.openDirectory(dir.toFile()) })
+        if (AgentRunner.getInstance(project).available()) {
+            addAction(NotificationAction.createSimpleExpiring("Analisar com IA") {
+                BugAnalysis.analyzeReport(project, dir.resolve(BugReportMarkdown.FILE_NAME))
+            })
+        }
     }
 
     private fun openReport(project: Project, dir: Path) {
