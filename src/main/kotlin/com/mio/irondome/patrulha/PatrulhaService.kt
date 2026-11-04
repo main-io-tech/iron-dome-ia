@@ -7,7 +7,6 @@ import com.intellij.openapi.components.State
 import com.intellij.openapi.components.Storage
 import com.intellij.openapi.components.StoragePathMacros
 import com.intellij.openapi.components.service
-import com.intellij.openapi.progress.runBlockingMaybeCancellable
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VfsUtil
@@ -22,7 +21,6 @@ import git4idea.commands.GitLineHandler
 import git4idea.repo.GitRepository
 import git4idea.repo.GitRepositoryManager
 import org.jetbrains.plugins.github.authentication.GHAccountsUtil
-import org.jetbrains.plugins.github.authentication.accounts.GHAccountManager
 import org.jetbrains.plugins.github.authentication.accounts.GithubAccount
 import org.jetbrains.plugins.github.util.GHCompatibilityUtil
 import java.nio.file.Files
@@ -376,18 +374,6 @@ class PatrulhaService(private val project: Project) : PersistentStateComponent<P
             ?: throw PatrulhaException("Nenhuma conta do GitHub em ${context.repo.host}. Entre em Settings > Version Control > GitHub.")
         val token = GHCompatibilityUtil.getOrRequestToken(account, project)
             ?: throw PatrulhaException("Sem token para a conta ${account.name}. Entre de novo em Settings > Version Control > GitHub.")
-        return GitHubClient(account.server.toApiUrl(), account.server.toGraphQLUrl(), token)
-    }
-
-    /**
-     * Um cliente sem nunca abrir o login: com o token já guardado da conta, ou nulo. Para as consultas que rodam
-     * sozinhas, como a Patrulha de plantão.
-     */
-    fun quietClient(context: RepoContext): GitHubClient? {
-        val account = context.account ?: return null
-        val token = runCatching {
-            runBlockingMaybeCancellable { service<GHAccountManager>().findCredentials(account) }
-        }.getOrNull() ?: return null
         return GitHubClient(account.server.toApiUrl(), account.server.toGraphQLUrl(), token)
     }
 

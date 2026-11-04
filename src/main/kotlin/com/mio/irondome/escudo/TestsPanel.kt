@@ -51,7 +51,6 @@ import com.mio.irondome.base.Stat
 import com.mio.irondome.base.SummaryHeader
 import com.mio.irondome.base.Tone
 import com.mio.irondome.base.plural
-import com.mio.irondome.defesa.DefenseStatus
 import com.intellij.ui.components.panels.VerticalLayout
 import com.mio.irondome.interceptor.AgentProgressPanel
 import com.mio.irondome.interceptor.AgentRunner
@@ -102,10 +101,6 @@ class TestsPanel(private val project: Project) : SimpleToolWindowPanel(true, tru
     private var notStarted = false
     private var results: List<TestNode> = emptyList()
     private var onlyFailures = false
-    /** O que a execução atual cobre, como "raio de Frete"; nulo para todos os testes. */
-    private var runScope: String? = null
-    /** A execução cujo resultado já foi para a status bar da defesa. */
-    private var reported: ExecutionEnvironment? = null
     /** Nós com falha já abertos sozinhos uma vez: se o usuário os recolher, ficam recolhidos. */
     private val autoExpanded = mutableSetOf<String>()
 
@@ -247,26 +242,12 @@ class TestsPanel(private val project: Project) : SimpleToolWindowPanel(true, tru
 
     override fun dispose() = Unit
 
-    private fun runAll() = execute(RUN_NAME, null) {
-        TEST_OBJECT = JUnitConfiguration.TEST_PACKAGE
-        PACKAGE_NAME = ""
-        scope = TestSearchScope.WHOLE_PROJECT
-    }
-
-    /** Roda só os testes do raio de [label]: os que citam a classe e as que dependem dela. Falso se já há testes rodando. */
-    fun runClasses(classes: List<String>, label: String): Boolean {
-        if (running || classes.isEmpty()) return false
-        execute("Iron Dome IA: testes do raio de $label", "raio de $label") {
-            TEST_OBJECT = JUnitConfiguration.TEST_PATTERN
-            setPatterns(LinkedHashSet(classes))
-            scope = TestSearchScope.WHOLE_PROJECT
+    private fun runAll() {
+        val configuration = JUnitConfiguration(RUN_NAME, project).apply {
+            persistentData.TEST_OBJECT = JUnitConfiguration.TEST_PACKAGE
+            persistentData.PACKAGE_NAME = ""
+            persistentData.scope = TestSearchScope.WHOLE_PROJECT
         }
-        return true
-    }
-
-    private fun execute(name: String, runScope: String?, setup: JUnitConfiguration.Data.() -> Unit) {
-        val configuration = JUnitConfiguration(name, project).apply { persistentData.setup() }
-        this.runScope = runScope
         val settings = RunManager.getInstance(project)
             .createConfiguration(configuration, JUnitConfigurationType.getInstance().factory)
             .apply { isActivateToolWindowBeforeRun = false }
@@ -336,13 +317,7 @@ class TestsPanel(private val project: Project) : SimpleToolWindowPanel(true, tru
         val classes = results.flatMap { it.classes }
         val failed = tests.count { it.outcome == TestOutcome.FAILED }
         val keys = results.count { it.classKey != null }
-        val finished = environment?.takeIf { !running && process?.isProcessTerminated == true && tests.isNotEmpty() }
-        if (finished != null && finished !== reported) {
-            reported = finished
-            DefenseStatus.getInstance(project).testsFinished(failed, tests.size, runScope)
-        }
         val context = listOfNotNull(
-            runScope?.replaceFirstChar(Char::uppercase),
             plural(classes.size, "classe", "classes"),
             plural(keys, "chave", "chaves").takeIf { keys > 0 },
             testsRoot?.duration?.let(TestResults::formatDuration),

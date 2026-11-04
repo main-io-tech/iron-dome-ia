@@ -55,10 +55,6 @@ data class AgentTask(
     val write: Boolean,
     /** A aba do painel que pediu: o andamento aparece nela, e sempre no Interceptador. */
     val origin: String? = null,
-    /** Pedida por uma defesa automática: roda na aba, sem perguntar, e não abre o terminal. */
-    val automatic: Boolean = false,
-    /** Sem o aviso de concluída: quem pediu avisa do jeito dele. Falhas continuam avisando. */
-    val quiet: Boolean = false,
 )
 
 object AgentCommand {

@@ -369,31 +369,7 @@ class GitHubClient(private val apiUrl: String, private val graphQlUrl: String, p
             url = json.string("html_url"),
             updatedAt = json.optString("updated_at").orEmpty(),
             draft = json.get("draft")?.takeUnless { it is JsonNull }?.asBoolean == true,
-            requestedReviewers = (json.get("requested_reviewers") as? JsonArray)
-                ?.mapNotNull { (it as? JsonObject)?.optString("login") }.orEmpty(),
-            comments = json.get("comments")?.takeUnless { it is JsonNull }?.asInt ?: 0,
-            reviewComments = json.get("review_comments")?.takeUnless { it is JsonNull }?.asInt ?: 0,
         )
-    }
-
-    /**
-     * A situação da CI no commit [sha], juntando os check runs e os status antigos: `failure` se algum falhou,
-     * `pending` se algum ainda roda, `success` se todos passaram, e nulo sem nenhuma verificação.
-     */
-    fun ciState(repo: GitHubRepo, sha: String): CiState? {
-        val runs = (request("GET", "${repoPath(repo)}/commits/$sha/check-runs?per_page=100").asJsonObject.get("check_runs") as? JsonArray)
-            ?.mapNotNull { it as? JsonObject }.orEmpty()
-        val statuses = runCatching {
-            (request("GET", "${repoPath(repo)}/commits/$sha/status").asJsonObject.get("statuses") as? JsonArray)
-                ?.mapNotNull { (it as? JsonObject)?.optString("state") }.orEmpty()
-        }.getOrDefault(emptyList())
-        if (runs.isEmpty() && statuses.isEmpty()) return null
-        val conclusions = runs.map { it.optString("conclusion") }
-        return when {
-            conclusions.any { it in FAILED_CONCLUSIONS } || statuses.any { it == "failure" || it == "error" } -> CiState.FAILURE
-            runs.any { it.optString("status") != "completed" } || statuses.any { it == "pending" } -> CiState.PENDING
-            else -> CiState.SUCCESS
-        }
     }
 
     private fun postedComment(json: JsonObject) = PostedComment(
@@ -468,6 +444,5 @@ class GitHubClient(private val apiUrl: String, private val graphQlUrl: String, p
         const val JSON = "application/vnd.github+json"
         const val RAW = "application/vnd.github.raw+json"
         const val MAX_PAGES = 30
-        val FAILED_CONCLUSIONS = setOf("failure", "timed_out", "cancelled", "action_required", "startup_failure")
     }
 }

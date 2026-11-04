@@ -45,18 +45,7 @@ data class PullRequest(
     val updatedAt: String,
     val draft: Boolean,
     val baseSha: String = "",
-    /** Quem ainda tem a revisão pedida, pelo login. */
-    val requestedReviewers: List<String> = emptyList(),
-    /** Comentários na conversa e nas linhas; só vêm na consulta de um PR, não na lista. */
-    val comments: Int = 0,
-    val reviewComments: Int = 0,
 )
-
-enum class CiState(val label: String) {
-    SUCCESS("CI passou"),
-    PENDING("CI rodando"),
-    FAILURE("CI quebrada"),
-}
 
 /**
  * Arquivo alterado no PR; [patch] é o diff unificado do GitHub, ausente em arquivos binários ou grandes.

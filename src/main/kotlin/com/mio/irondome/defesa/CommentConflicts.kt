@@ -1,7 +1,24 @@
 package com.mio.irondome.defesa
 
+import com.intellij.notification.NotificationAction
+import com.intellij.notification.NotificationGroupManager
+import com.intellij.notification.NotificationType
+import com.intellij.openapi.Disposable
+import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.components.Service
+import com.intellij.openapi.components.service
+import com.intellij.openapi.project.Project
+import com.intellij.util.Alarm
+import com.mio.irondome.base.IronDomeIcons
+import com.mio.irondome.base.IronDomeRoot
+import com.mio.irondome.impacto.CommentSource
 import com.mio.irondome.impacto.ImpactComment
+import com.mio.irondome.impacto.ImpactComments
+import com.mio.irondome.interceptor.AgentRunner
+import com.mio.irondome.interceptor.AgentTask
 import com.mio.irondome.radar.CommentTarget
+import com.mio.irondome.radar.ReviewCommentService
+import com.mio.irondome.radar.ReviewCommentsListener
 
 /** Dois comentários pendentes sobre o mesmo trecho: podem pedir coisas opostas. */
 data class CommentOverlap(val first: ImpactComment, val second: ImpactComment) {
@@ -66,5 +83,89 @@ object CommentConflicts {
             appendLine()
             appendLine(overlap.second.text.trim())
         }
+    }
+}
+
+/**
+ * Vigia os comentários pendentes do Radar e da Patrulha: quando dois passam a apontar para o mesmo trecho, avisa
+ * uma vez por par e oferece a síntese pela IA.
+ */
+@Service(Service.Level.PROJECT)
+class CommentConflictWatcher(private val project: Project) : Disposable {
+
+    private val alarm = Alarm(Alarm.ThreadToUse.SWING_THREAD, this)
+    private val notified = mutableSetOf<String>()
+
+    init {
+        val connection = project.messageBus.connect(this)
+        connection.subscribe(ReviewCommentsListener.TOPIC, ReviewCommentsListener { schedule() })
+        connection.subscribe(IronDomeRoot.Listener.TOPIC, IronDomeRoot.Listener {
+            notified.clear()
+            schedule()
+        })
+        schedule()
+    }
+
+    override fun dispose() = Unit
+
+    private fun schedule() {
+        alarm.cancelAllRequests()
+        alarm.addRequest(::check, DELAY_MS)
+    }
+
+    private fun check() {
+        if (project.isDisposed || !DefenseSettings.conflictDetection) return
+        val fresh = CommentConflicts.overlaps(pendingComments()).filter { notified.add(it.key) }
+        if (fresh.isNotEmpty()) notify(fresh)
+    }
+
+    /** Os comentários pendentes de todos os mecanismos; sem o Git, só os do Radar. Na EDT. */
+    private fun pendingComments(): List<ImpactComment> = try {
+        ImpactComments.collect(project)
+    } catch (_: LinkageError) {
+        project.service<ReviewCommentService>().activeComments().filter { !it.resolved && !it.removing }.map {
+            ImpactComment(
+                it.id, CommentSource.RADAR, it.filePath, it.target,
+                if (it.target == CommentTarget.LINES) it.startLine + 1 else 0,
+                if (it.target == CommentTarget.LINES) it.endLine + 1 else 0,
+                it.text,
+            )
+        }
+    }
+
+    private fun notify(found: List<CommentOverlap>) {
+        val first = found.first()
+        val title = if (found.size == 1) "Comentários no mesmo trecho" else "${found.size} pares de comentários no mesmo trecho"
+        val content = "${first.first.id} (${first.first.source.label}) e ${first.second.id} (${first.second.source.label}) apontam para " +
+            "${first.location} de ${first.path.substringAfterLast('/')}: podem pedir coisas opostas." +
+            if (found.size > 1) " E mais ${found.size - 1}." else ""
+        NotificationGroupManager.getInstance().getNotificationGroup("Iron Dome IA")
+            .createNotification(title, content, NotificationType.INFORMATION)
+            .setIcon(IronDomeIcons.radar)
+            .addAction(NotificationAction.createSimpleExpiring("Pedir Síntese à IA") { synthesize(found) })
+            .notify(project)
+    }
+
+    /** A IA lê os pares e diz se divergem e o que atende aos dois; a resposta vem no aviso de concluída. */
+    private fun synthesize(overlaps: List<CommentOverlap>) {
+        val runner = AgentRunner.getInstance(project)
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val instructions = runner.writeInstructions("sintese-comentarios.md", CommentConflicts.synthesisInstructions(overlaps)) ?: return@executeOnPooledThread
+            ApplicationManager.getApplication().invokeLater({
+                runner.run(
+                    AgentTask(
+                        "Síntese de comentários",
+                        "Leia as instruções em $instructions e responda em português, sem alterar nenhum arquivo.",
+                        write = false,
+                    ),
+                )
+            }, project.disposed)
+        }
+    }
+
+    companion object {
+        private const val DELAY_MS = 800
+
+        fun getInstance(project: Project): CommentConflictWatcher = project.service()
     }
 }

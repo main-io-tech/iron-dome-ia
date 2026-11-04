@@ -134,7 +134,7 @@ class AgentRunner(private val project: Project) {
             return
         }
         val root = project.rootPath() ?: return
-        val terminal = if (task.automatic) null else when (chooseMode(task)) {
+        val terminal = when (chooseMode(task)) {
             null -> return
             AgentRunMode.TERMINAL -> AgentTerminal.available() ?: run {
                 notify("Terminal indisponível", "O plugin de terminal da IDE está desligado: a IA roda na aba.", NotificationType.WARNING)
@@ -357,7 +357,6 @@ class AgentRunner(private val project: Project) {
     }
 
     private fun report(result: AgentResult, actions: Array<out Pair<String, (AgentResult) -> Unit>>) {
-        if (result.task.quiet && result.ok) return
         val title = when {
             result.cancelled -> "IA: ${result.task.title} cancelada"
             !result.ok -> "IA: ${result.task.title} falhou"

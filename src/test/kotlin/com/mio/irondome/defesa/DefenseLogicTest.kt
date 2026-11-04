@@ -58,18 +58,6 @@ class DefenseLogicTest {
     }
 
     @Test
-    fun `triagem pula imports e renomeacoes e prioriza risco alto`() {
-        val imports = "--- a/F.kt\n+++ b/F.kt\n-import a.B\n+import a.C\n"
-        assertEquals(TriageVerdict.SKIP, Triage.classify(imports, listOf(ChangeRisk.HIGH)).verdict)
-        val rename = "-val total = soma(itens)\n+val valorTotal = soma(itens)\n"
-        assertEquals(TriageVerdict.SKIP, Triage.classify(rename, listOf(ChangeRisk.HIGH)).verdict)
-        val logic = (1..8).joinToString("\n") { "+if (x > $it) return $it" }
-        assertEquals(TriageVerdict.HIGH, Triage.classify(logic, listOf(ChangeRisk.HIGH)).verdict)
-        assertEquals(TriageVerdict.LOW, Triage.classify(logic, listOf(ChangeRisk.MEDIUM)).verdict)
-        assertEquals(TriageVerdict.SKIP, Triage.classify("+if (a) b()\n", listOf(ChangeRisk.LOW)).verdict)
-    }
-
-    @Test
     fun `sobreposicao de comentarios por intervalo no mesmo arquivo`() {
         val overlaps = CommentConflicts.overlaps(
             listOf(
@@ -123,24 +111,5 @@ class DefenseLogicTest {
         assertTrue("Decisão do time" in text)
         assertFalse("Vazio.kt" in text)
         assertEquals("", ClassDossier.render(emptyList()))
-    }
-
-    @Test
-    fun `regras do commit explicam alvos, risco sem teste e co-mudanca`() {
-        val snapshot = ClassSnapshot(
-            qualifiedName = "loja.Frete", name = "Frete", filePath = "src/Frete.kt",
-            afferent = 14, dependents = 14, dependentsWithoutTests = 3, coverage = TestCoverage.NONE,
-            testClasses = emptyList(), radiusTests = emptyList(),
-            risk = RiskScore.of(14, false, TestCoverage.NONE, null), changed = true,
-        )
-        val alerts = CommitRules.alerts(listOf("src/Frete.kt"), listOf(comment("C1", 3, 3)), mapOf("src/Frete.kt" to snapshot), history)
-        assertEquals(3, alerts.size)
-        assertTrue(alerts[0].text, "C1" in alerts[0].text)
-        assertEquals(DefenseLevel.RED, alerts[1].level)
-        assertTrue(alerts[2].text, "FreteTest.kt" in alerts[2].text)
-        val withTest = CommitRules.alerts(listOf("src/Frete.kt", "src/FreteTest.kt"), emptyList(), mapOf("src/Frete.kt" to snapshot), history)
-        assertTrue(withTest.isEmpty())
-        assertTrue(CommitRules.isTest("src/test/kotlin/loja/Qualquer.kt"))
-        assertFalse(CommitRules.isTest("src/main/kotlin/loja/Testemunha.kt"))
     }
 }

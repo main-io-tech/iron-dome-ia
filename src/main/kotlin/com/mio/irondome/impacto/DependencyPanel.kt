@@ -286,12 +286,6 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
         run("Calculando o raio de impacto de ${DependencyAnalyzer.simpleName(qualifiedName)}") { qualifiedName }
     }
 
-    /** Mira a classe de [report], uma análise da IA feita em segundo plano, e mostra o impacto dela no diagrama. */
-    fun showReport(report: ImpactReport) {
-        impact = report
-        analyze(report.focus)
-    }
-
     /** Só o resultado da análise mais recente aparece; as anteriores são canceladas. [after] roda com o diagrama novo na tela. */
     private fun run(title: String, after: (() -> Unit)? = null, resolveFocus: () -> String?) {
         running?.cancel()
