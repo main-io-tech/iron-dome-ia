@@ -49,7 +49,7 @@ class PullRequestCards : EditorCardProvider {
             subtitle = when (request.remote) {
                 RemoteStatus.DELETED -> "Enviado ao PR #$number e apagado no GitHub pelo revisor"
                 RemoteStatus.EDITED -> "Enviado ao PR #$number · editado no GitHub · Código: ${request.code.label} · Conversa: ${request.thread.label}"
-                RemoteStatus.SYNCED -> "Enviado ao PR #$number · Código: ${request.code.label} · Conversa: ${request.thread.label} · IA: ${request.ai.label}"
+                RemoteStatus.SYNCED -> "Enviado ao PR #$number · Código: ${request.code.label} · Conversa: ${request.thread.label}"
             },
             onToggle = { patrulha.toggleRequestExpanded(number, request.id) },
             onHide = { patrulha.setRequestsHidden(number, listOf(request.id), true) },

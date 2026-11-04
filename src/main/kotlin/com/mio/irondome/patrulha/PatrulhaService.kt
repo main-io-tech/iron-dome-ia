@@ -384,7 +384,7 @@ class PatrulhaService(private val project: Project) : PersistentStateComponent<P
         return "$id-$index"
     }
 
-    /** Confere o código no head atual e as conversas no PR, e regrava o `.md` mantendo o parecer da IA. */
+    /** Confere o código no head atual e as conversas no PR, e regrava o `.md`. */
     fun verify(context: RepoContext, number: Int): PullRequestRecord {
         val record = record(number) ?: throw PatrulhaException("Nenhum pedido enviado ao PR #$number.")
         val client = client(context)
@@ -460,23 +460,16 @@ class PatrulhaService(private val project: Project) : PersistentStateComponent<P
 
     fun recordsDir(): Path? = project.basePath?.let { Path.of(it, ReviewCommentService.REVIEW_DIR, PullRequestRecord.DIR) }
 
-    /** Relê o parecer da IA no disco logo antes de gravar, para não perder o que ela escreveu enquanto a rede respondia. */
     private fun write(record: PullRequestRecord): PullRequestRecord {
         val file = recordFile(record.number) ?: throw PatrulhaException("O projeto não tem pasta no disco.")
-        val onDisk = record(record.number)?.requests.orEmpty().associateBy { it.id }
-        val merged = record.copy(
-            requests = record.requests.map { request ->
-                onDisk[request.id]?.let { request.copy(ai = it.ai, aiNote = it.aiNote) } ?: request
-            },
-        )
         Files.createDirectories(file.parent)
-        Files.writeString(file, ChangeRequestMarkdown.render(merged))
+        Files.writeString(file, ChangeRequestMarkdown.render(record))
         LocalFileSystem.getInstance().refreshNioFiles(listOf(file), true, false, null)
         project.messageBus.syncPublisher(TOPIC).recordsChanged()
         if (isHistoryShown(record.number)) {
             ApplicationManager.getApplication().invokeLater({ historyChanged(record.number) }, project.disposed)
         }
-        return merged
+        return record
     }
 
     fun interface Listener {

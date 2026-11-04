@@ -93,7 +93,7 @@ Cada mecanismo é independente e tem uma aba própria no painel lateral **Iron D
 | 👁️ [**Sentinela**](#sentinela) | Vigia o perímetro: tudo o que ainda não foi commitado, com o diff a um clique. | Aba Sentinela |
 | 🛡️ [**Escudo**](#escudo) | Executa os testes JUnit e mostra o resultado agrupado e com os nomes formatados. | Aba Escudo |
 | 🛰️ [**Patrulha**](#patrulha) | Revisa os pull requests abertos no GitHub no modo revisão do PR, envia os pedidos de alteração e confere depois se foram atendidos. | Aba Patrulha |
-| 🚀 [**Interceptador**](#interceptador) | Chama a IA pelo Cursor CLI ou Antigravity CLI para disparar alvos, revisar PRs, dar parecer, explicar falhas de teste e analisar bugs. | Ações com IA nas abas |
+| 🚀 [**Interceptador**](#interceptador) | Chama a IA pelo Cursor CLI ou Antigravity CLI para disparar alvos, revisar PRs, explicar falhas de teste e analisar bugs. | Ações com IA nas abas |
 | 🏰 [**Base**](#base) | O painel lateral e os componentes visuais que os mecanismos compartilham. | Lateral da IDE |
 | 📦 [**Caixa-Preta**](#caixa-preta) | Reporta bugs do próprio plugin: um `.md` dizendo onde foi o bug, com print, GIF e erros do log, enviado ao Linear. E confere se a IDE tem o que cada mecanismo precisa. | Topo do painel e menu Help |
 
@@ -373,6 +373,11 @@ class FreteServiceTest { ... }
 ```
 
 - 🎨 **Chaves coloridas:** cada chave vira uma etiqueta com cor própria, sempre a mesma para a mesma chave.
+- 🏷️ **Agrupar por `@Tag`:** em **Agrupar Por**, na barra, a árvore pode vir por `@Tag` do JUnit (Tag → Chave →
+  Classe → testes) ou pela chave do `@DisplayName`. Sem escolha, ela vem por tag quando os testes têm `@Tag`.
+  Vale a tag do método; sem ela, a da classe (e da classe de fora, nas `@Nested`). `@Tags` e anotações próprias
+  marcadas com `@Tag`, como um `@Lento`, também contam. Um teste com duas tags aparece nas duas, e os sem tag ficam
+  em **Sem tag**. No agrupamento por chave, cada teste mostra as tags dele.
 - ⚠️ **Convenção cobrada:** classes sem `@DisplayName` ou sem chave vão para o grupo **Sem chave**, o
   topo da aba avisa quantas estão fora da convenção e os detalhes sugerem o `@DisplayName` de cada uma.
 - 🔧 **Deixar no Padrão:** marca as classes fora da convenção (as da seleção ou, sem nenhuma nela, todas) como
@@ -468,17 +473,15 @@ foi atendido.
    GitHub*), e os apagados ficam riscados (*Apagado no GitHub*), fora das contas e sem Editar.
    **Excluir Pedido** tira um pedido do `.md` e, se você escolher, apaga o comentário no GitHub também.
 5. **Verifique.** Os pedidos ficam em `iron-dome/pull-requests/pr-<número>.md`. **Verificar Pedidos**
-   confere cada um de três jeitos:
+   confere cada um de dois jeitos:
 
 | Verificação | Como funciona |
 | --- | --- |
 | 🧾 **Código** | Compara o trecho comentado com o arquivo no head atual do PR: *Como sugerido* (o head tem o código sugerido), *Alterado*, *Sem alteração*, *Só mudou de lugar*, *Arquivo removido* ou *Sem commits novos*. |
 | 💬 **Conversa** | Lê a conversa do comentário no PR: *Resolvida*, *Respondida* (com a última resposta do autor) ou *Aberta*. |
-| 🤖 **IA** | **Pedir Parecer da IA** copia um pedido para a sua IA e abre o `.md`; ela marca `[x]` em *Atendido (IA)* e escreve o motivo em *Parecer da IA*, e a aba atualiza sozinha. |
 
-Um pedido conta como atendido quando o código mudou, a conversa foi resolvida ou a IA confirmou; e como
-pendente quando nada disso aconteceu depois de commits novos. A verificação regrava o `.md` sem apagar o
-parecer da IA.
+Um pedido conta como atendido quando o código mudou ou a conversa foi resolvida; e como pendente quando
+nada disso aconteceu depois de commits novos.
 
 > [!NOTE]
 > A Patrulha usa os plugins Git e GitHub que vêm no IntelliJ IDEA. Sem eles, a aba não aparece, e
@@ -514,7 +517,6 @@ registrada em `iron-dome/ia/` com o pedido, os passos, os arquivos alterados e a
 | Onde | Ação | A IA pode alterar arquivos? |
 | --- | --- | --- |
 | 📡 Radar e barra do editor | **Disparar com IA**: dispara os alvos e a IA executa a ordem de interceptação, marcando `[x]` nos atendidos | Sim |
-| 🛰️ Patrulha | **Pedir Parecer da IA**: a IA avalia cada pedido enviado e escreve o parecer no `.md` do PR | Só o `.md` |
 | 🛰️ Patrulha | **Revisar com IA** (no modo revisão): a IA lê os arquivos alterados e propõe comentários, que viram rascunhos para você revisar antes de enviar | Não |
 | 🛡️ Escudo | **Explicar Falha com IA**: causa, onde e a correção proposta; a resposta oferece **Corrigir com IA** | Não (Corrigir: sim) |
 | 📦 Caixa-Preta | **Analisar com IA**, no bug gerado e em Ver Logs de Erro: causa provável e correção; no bug, a análise entra no fim do `bug.md` | Não |
@@ -529,8 +531,7 @@ CLI, o executável (vazio procura no PATH e nas pastas de instalação), o model
 opcionalmente, a chave de API do Cursor (sem ela, vale o `agent login`). **Salvar e Testar** faz uma pergunta curta
 à IA: **os botões de IA só se habilitam depois que o teste passa**, e trocar o CLI, o executável, o modelo ou a
 chave pede um teste novo. A aba mostra o estado (*IA não configurada*, *Teste a integração*, *IA pronta*), quais
-ações estão habilitadas e as execuções recentes, que abrem com duplo clique. Sem a IA testada, **Pedir Parecer
-da IA** continua copiando o pedido para você colar na sua IA.
+ações estão habilitadas e as execuções recentes, que abrem com duplo clique.
 
 > [!NOTE]
 > O `agy -p` do Antigravity pode travar quando chamado por outro programa

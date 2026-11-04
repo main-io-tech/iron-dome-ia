@@ -33,7 +33,7 @@
         as classes agrupadas pela chave do <code>@DisplayName("[Chave] Descrição")</code>, o aviso das classes
         fora dessa convenção e o motivo e a pilha de cada falha.</li>
       <li><b>🛰️ Patrulha:</b> revise os pull requests abertos no GitHub comentando o código no modo revisão do PR, envie
-        os pedidos de alteração como revisão e confira depois, no código, nas conversas do PR e com a IA, se
+        os pedidos de alteração como revisão e confira depois, no código e nas conversas do PR, se
         cada um foi atendido.</li>
     </ul>
     ]]></description>
@@ -64,8 +64,8 @@
       <li>Interceptados podem ser ocultados e mostrados de novo no editor, pelo cartão, pela aba Radar ou pelas
         ações Ocultar e Mostrar Alvos Interceptados, inclusive os de revisões encerradas.</li>
       <li>Patrulha: revisa os pull requests abertos no GitHub no modo revisão do PR, envia os comentários como revisão com
-        a conta do IntelliJ e guarda os pedidos em iron-dome/pull-requests para verificar no código, nas
-        conversas do PR e com a IA se foram atendidos.</li>
+        a conta do IntelliJ e guarda os pedidos em iron-dome/pull-requests para verificar no código e nas
+        conversas do PR se foram atendidos.</li>
     </ul>
     ]]></change-notes>
 

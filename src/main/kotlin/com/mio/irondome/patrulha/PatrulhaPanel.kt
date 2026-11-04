@@ -17,7 +17,6 @@ import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileTypes.FileTypeManager
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
-import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.progress.Task
@@ -58,7 +57,6 @@ import org.jetbrains.plugins.github.authentication.AuthorizationType
 import org.jetbrains.plugins.github.authentication.GHAccountsUtil
 import org.jetbrains.plugins.github.authentication.GHLoginSource
 import java.awt.BorderLayout
-import java.awt.datatransfer.StringSelection
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import javax.swing.Icon
@@ -189,8 +187,6 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
             Separator.getInstance(),
             action("Verificar Pedidos", "Confere no head atual do PR e nas conversas se os pedidos foram atendidos", AllIcons.Actions.Checked,
                 enabled = { selectedPr()?.record?.requests?.isNotEmpty() == true && context != null }) { verify() },
-            action("Pedir Parecer da IA", "A IA configurada avalia cada pedido e escreve o parecer no .md; sem o CLI, copia o pedido para colar na sua IA", IronDomeIcons.ia,
-                enabled = { selectedPr()?.record != null }) { askAi() },
             action("Abrir .md dos Pedidos", "Abre iron-dome/pull-requests/pr-<número>.md", AllIcons.Actions.EditSource,
                 enabled = { selectedPr()?.record != null }) { selectedPr()?.let { openRecord(it.number) } },
             action("Abrir no GitHub", "Abre o PR ou o comentário selecionado no navegador", AllIcons.General.Web,
@@ -828,7 +824,6 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
                     remote,
                 ).joinToString(" "),
                 if (pending > 0) NotificationType.WARNING else NotificationType.INFORMATION,
-                NotificationAction.createSimpleExpiring("Pedir Parecer da IA") { askAi(item.number) },
                 NotificationAction.createSimple("Abrir .md") { openRecord(item.number) },
             )
             rebuild()
@@ -871,27 +866,6 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
                 if (results.isNotEmpty()) rebuild()
             }
         }.queue()
-    }
-
-    private fun askAi(number: Int? = selectedPr()?.number) {
-        number ?: return
-        val prompt = "Verifique os pedidos de alteração do PR #$number em ${ReviewCommentService.REVIEW_DIR}/${PullRequestRecord.DIR}/" +
-            "${PullRequestRecord.fileName(number)}, seguindo as instruções do arquivo."
-        val runner = AgentRunner.getInstance(project)
-        if (runner.available()) {
-            runner.run(
-                AgentTask("Parecer dos pedidos do PR #$number", "$prompt Escreva só no campo de parecer e no checklist de cada pedido.", write = true),
-                "Abrir .md" to { _ -> openRecord(number) },
-            ) { patrulha.historyChanged(number) }
-            return
-        }
-        CopyPasteManager.getInstance().setContents(StringSelection(prompt))
-        openRecord(number)
-        notify(
-            "Pedido para a IA copiado",
-            "Cole na sua IA: \"$prompt\". Quando ela marcar [x] ou escrever o parecer, a aba Patrulha atualiza sozinha.",
-            NotificationType.INFORMATION,
-        )
     }
 
     private fun openRecord(number: Int) {
@@ -1179,9 +1153,8 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
             }
             row.pill("Código: ${request.code.label}", codeTone(request.code))
             row.pill("Conversa: ${request.thread.label}", threadTone(request.thread))
-            row.pill("IA: ${request.ai.label}", aiTone(request.ai))
             row.detail(request.text.lines().first().take(160))
-            row.tooltip(listOfNotNull(request.text, request.lastReply?.let { "Última resposta: $it" }, request.aiNote.ifBlank { null }?.let { "Parecer da IA: $it" }).joinToString("\n\n"))
+            row.tooltip(listOfNotNull(request.text, request.lastReply?.let { "Última resposta: $it" }).joinToString("\n\n"))
         }
 
         private fun where(comment: ReviewComment) = when (comment.target) {
@@ -1201,12 +1174,6 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
             ThreadStatus.REPLIED -> Tone.BLUE
             ThreadStatus.OPEN -> Tone.YELLOW
             else -> Tone.GRAY
-        }
-
-        private fun aiTone(verdict: AiVerdict) = when (verdict) {
-            AiVerdict.DONE -> Tone.GREEN
-            AiVerdict.NOT_DONE -> Tone.RED
-            AiVerdict.PENDING -> Tone.GRAY
         }
     }
 }

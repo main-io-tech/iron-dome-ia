@@ -20,6 +20,7 @@ import com.intellij.execution.ui.RunContentDescriptor
 import com.intellij.icons.AllIcons
 import com.intellij.ide.CommonActionsManager
 import com.intellij.ide.DefaultTreeExpander
+import com.intellij.ide.util.PropertiesComponent
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.ActionUpdateThread
@@ -79,7 +80,7 @@ class TestsPanel(private val project: Project) : SimpleToolWindowPanel(true, tru
         isRootVisible = false
         showsRootHandles = true
         rowHeight = 0
-        cellRenderer = Renderer()
+        cellRenderer = Renderer { grouping != TestGrouping.TAG }
         emptyText.text = IDLE
     }
     private val header = SummaryHeader(IronDomeIcons.escudo)
@@ -184,6 +185,7 @@ class TestsPanel(private val project: Project) : SimpleToolWindowPanel(true, tru
                         rebuildTree()
                     }
                 },
+                groupingActions(),
                 CommonActionsManager.getInstance().createExpandAllAction(expander, tree),
                 CommonActionsManager.getInstance().createCollapseAllAction(expander, tree),
                 Separator.getInstance(),
@@ -281,9 +283,31 @@ class TestsPanel(private val project: Project) : SimpleToolWindowPanel(true, tru
     }
 
     private fun refresh() {
-        results = testsRoot?.let { TestResults.build(it, displayNames::of) }.orEmpty()
+        results = testsRoot?.let { TestResults.build(it, displayNames::of, displayNames::tagsOf) }.orEmpty()
         updateHeader()
         rebuildTree()
+    }
+
+    /** O escolhido; sem escolha, por tag quando os testes têm `@Tag`. */
+    private val grouping: TestGrouping
+        get() = TestGrouping.entries.firstOrNull { it.name == PropertiesComponent.getInstance().getValue(GROUPING_KEY) }
+            ?: if (results.any { group -> group.tests.any { it.tags.isNotEmpty() } }) TestGrouping.TAG else TestGrouping.KEY
+
+    /** A árvore no agrupamento escolhido; [results] continua por chave, para o cabeçalho e as contas. */
+    private fun view(): List<TestNode> = if (grouping == TestGrouping.TAG) TestResults.byTag(results) else results
+
+    private fun groupingActions() = DefaultActionGroup("Agrupar Por", true).apply {
+        templatePresentation.icon = AllIcons.Actions.GroupBy
+        TestGrouping.entries.forEach { option ->
+            add(object : DumbAwareToggleAction(option.label) {
+                override fun getActionUpdateThread() = ActionUpdateThread.EDT
+                override fun isSelected(e: AnActionEvent) = grouping == option
+                override fun setSelected(e: AnActionEvent, state: Boolean) {
+                    PropertiesComponent.getInstance().setValue(GROUPING_KEY, option.name)
+                    rebuildTree()
+                }
+            })
+        }
     }
 
     private fun updateHeader() {
@@ -340,7 +364,7 @@ class TestsPanel(private val project: Project) : SimpleToolWindowPanel(true, tru
         val selected = selectedItem()?.key
 
         val root = DefaultMutableTreeNode()
-        visible(results).forEach { root.add(treeNode(it)) }
+        visible(view()).forEach { root.add(treeNode(it)) }
         model.setRoot(root)
         tree.emptyText.text = when {
             environment == null -> IDLE
@@ -355,7 +379,7 @@ class TestsPanel(private val project: Project) : SimpleToolWindowPanel(true, tru
             val path = TreePath(node.path)
             if (item.key == selected) selection = path
             if (item.kind == TestKind.TEST) continue
-            val opensAlone = item.kind == TestKind.KEY || item.outcome == TestOutcome.FAILED
+            val opensAlone = item.kind == TestKind.TAG || item.kind == TestKind.KEY || item.outcome == TestOutcome.FAILED
             if (item.key in expanded || (opensAlone && autoExpanded.add(item.key))) tree.expandPath(path)
         }
         selection?.let { tree.selectionPath = it }
@@ -364,7 +388,9 @@ class TestsPanel(private val project: Project) : SimpleToolWindowPanel(true, tru
 
     /** As classes fora da convenção da seleção; sem nenhuma nela, as de toda a execução. */
     private fun outsideConvention(): List<TestNode> {
-        fun outside(nodes: List<TestNode>) = nodes.flatMap { it.classes }.filter { it.convention != Convention.OK }
+        // Por tag, a mesma classe aparece em mais de um grupo.
+        fun outside(nodes: List<TestNode>) =
+            nodes.flatMap { it.classes }.filter { it.convention != Convention.OK }.distinctBy { it.locationUrl ?: it.key }
         return outside(listOfNotNull(selectedItem())).ifEmpty { outside(results) }
     }
 
@@ -382,12 +408,17 @@ class TestsPanel(private val project: Project) : SimpleToolWindowPanel(true, tru
     }
 
     private fun detailsOf(item: TestNode): String = buildString {
-        val name = if (item.kind == TestKind.KEY) null else DisplayNameFormat.parse(item.label)
-        val title = name?.let(::nameHtml) ?: escape(item.classKey?.let { "[$it]" } ?: TestResults.NO_KEY)
+        val group = item.kind == TestKind.KEY || item.kind == TestKind.TAG
+        val name = if (group) null else DisplayNameFormat.parse(item.label)
+        val title = name?.let(::nameHtml) ?: when (item.kind) {
+            TestKind.TAG -> escape(item.tags.firstOrNull()?.let { "@$it" } ?: TestResults.NO_TAG)
+            else -> escape(item.classKey?.let { "[$it]" } ?: TestResults.NO_KEY)
+        }
         append("<h2 style='margin: 0 0 6px 0'>$title</h2>")
         append("<p>${pill("${symbolOf(item.outcome)} ${item.outcome.label}", toneOf(item.outcome))}")
         TestResults.formatDuration(item.durationMillis)?.let { append("&nbsp;&nbsp;${gray(it)}") }
         item.convention?.problem?.let { append("&nbsp;&nbsp;${pill("⚠ $it", Tone.YELLOW)}") }
+        if (item.kind != TestKind.TAG) item.tags.forEach { append("&nbsp;&nbsp;${pill("@$it", tagTone(it))}") }
         append("</p>")
         item.codeReference?.let { append("<p>${gray("<code>${escape(it)}</code>")}</p>") }
         name?.takeIf { it.structured }?.let { appendScenario(it) }
@@ -436,7 +467,7 @@ class TestsPanel(private val project: Project) : SimpleToolWindowPanel(true, tru
 
     private fun countsOf(item: TestNode): String {
         val parts = statsOf(item.tests).filter { it.count > 0 }.map { pill("${it.count} ${it.label}", it.tone) }.toMutableList()
-        if (item.kind == TestKind.KEY) parts += gray(plural(item.classes.size, "classe", "classes"))
+        if (item.kind == TestKind.KEY || item.kind == TestKind.TAG) parts += gray(plural(item.classes.size, "classe", "classes"))
         return parts.joinToString("&nbsp;&nbsp;")
     }
 
@@ -504,12 +535,28 @@ class TestsPanel(private val project: Project) : SimpleToolWindowPanel(true, tru
 
     private fun selectedItem() = itemOf(tree.lastSelectedPathComponent)
 
-    private class Renderer : RichTreeCellRenderer() {
+    /** [showTags]: as tags de cada teste aparecem fora do agrupamento por tag, onde já estão no grupo. */
+    private class Renderer(private val showTags: () -> Boolean) : RichTreeCellRenderer() {
 
         override fun describe(row: Row, value: Any?) {
             val item = (value as? DefaultMutableTreeNode)?.userObject as? TestNode ?: return
             val failed = item.outcome == TestOutcome.FAILED
             when (item.kind) {
+                TestKind.TAG -> {
+                    val tag = item.tags.firstOrNull()
+                    if (tag == null) {
+                        row.icon(AllIcons.General.Information)
+                        row.pill(TestResults.NO_TAG, Tone.GRAY, bold = true)
+                    } else {
+                        row.icon(iconOf(item.outcome))
+                        row.pill("@$tag", tagTone(tag), bold = true)
+                    }
+                    row.text(
+                        "${plural(item.classes.size, "classe", "classes")} · ${plural(item.tests.size, "teste", "testes")}",
+                        SimpleTextAttributes.GRAYED_ATTRIBUTES,
+                    )
+                    progress(row, item)
+                }
                 TestKind.KEY -> {
                     val key = item.classKey
                     if (key == null) {
@@ -538,6 +585,7 @@ class TestsPanel(private val project: Project) : SimpleToolWindowPanel(true, tru
                     row.icon(iconOf(item.outcome))
                     name(row, item.label, if (failed) FAILED_PLAIN else SimpleTextAttributes.REGULAR_ATTRIBUTES)
                     item.codeName?.let { row.text(it, SimpleTextAttributes.GRAYED_SMALL_ATTRIBUTES) }
+                    if (showTags()) item.tags.forEach { row.pill("@$it", tagTone(it)) }
                     if (item.outcome == TestOutcome.IGNORED) row.pill("ignorado", Tone.YELLOW)
                     TestResults.formatDuration(item.durationMillis)?.let { row.text(it, SimpleTextAttributes.GRAYED_SMALL_ATTRIBUTES) }
                     item.errorMessage?.lineSequence()?.firstOrNull { it.isNotBlank() }?.let { row.detail(it.trim().take(ERROR_PREVIEW)) }
@@ -595,6 +643,7 @@ class TestsPanel(private val project: Project) : SimpleToolWindowPanel(true, tru
         const val REFRESH_DELAY_MS = 200
         const val STACKTRACE_LINES = 40
         const val IDLE = "Clique em Executar Todos os Testes para pôr o escudo à prova."
+        const val GROUPING_KEY = "IronDome.Escudo.Grouping"
         const val DETAILS_HINT = "Selecione uma chave, uma classe ou um teste para ver os detalhes. Duplo clique num teste abre o código."
 
         fun statsOf(tests: List<TestNode>): List<Stat> {
@@ -628,6 +677,9 @@ class TestsPanel(private val project: Project) : SimpleToolWindowPanel(true, tru
             TestOutcome.PASSED -> AllIcons.RunConfigurations.TestPassed
             TestOutcome.NOT_RUN -> AllIcons.RunConfigurations.TestNotRan
         }
+
+        /** A mesma cor para a mesma tag, separada das cores das chaves. */
+        fun tagTone(tag: String): Tone = Tone.forKey("@$tag")
 
         fun toneOf(role: StepRole): Tone = when (role) {
             StepRole.GIVEN -> Tone.BLUE

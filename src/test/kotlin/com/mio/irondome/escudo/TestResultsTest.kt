@@ -105,6 +105,47 @@ class TestResultsTest : LightJavaCodeInsightFixtureTestCase() {
         assertEquals(2, group.tests.size)
     }
 
+    fun testTestsAreGroupedByTagWithTheMethodTagOverTheClassTag() {
+        myFixture.addClass("package org.junit.jupiter.api; @java.lang.annotation.Repeatable(Tags.class) public @interface Tag { String value(); }")
+        myFixture.addClass("package org.junit.jupiter.api; public @interface Tags { Tag[] value(); }")
+        myFixture.addClass("package loja; @org.junit.jupiter.api.Tag(\"lento\") public @interface Lento { }")
+        myFixture.addClass(
+            """
+            package loja;
+            import org.junit.jupiter.api.*;
+            @DisplayName("[Conta] Criar conta")
+            @Tag("funcionalidade")
+            public class ContaTest {
+                void cria() { }
+                @Tag("tecnico") void valida() { }
+                @Lento void importa() { }
+                @Tags({@Tag("tecnico"), @Tag("seguranca")}) void criptografa() { }
+                class Aninhada { void herda() { } }
+            }
+            """.trimIndent(),
+        )
+        val root = SMTestProxy.SMRootTestProxy()
+        val conta = root.child(suite("ContaTest", "java:suite://loja.ContaTest"))
+        listOf("cria", "valida", "importa", "criptografa").forEach { conta.child(passed("$it()", "loja.ContaTest/$it")) }
+        conta.child(suite("Aninhada", "java:suite://loja.ContaTest\$Aninhada")).child(passed("herda()", "loja.ContaTest\$Aninhada/herda"))
+        root.child(testClass("AbcTest", passed("um()", "loja.AbcTest/um")))
+
+        val tagged = TestResults.byTag(TestResults.build(root, names::of, names::tagsOf))
+
+        assertEquals(listOf("funcionalidade", "lento", "seguranca", "tecnico", TestResults.NO_TAG), tagged.map { it.label })
+        assertTrue(tagged.all { it.kind == TestKind.TAG })
+        fun testsIn(tag: String) = tagged.single { it.label == tag }.tests.map { it.codeName ?: it.label }
+        assertEquals(listOf("cria()", "herda()"), testsIn("funcionalidade"))
+        assertEquals(listOf("valida()", "criptografa()"), testsIn("tecnico"))
+        assertEquals(listOf("importa()"), testsIn("lento"))
+        assertEquals(listOf("um()"), testsIn(TestResults.NO_TAG))
+        val tecnico = tagged.single { it.label == "tecnico" }
+        assertEquals(TestKind.KEY, tecnico.children.single().kind)
+        assertEquals("Conta", tecnico.children.single().classKey)
+        assertEquals(1, tecnico.classes.size)
+        assertFalse("a cópia por tag não repete as chaves da árvore por chave", tecnico.children.single().key == "key:conta")
+    }
+
     private fun SMTestProxy.child(proxy: SMTestProxy): SMTestProxy = proxy.also(::addChild)
 
     private fun testClass(name: String, vararg tests: SMTestProxy) =

@@ -294,7 +294,6 @@ class InterceptorPanel(private val project: Project) : SimpleToolWindowPanel(tru
         val items = listOf(
             "Radar e barra do editor" to "Disparar com IA: a IA executa a ordem de interceptação e marca os alvos atendidos",
             "Patrulha" to "Revisar com IA (no modo revisão): comentários da IA como rascunhos do PR",
-            "Patrulha" to "Pedir Parecer da IA: a IA escreve o parecer de cada pedido no .md (sem IA, copia o pedido)",
             "Escudo" to "Explicar Falha com IA e, na resposta, Corrigir com IA",
             "Caixa-Preta" to "Analisar com IA, no bug gerado e em Ver Logs de Erro",
         )

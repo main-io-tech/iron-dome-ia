@@ -13,7 +13,13 @@ enum class TestOutcome(val label: String) {
     NOT_RUN("Não executado"),
 }
 
-enum class TestKind { KEY, CLASS, GROUP, TEST }
+enum class TestKind { TAG, KEY, CLASS, GROUP, TEST }
+
+/** Como a árvore do Escudo agrupa as classes de teste. */
+enum class TestGrouping(val label: String) {
+    KEY("Chave do @DisplayName"),
+    TAG("@Tag do JUnit"),
+}
 
 /** A convenção do Escudo para as classes de teste: `@DisplayName("[Chave] Descrição")`. */
 enum class Convention(val problem: String?) {
@@ -25,8 +31,9 @@ enum class Convention(val problem: String?) {
 /**
  * Nó da árvore do Escudo. [label] é o `@DisplayName` escrito no código, se houver, ou o nome que o JUnit
  * reportou; nas classes de topo, sem a chave. [codeName] é o nome da classe ou do método, nulo quando
- * igual a [label]. [KEY][TestKind.KEY] reúne as classes de uma chave; [GROUP][TestKind.GROUP], as
- * execuções de um teste parametrizado ou uma suíte sem classe própria.
+ * igual a [label]. [TAG][TestKind.TAG] reúne os grupos de chave com os testes de uma `@Tag`;
+ * [KEY][TestKind.KEY], as classes de uma chave; [GROUP][TestKind.GROUP], as execuções de um teste
+ * parametrizado ou uma suíte sem classe própria.
  */
 class TestNode(
     val kind: TestKind,
@@ -43,7 +50,11 @@ class TestNode(
     val classKey: String? = null,
     /** Só nas classes de topo. */
     val convention: Convention? = null,
+    /** Nos testes, as `@Tag` que valem para eles; nas classes, as da própria classe; nos grupos de tag, a tag. */
+    val tags: List<String> = emptyList(),
 ) {
+    private val ownOutcome = leafOutcome
+
     /** Os testes deste nó: ele próprio, se for um teste, ou todos os de baixo. */
     val tests: List<TestNode> = if (kind == TestKind.TEST) listOf(this) else children.flatMap { it.tests }
 
@@ -52,6 +63,7 @@ class TestNode(
     /** Classes de teste de topo deste nó: ele próprio ou as do grupo de chave. */
     val classes: List<TestNode>
         get() = when (kind) {
+            TestKind.TAG -> children.flatMap { it.classes }
             TestKind.KEY -> children.filter { it.kind == TestKind.CLASS }
             TestKind.CLASS -> if (convention != null) listOf(this) else emptyList()
             else -> emptyList()
@@ -61,6 +73,23 @@ class TestNode(
 
     /** Classe e método no código, como `loja.FreteTest#calcula`. */
     val codeReference: String? get() = locationUrl?.substringAfter("://")?.replace('/', '#')
+
+    /**
+     * Uma cópia só com os testes que passam em [keep], com [prefix] na chave para não colidir com o original
+     * na árvore; nula se não sobrar teste.
+     */
+    fun pruned(prefix: String, keep: (TestNode) -> Boolean): TestNode? {
+        if (kind == TestKind.TEST) return if (keep(this)) copy(prefix, children) else null
+        val kept = children.mapNotNull { it.pruned(prefix, keep) }
+        if (kept.isEmpty()) return null
+        val whole = kept.size == children.size && kept.zip(children).all { (a, b) -> a.tests.size == b.tests.size }
+        return copy(prefix, kept, if (whole) durationMillis else kept.mapNotNull { it.durationMillis }.takeIf { it.isNotEmpty() }?.sum())
+    }
+
+    private fun copy(prefix: String, children: List<TestNode>, duration: Long? = durationMillis) = TestNode(
+        kind, prefix + key, label, codeName, locationUrl, duration, errorMessage, stacktrace, children,
+        if (kind == TestKind.TEST) outcome else ownOutcome, classKey, convention, tags,
+    )
 
     private companion object {
         fun outcomeOf(tests: List<TestNode>, own: TestOutcome): TestOutcome {
@@ -80,6 +109,7 @@ class TestNode(
 object TestResults {
 
     const val NO_KEY = "Sem chave"
+    const val NO_TAG = "Sem tag"
     const val CONVENTION_EXAMPLE = "@DisplayName(\"[Chave] Descrição\")"
 
     private const val SUITE_PROTOCOL = "java:suite://"
@@ -92,13 +122,48 @@ object TestResults {
      * dentro da classe que as contém; suítes sem classe, como a do módulo ou a do motor do JUnit, são
      * achatadas. [displayNames] dá o `@DisplayName` do código para a URL de uma classe ou de um método.
      */
-    fun build(root: SMTestProxy, displayNames: (String) -> String?): List<TestNode> {
-        val (withKey, withoutKey) = topLevel(root, displayNames).partition { it.classKey != null }
+    fun build(root: SMTestProxy, displayNames: (String) -> String?, tagsOf: (String) -> List<String> = { emptyList() }): List<TestNode> {
+        val (withKey, withoutKey) = topLevel(root, Lookup(displayNames, tagsOf)).partition { it.classKey != null }
         val groups = withKey.groupBy { it.classKey!!.lowercase() }.values
             .map { classes -> keyGroup(spellingOf(classes.mapNotNull { it.classKey }), classes) }
             .sortedWith(byLabel)
         return groups + listOfNotNull(withoutKey.takeIf { it.isNotEmpty() }?.let { keyGroup(null, it) })
     }
+
+    /**
+     * Os mesmos resultados de [build] por `@Tag`: cada tag com os grupos de chave e as classes, só com os testes
+     * dela, em ordem alfabética, e por último os testes sem tag. Um teste com duas tags aparece nas duas.
+     */
+    fun byTag(keyGroups: List<TestNode>): List<TestNode> {
+        val tests = keyGroups.flatMap { it.tests }
+        val names = tests.flatMap { it.tags }.groupBy { it.lowercase() }.values.map { spellingOf(it) }
+            .sortedWith(compareBy(Collator.getInstance(Locale.of("pt", "BR"))) { it })
+        val tagged = names.mapNotNull { tag ->
+            tagGroup(tag, keyGroups.mapNotNull { group -> group.pruned("tag:${tag.lowercase()}|") { test -> test.tags.any { it.equals(tag, ignoreCase = true) } } })
+        }
+        val untagged = tagGroup(null, keyGroups.mapNotNull { it.pruned("tag:|") { test -> test.tags.isEmpty() } })
+        return tagged + listOfNotNull(untagged)
+    }
+
+    private fun tagGroup(tag: String?, children: List<TestNode>): TestNode? {
+        if (children.isEmpty()) return null
+        return TestNode(
+            kind = TestKind.TAG,
+            key = "tag:${tag?.lowercase().orEmpty()}",
+            label = tag ?: NO_TAG,
+            codeName = null,
+            locationUrl = null,
+            durationMillis = children.mapNotNull { it.durationMillis }.takeIf { it.isNotEmpty() }?.sum(),
+            errorMessage = null,
+            stacktrace = null,
+            children = children,
+            leafOutcome = TestOutcome.NOT_RUN,
+            tags = listOfNotNull(tag),
+        )
+    }
+
+    /** O que vem do código para cada URL: o `@DisplayName` e as `@Tag`. */
+    private class Lookup(val displayNames: (String) -> String?, val tagsOf: (String) -> List<String>)
 
     /** A chave e a descrição de um `@DisplayName` no formato `[Chave] Descrição`; sem chave, nula e o texto todo. */
     fun parseKey(displayName: String): Pair<String?, String> {
@@ -127,10 +192,10 @@ object TestResults {
         classKey = key,
     )
 
-    private fun topLevel(proxy: SMTestProxy, displayNames: (String) -> String?): List<TestNode> =
+    private fun topLevel(proxy: SMTestProxy, lookup: Lookup): List<TestNode> =
         proxy.children.flatMap { child ->
-            if (child.isSuite && !isClass(child)) topLevel(child, displayNames)
-            else listOf(node(child, "", useCodeName = true, topLevel = true, displayNames))
+            if (child.isSuite && !isClass(child)) topLevel(child, lookup)
+            else listOf(node(child, "", useCodeName = true, topLevel = true, lookup))
         }
 
     /** Execuções de um teste parametrizado repetem a URL do método: ficam com o nome que o JUnit deu. */
@@ -139,7 +204,7 @@ object TestResults {
         parentKey: String,
         useCodeName: Boolean,
         topLevel: Boolean,
-        displayNames: (String) -> String?,
+        lookup: Lookup,
     ): TestNode {
         val url = proxy.locationUrl
         val kind = when {
@@ -148,7 +213,7 @@ object TestResults {
             else -> TestKind.TEST
         }
         val reported = proxy.presentableName.ifBlank { proxy.name }
-        val written = url?.takeIf { useCodeName }?.let(displayNames)
+        val written = url?.takeIf { useCodeName }?.let(lookup.displayNames)
         val codeName = url?.let(::codeNameOf)
         var label = written ?: reported
         var classKey: String? = null
@@ -175,10 +240,11 @@ object TestResults {
             durationMillis = proxy.duration,
             errorMessage = proxy.errorMessage?.takeIf { it.isNotBlank() },
             stacktrace = proxy.stacktrace?.takeIf { it.isNotBlank() },
-            children = proxy.children.map { node(it, key, useCodeName = kind == TestKind.CLASS, topLevel = false, displayNames) },
+            children = proxy.children.map { node(it, key, useCodeName = kind == TestKind.CLASS, topLevel = false, lookup) },
             leafOutcome = outcomeOf(proxy),
             classKey = classKey,
             convention = convention,
+            tags = url?.let(lookup.tagsOf).orEmpty(),
         )
     }
 

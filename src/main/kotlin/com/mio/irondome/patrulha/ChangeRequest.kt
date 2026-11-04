@@ -35,12 +35,6 @@ enum class RemoteStatus(val label: String) {
     DELETED("Apagado no GitHub"),
 }
 
-enum class AiVerdict(val label: String) {
-    PENDING("Aguardando"),
-    DONE("Atendido"),
-    NOT_DONE("Não atendido"),
-}
-
 /**
  * Pedido de alteração enviado a um PR. Linhas 1-based, como no GitHub; 0 fora de [CommentTarget.LINES].
  * [commit] é o head do PR no envio; [commentId] é o comentário no GitHub, nulo quando o pedido foi no
@@ -62,8 +56,6 @@ data class ChangeRequest(
     val codeCommit: String? = null,
     val thread: ThreadStatus = if (commentId == null) ThreadStatus.NONE else ThreadStatus.NOT_CHECKED,
     val lastReply: String? = null,
-    val ai: AiVerdict = AiVerdict.PENDING,
-    val aiNote: String = "",
     /** Código de exemplo enviado com o pedido; vazio quando não houve. */
     val suggestion: String = "",
     val remote: RemoteStatus = RemoteStatus.SYNCED,
@@ -80,16 +72,16 @@ data class ChangeRequest(
             CommentTarget.PACKAGE -> "pacote inteiro"
         }
 
-    /** Feito por pelo menos um dos sinais: o código mudou, a conversa foi resolvida ou a IA confirmou. */
+    /** Feito por pelo menos um dos sinais: o código mudou ou a conversa foi resolvida. */
     val likelyDone: Boolean
         get() = !deleted && (
             code == CodeStatus.CHANGED || code == CodeStatus.AS_SUGGESTED || code == CodeStatus.FILE_REMOVED ||
-                thread == ThreadStatus.RESOLVED || ai == AiVerdict.DONE
+                thread == ThreadStatus.RESOLVED
             )
 
     /** Nenhum sinal de que foi feito, depois de pelo menos uma verificação com commits novos. */
     val likelyPending: Boolean
-        get() = !deleted && !likelyDone && (code == CodeStatus.UNCHANGED || code == CodeStatus.MOVED || ai == AiVerdict.NOT_DONE)
+        get() = !deleted && !likelyDone && (code == CodeStatus.UNCHANGED || code == CodeStatus.MOVED)
 }
 
 /** Os pedidos de um PR, gravados em `iron-dome/pull-requests/pr-<número>.md`. */
@@ -120,11 +112,7 @@ object ChangeRequestMarkdown {
     private val DATE = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm:ss")
     private const val RECORD_TAG = "iron-dome-pr"
     private const val REQUEST_TAG = "iron-dome-pedido"
-    private const val AI_LABEL = "**Atendido (IA)**"
-    private const val NOTE_LABEL = "**Parecer da IA:**"
-    private const val NOTE_PLACEHOLDER = "_ainda não avaliado_"
     private val META = Regex("""^<!-- (\S+) (\{.*}) -->$""")
-    private val AI_BOX = Regex("""^- \[([ xX])] \*\*Atendido \(IA\)\*\*""")
 
     private class RecordMeta(val number: Int, val title: String, val url: String, val head: String, val base: String, val checkedAt: String?)
 
@@ -142,23 +130,18 @@ object ChangeRequestMarkdown {
         appendLine()
         appendLine("<!-- $RECORD_TAG ${gson.toJson(RecordMeta(record.number, record.title, record.url, record.headRef, record.baseRef, record.checkedAt))} -->")
         appendLine()
-        appendLine("> **Instruções para a IA** (valem para qualquer assistente ou modelo): este arquivo guarda os pedidos de")
-        appendLine("> alteração enviados ao pull request #${record.number} (`${record.headRef}` → `${record.baseRef}`). Para cada pedido,")
-        appendLine("> confira no código atual da branch `${record.headRef}` se a alteração pedida foi feita; se o checkout local")
-        appendLine("> estiver desatualizado, atualize a branch antes. Marque `[x]` em $AI_LABEL quando foi feita e deixe `[ ]`")
-        appendLine("> quando não foi, e escreva o motivo numa linha em $NOTE_LABEL. Quando o pedido tiver **Código sugerido**,")
-        appendLine("> ele é um exemplo: uma solução equivalente também atende. Pedidos **Apagados no GitHub** não precisam")
-        appendLine("> ser avaliados. Não altere o código nem o restante deste arquivo.")
+        appendLine("> Pedidos de alteração enviados ao pull request #${record.number} (`${record.headRef}` → `${record.baseRef}`). A aba")
+        appendLine("> Patrulha regrava este arquivo a cada verificação do código e das conversas no GitHub.")
         appendLine()
         appendLine("PR: ${record.url}")
         appendLine()
         appendLine(record.checkedAt?.let { "Verificado em ${formatDate(it)}." } ?: "Ainda não verificado.")
         appendLine()
-        appendLine("| Pedido | Onde | Código | Conversa | IA |")
-        appendLine("| --- | --- | --- | --- | --- |")
+        appendLine("| Pedido | Onde | Código | Conversa |")
+        appendLine("| --- | --- | --- | --- |")
         record.requests.forEach { request ->
             val id = if (request.deleted) "~~${request.id}~~ (${request.remote.label})" else request.id
-            appendLine("| $id | `${request.path}`, ${request.location} | ${request.code.label} | ${request.thread.label} | ${request.ai.label} |")
+            appendLine("| $id | `${request.path}`, ${request.location} | ${request.code.label} | ${request.thread.label} |")
         }
         record.requests.forEach { request ->
             appendLine()
@@ -188,9 +171,6 @@ object ChangeRequestMarkdown {
             }
             appendLine("- **Código:** ${request.code.label}${request.codeCommit?.let { ", no commit `${it.take(7)}`" }.orEmpty()}")
             appendLine("- **Conversa no PR:** ${request.thread.label}${request.lastReply?.let { ". Última resposta: $it" }.orEmpty()}")
-            appendLine("- [${if (request.ai == AiVerdict.DONE) "x" else " "}] $AI_LABEL")
-            appendLine()
-            appendLine("$NOTE_LABEL ${request.aiNote.ifBlank { NOTE_PLACEHOLDER }}")
         }
     }
 
@@ -205,35 +185,8 @@ object ChangeRequestMarkdown {
         val lines = markdown.lines()
         val recordMeta = lines.firstNotNullOfOrNull { line -> metaOf(line, RECORD_TAG) }
             ?.let { gson.fromJson(it, RecordMeta::class.java) } ?: return null
-        val requests = mutableListOf<ChangeRequest>()
-        var current: RequestMeta? = null
-        var checked = false
-        var note = ""
-        fun flush() {
-            val meta = current ?: return
-            val verdict = when {
-                checked -> AiVerdict.DONE
-                note.isNotBlank() -> AiVerdict.NOT_DONE
-                else -> AiVerdict.PENDING
-            }
-            requests += request(meta, verdict, note)
-        }
-        for (line in lines) {
-            val trimmed = line.trim()
-            metaOf(trimmed, REQUEST_TAG)?.let { json ->
-                flush()
-                current = gson.fromJson(json, RequestMeta::class.java)
-                checked = false
-                note = ""
-                return@let
-            }
-            if (current == null) continue
-            AI_BOX.find(trimmed)?.let { checked = it.groupValues[1].isNotBlank() }
-            if (trimmed.startsWith(NOTE_LABEL)) {
-                note = trimmed.removePrefix(NOTE_LABEL).trim().takeUnless { it == NOTE_PLACEHOLDER }.orEmpty()
-            }
-        }
-        flush()
+        val requests = lines.mapNotNull { line -> metaOf(line, REQUEST_TAG) }
+            .map { json -> request(gson.fromJson(json, RequestMeta::class.java)) }
         return PullRequestRecord(recordMeta.number, recordMeta.title, recordMeta.url, recordMeta.head, recordMeta.base, requests, recordMeta.checkedAt)
     }
 
@@ -248,7 +201,7 @@ object ChangeRequestMarkdown {
         request.remote.name.takeIf { request.remote != RemoteStatus.SYNCED }, request.remoteUpdatedAt,
     )
 
-    private fun request(meta: RequestMeta, ai: AiVerdict, note: String) = ChangeRequest(
+    private fun request(meta: RequestMeta) = ChangeRequest(
         id = meta.id,
         path = meta.path,
         target = enumOr(meta.target, CommentTarget.LINES),
@@ -264,8 +217,6 @@ object ChangeRequestMarkdown {
         codeCommit = meta.codeCommit,
         thread = enumOr(meta.thread, if (meta.comment == null) ThreadStatus.NONE else ThreadStatus.NOT_CHECKED),
         lastReply = meta.lastReply,
-        ai = ai,
-        aiNote = note,
         suggestion = meta.suggestion.orEmpty(),
         remote = enumOr(meta.remote, RemoteStatus.SYNCED),
         remoteUpdatedAt = meta.remoteUpdatedAt,

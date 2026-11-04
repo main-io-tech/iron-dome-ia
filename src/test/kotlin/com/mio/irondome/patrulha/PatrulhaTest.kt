@@ -40,7 +40,7 @@ class PatrulhaTest {
     }
 
     @Test
-    fun markdownRoundTripKeepsRequestsAndReadsTheAiVerdict() {
+    fun markdownRoundTripKeepsRequests() {
         val record = PullRequestRecord(
             number = 12, title = "Frete por peso", url = "https://github.com/o/r/pull/12", headRef = "frete", baseRef = "main",
             requests = listOf(
@@ -50,7 +50,6 @@ class PatrulhaTest {
             checkedAt = "2026-11-03T14:00:00",
         )
         val written = ChangeRequestMarkdown.render(record)
-            .replace("- [ ] **Atendido (IA)**\n\n**Parecer da IA:** _ainda não avaliado_", "- [x] **Atendido (IA)**\n\n**Parecer da IA:** validação adicionada")
 
         val parsed = ChangeRequestMarkdown.parse(written)!!
 
@@ -61,20 +60,16 @@ class PatrulhaTest {
         assertEquals(CodeStatus.CHANGED, first.code)
         assertEquals(ThreadStatus.RESOLVED, first.thread)
         assertEquals("val total = itens.sum()", first.snippet)
-        assertEquals(AiVerdict.DONE, first.ai)
-        assertEquals("validação adicionada", first.aiNote)
         assertEquals(ThreadStatus.NONE, parsed.requests[1].thread)
+        assertFalse(written.contains("Parecer da IA"))
     }
 
     @Test
-    fun anUncheckedBoxWithAnOpinionMeansNotDone() {
-        val markdown = ChangeRequestMarkdown.render(PullRequestRecord(3, "t", "u", "h", "b", listOf(request("P1"))))
-            .replace("_ainda não avaliado_", "o trecho continua igual")
+    fun oldMarkdownWithTheAiOpinionStillReads() {
+        val old = ChangeRequestMarkdown.render(PullRequestRecord(3, "t", "u", "h", "b", listOf(request("P1")))) +
+            "- [x] **Atendido (IA)**\n\n**Parecer da IA:** feito\n"
 
-        val request = ChangeRequestMarkdown.parse(markdown)!!.requests.single()
-
-        assertEquals(AiVerdict.NOT_DONE, request.ai)
-        assertEquals("o trecho continua igual", request.aiNote)
+        assertEquals(listOf("P1"), ChangeRequestMarkdown.parse(old)!!.requests.map { it.id })
     }
 
     @Test
