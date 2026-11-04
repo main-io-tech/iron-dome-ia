@@ -110,7 +110,13 @@ class ReviewState {
     /** PR em revisão pela Patrulha: os comentários novos vão para ele, não para a IA. 0 quando não há. */
     var activePullRequest: Int = 0
     var nextPullRequestCommentId: Int = 1
+
+    /** O estado dos outros projetos da janela, guardado ao trocar o projeto do Iron Dome, pela pasta de cada um. */
+    var parked: MutableList<ParkedReview> = mutableListOf()
 }
+
+/** O estado do Radar de um projeto que não é o selecionado agora; [root] é a pasta dele. */
+class ParkedReview(var root: String = "", var state: ReviewState = ReviewState())
 
 fun interface ReviewCommentsListener {
     fun commentsChanged()

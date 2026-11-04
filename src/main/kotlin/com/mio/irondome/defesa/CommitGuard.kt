@@ -11,6 +11,7 @@ import com.intellij.openapi.vcs.changes.CommitContext
 import com.intellij.openapi.vcs.checkin.CheckinHandler
 import com.intellij.openapi.vcs.checkin.CheckinHandlerFactory
 import com.mio.irondome.base.plural
+import com.mio.irondome.base.rootPath
 import com.mio.irondome.impacto.ChangeRisk
 import com.mio.irondome.impacto.CommentSource
 import com.mio.irondome.impacto.ImpactComment
@@ -143,7 +144,7 @@ class CommitGuard(private val panel: CheckinProjectPanel) : CheckinHandler() {
             Messages.showWarningDialog(project, "Configure e teste a IA no Interceptador para revisar o commit com ela.", "IA Indisponível")
             return
         }
-        val root = project.basePath ?: return
+        val root = project.rootPath() ?: return
         ApplicationManager.getApplication().executeOnPooledThread {
             val diff = runCatching {
                 val line = GeneralCommandLine(listOf("git", "diff", "HEAD", "--no-color", "--") + paths).withWorkDirectory(root).withCharset(StandardCharsets.UTF_8)

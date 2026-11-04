@@ -641,9 +641,8 @@ mecanismo não vai funcionar, avisa qual e por quê, com **Ver Compatibilidade**
 - 🚨 Quando o plugin lança uma exceção, a janela de erros da própria IDE ganha o botão **Reportar ao Iron
   Dome IA**, que abre o Reportar Bug com o erro e a nota que você escreveu lá.
 - 🆙 **Versão do IntelliJ:** ao abrir o projeto, o plugin confere se a IDE tem as APIs que cada mecanismo
-  usa (testado com o IntelliJ 2025.2.6 ou mais novo). Se faltar alguma, pergunta: **Atualizar o IntelliJ**
-  (abre a busca de atualizações) ou **Trabalhar Limitado**, que desliga só os mecanismos afetados; as abas
-  deles mostram o que falta e o link para atualizar. A escolha vale até a versão da IDE mudar.
+  usa (testado com o IntelliJ 2025.2.6). É só informativo: se faltar alguma, desliga só os mecanismos
+  afetados e avisa uma vez por versão da IDE, sem pedir para atualizar; as abas deles mostram o que falta.
 
 - 🩺 **Iron Dome IA: Verificar Compatibilidade** (menu **Help** ou engrenagem do painel) mostra a situação de
   cada mecanismo (OK, opcional, limitado ou indisponível), o que fazer para resolver e os erros recentes do

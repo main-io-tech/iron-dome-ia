@@ -24,6 +24,7 @@ import com.intellij.openapi.wm.ToolWindowManager
 import com.intellij.ui.jcef.JBCefApp
 import com.mio.irondome.base.ReviewToolWindowFactory
 import com.mio.irondome.base.TabFailures
+import com.mio.irondome.base.rootPath
 import com.mio.irondome.interceptor.AgentRunner
 import java.awt.image.BufferedImage
 import java.nio.file.Files
@@ -44,7 +45,7 @@ internal class BugContext(val activeTab: Mechanism?, val entries: List<Pair<Stri
             val editor = FileEditorManager.getInstance(project).selectedTextEditor
             val file = editor?.let { FileDocumentManager.getInstance().getFile(it.document) }
             val openFile = if (editor != null && file != null) {
-                val path = project.basePath?.let { file.path.removePrefix("$it/") } ?: file.path
+                val path = project.rootPath()?.let { file.path.removePrefix("$it/") } ?: file.path
                 "$path, linha ${editor.caretModel.logicalPosition.line + 1}"
             } else {
                 "nenhum"
@@ -95,7 +96,7 @@ object BugReports {
         set(value) = PropertiesComponent.getInstance().setValue(LOCAL_ONLY_KEY, value)
 
     /** Pasta `iron-dome/bugs` do projeto aberto, ao lado das revisões do Radar. */
-    fun projectFolder(project: Project): Path? = project.basePath?.let { Path.of(it, "iron-dome", "bugs") }
+    fun projectFolder(project: Project): Path? = project.rootPath()?.let { Path.of(it, "iron-dome", "bugs") }
 
     /** [recording] é um arquivo temporário, movido para a pasta do relatório. */
     fun submit(project: Project, report: BugReport, screenshot: BufferedImage?, recording: Path?, folder: Path, sendToLinear: Boolean) {

@@ -1,10 +1,7 @@
 package com.mio.irondome.base
 
-import com.intellij.ide.BrowserUtil
 import com.intellij.ide.plugins.PluginManagerCore
 import com.intellij.ide.util.PropertiesComponent
-import com.intellij.openapi.actionSystem.ActionManager
-import com.intellij.openapi.actionSystem.ActionPlaces
 import com.intellij.openapi.application.ApplicationInfo
 import com.intellij.openapi.extensions.PluginId
 
@@ -31,8 +28,6 @@ object IdeSupport {
     const val TESTED_BUILD = "252.28539"
     const val TESTED_VERSION = "2025.2.6"
 
-    private const val UPDATE_ACTION = "CheckForUpdate"
-    private const val DOWNLOAD_URL = "https://www.jetbrains.com/idea/download/"
     private const val LIMITED_KEY = "IronDome.LimitedMode.Build"
 
     val REQUIREMENTS = listOf(
@@ -65,8 +60,8 @@ object IdeSupport {
 
     val ideVersion: String get() = ApplicationInfo.getInstance().fullVersion
 
-    /** O usuário já escolheu trabalhar limitado nesta versão da IDE: não pergunta de novo até ela mudar. */
-    var limitedAccepted: Boolean
+    /** O usuário já foi avisado do que fica desligado nesta versão da IDE: não avisa de novo até ela mudar. */
+    var limitedNotified: Boolean
         get() = PropertiesComponent.getInstance().getValue(LIMITED_KEY) == ideBuild
         set(value) = PropertiesComponent.getInstance().setValue(LIMITED_KEY, if (value) ideBuild else null)
 
@@ -90,17 +85,6 @@ object IdeSupport {
             if (part != reference[index]) return part < reference[index]
         }
         return false
-    }
-
-    /** Abre a busca de atualizações da IDE ou, sem ela, a página de download. */
-    fun openUpdate() {
-        val actions = ActionManager.getInstance()
-        val action = actions.getAction(UPDATE_ACTION)
-        if (action == null) {
-            BrowserUtil.browse(DOWNLOAD_URL)
-            return
-        }
-        actions.tryToExecute(action, null, null, ActionPlaces.UNKNOWN, true)
     }
 
     private fun classLoaderOf(plugin: String?): ClassLoader? {

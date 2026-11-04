@@ -23,6 +23,7 @@ import com.intellij.openapi.vcs.changes.ChangeListListener
 import com.intellij.openapi.vcs.changes.ChangeListManager
 import com.intellij.util.Alarm
 import com.mio.irondome.base.IronDomeIcons
+import com.mio.irondome.base.rootPath
 import com.mio.irondome.defesa.ChangeHistoryService
 import com.mio.irondome.defesa.ClassDossier
 import com.mio.irondome.defesa.DefenseSettings
@@ -103,7 +104,7 @@ class BackgroundImpact(private val project: Project) : Disposable {
         if (!manual && signature == lastSignature) return
         lastSignature = signature
 
-        val root = project.basePath ?: return
+        val root = project.rootPath() ?: return
         val diff = gitDiff(root, paths)
         val status = DefenseStatus.getInstance(project)
         val impactRadar = ImpactRadar.getInstance(project)

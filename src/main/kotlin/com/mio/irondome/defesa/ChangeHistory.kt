@@ -7,6 +7,7 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
+import com.mio.irondome.base.rootPath
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -105,9 +106,12 @@ class ChangeHistory(val commits: List<Commit>) {
 
         val EMPTY = ChangeHistory(emptyList())
 
-        /** Os argumentos do `git log`, para o teste conferir e para rodar. */
+        /**
+         * Os argumentos do `git log`, para o teste conferir e para rodar. Com `--relative`, rodado na pasta do
+         * projeto escolhido dentro de um repositório maior, só entram os arquivos dela, com caminhos a partir dela.
+         */
         fun command(months: Int = MONTHS): List<String> =
-            listOf("git", "log", "--since=$months.months", "--no-merges", "--name-only", "--format=$SEPARATOR%H%x09%an%x09%s")
+            listOf("git", "log", "--since=$months.months", "--no-merges", "--relative", "--name-only", "--format=$SEPARATOR%H%x09%an%x09%s")
 
         /** Lê a saída de [command]: um bloco por commit, com o cabeçalho e os arquivos. */
         fun parse(output: String): ChangeHistory {
@@ -156,7 +160,7 @@ class ChangeHistoryService(private val project: Project) {
 
     /** Lê agora, nesta thread (não chame na EDT). */
     fun load(): ChangeHistory {
-        val root = project.basePath ?: return ChangeHistory.EMPTY
+        val root = project.rootPath() ?: return ChangeHistory.EMPTY
         val read = ChangeHistory.read(root)
         history = read
         readAt = System.currentTimeMillis()

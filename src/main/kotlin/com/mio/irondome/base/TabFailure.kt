@@ -48,10 +48,9 @@ internal class TabErrorPanel(title: String, error: Throwable) : JBPanelWithEmpty
             appendLine(TabFailures.describe(error), SimpleTextAttributes.GRAYED_ATTRIBUTES, null)
             if (TabFailures.isIdeVersionError(error)) {
                 appendLine(
-                    "Esta versão do IntelliJ não tem algo que a aba usa. Testado com ${IdeSupport.TESTED_VERSION} ou mais nova.",
+                    "Esta versão do IntelliJ (${IdeSupport.ideVersion}) não tem algo que a aba usa. Testado com ${IdeSupport.TESTED_VERSION}.",
                     SimpleTextAttributes.GRAYED_ATTRIBUTES, null,
                 )
-                appendLine("Atualizar o IntelliJ", SimpleTextAttributes.LINK_PLAIN_ATTRIBUTES) { IdeSupport.openUpdate() }
             } else {
                 appendLine("O erro foi registrado no idea.log.", SimpleTextAttributes.GRAYED_ATTRIBUTES, null)
             }
@@ -76,10 +75,9 @@ internal class UnavailableTabPanel(title: String, missing: List<String>) : JBPan
             text = "$title indisponível nesta versão do IntelliJ"
             appendLine("Falta: ${missing.joinToString()}.", SimpleTextAttributes.GRAYED_ATTRIBUTES, null)
             appendLine(
-                "IntelliJ ${IdeSupport.ideVersion} (build ${IdeSupport.ideBuild}); testado com ${IdeSupport.TESTED_VERSION} ou mais nova.",
+                "IntelliJ ${IdeSupport.ideVersion} (build ${IdeSupport.ideBuild}); testado com ${IdeSupport.TESTED_VERSION}.",
                 SimpleTextAttributes.GRAYED_ATTRIBUTES, null,
             )
-            appendLine("Atualizar o IntelliJ", SimpleTextAttributes.LINK_PLAIN_ATTRIBUTES) { IdeSupport.openUpdate() }
             appendLine("Verificar Compatibilidade", SimpleTextAttributes.LINK_PLAIN_ATTRIBUTES) {
                 runAction(this@UnavailableTabPanel, TabErrorPanel.COMPATIBILITY_ACTION)
             }

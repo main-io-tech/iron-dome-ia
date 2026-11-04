@@ -115,22 +115,24 @@ class CompatibilityTest {
     }
 
     @Test
-    fun missingIdeApisTurnTheMechanismOffAndAskToUpdate() {
+    fun missingIdeApisTurnTheMechanismOffAndOnlyInform() {
         val env = healthy.copy(ideBuild = "252.23892.409", missingApis = mapOf("Patrulha" to listOf("login do GitHub com token")))
 
         val patrol = check(env, Mechanism.PATRULHA)
 
         assertEquals(CheckStatus.ERROR, patrol.status)
-        assertTrue(patrol.detail.contains("modo limitado"))
-        assertTrue(patrol.fix!!.contains("Atualize o IntelliJ"))
+        assertTrue(patrol.detail.contains("Desligado nesta versão do IntelliJ (build 252.23892.409)"))
+        assertFalse(patrol.fix!!.contains("Atualize"))
         assertEquals(listOf(Mechanism.PATRULHA), Compatibility.limited(env))
-        assertTrue(Compatibility.limitedMessage(env).contains("• Patrulha: falta login do GitHub com token"))
+        val message = Compatibility.limitedMessage(env)
+        assertTrue(message.contains("Patrulha, que usa login do GitHub com token"))
+        assertFalse(message.contains("Atualize"))
         assertTrue(env.olderThanTested)
         assertEquals(CheckStatus.OK, check(env, Mechanism.RADAR).status)
     }
 
     @Test
-    fun aTabThatFailedForLackOfAnIdeApiAsksToUpdate() {
+    fun aTabThatFailedForLackOfAnIdeApiIsReported() {
         val env = healthy.copy(
             tabFailures = mapOf("Escudo" to "NoSuchMethodError: setVMParameters"),
             ideVersionFailures = setOf("Escudo"),
@@ -139,7 +141,7 @@ class CompatibilityTest {
         val shield = check(env, Mechanism.ESCUDO)
 
         assertTrue(shield.detail.contains("esta versão do IntelliJ não tem"))
-        assertTrue(shield.fix!!.contains("Atualize o IntelliJ"))
+        assertTrue(shield.fix!!.contains("Reportar Bug"))
         assertTrue(Compatibility.limited(env).isEmpty())
     }
 

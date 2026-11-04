@@ -20,6 +20,7 @@ import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VfsUtilCore
 import com.intellij.openapi.vfs.VirtualFile
 import com.mio.irondome.base.rootDir
+import com.mio.irondome.base.rootPath
 import com.mio.irondome.comando.ReviewArchive
 import com.mio.irondome.comando.ReviewMarkdown
 import com.mio.irondome.defesa.ReviewFeedback
@@ -62,6 +63,29 @@ class ReviewCommentService(private val project: Project) : PersistentStateCompon
         state = loaded
         adoptLegacyComments()
         openCounts = countOpen()
+    }
+
+    /**
+     * Troca o projeto do Iron Dome de [from] para [to] (as pastas deles): os comentários e a revisão aberta de
+     * [from] ficam guardados, e os de [to] voltam. [apply] passa a raiz para [to], entre guardar as posições
+     * dos comentários (ainda pela raiz antiga) e redesenhar os editores (já pela nova). Na EDT.
+     */
+    fun switchRoot(from: String, to: String, apply: () -> Unit) {
+        if (from == to) return
+        syncAllPositions()
+        apply()
+        val current = state
+        val parked = current.parked
+        current.parked = mutableListOf()
+        val next = parked.firstOrNull { it.root == to }?.state ?: ReviewState()
+        next.parked = (parked.filter { it.root != to && it.root != from } + ParkedReview(from, current)).toMutableList()
+        loadState(next)
+        EditorFactory.getInstance().allEditors.filter { it.project == project }.forEach(::render)
+        notifyChanged()
+    }
+
+    private fun syncAllPositions() {
+        state.comments.map { it.filePath }.distinct().forEach { path -> documentOf(path)?.let { syncFromMarkers(path, it) } }
     }
 
     /**
@@ -421,10 +445,10 @@ class ReviewCommentService(private val project: Project) : PersistentStateCompon
     fun render(editor: Editor) {
         if (editor.editorKind != EditorKind.MAIN_EDITOR) return
         val document = editor.document
-        val path = pathOf(document) ?: return
         val inlayModel = editor.inlayModel
         inlayModel.getBlockElementsInRange(0, document.textLength, ReviewCommentRenderer::class.java)
             .forEach { it.dispose() }
+        val path = pathOf(document) ?: return
 
         for (comment in visibleCommentsFor(path).filterNot { it in editing }) {
             if (comment.target == CommentTarget.FILE) {
@@ -692,7 +716,7 @@ class ReviewCommentService(private val project: Project) : PersistentStateCompon
         return FileDocumentManager.getInstance().getCachedDocument(file)
     }
 
-    private fun reviewRoot(): Path? = project.basePath?.let { Path.of(it, REVIEW_DIR) }
+    private fun reviewRoot(): Path? = project.rootPath()?.let { Path.of(it, REVIEW_DIR) }
 
     private fun linesText(document: Document, startLine: Int, endLine: Int): String =
         document.getText(TextRange(document.getLineStartOffset(startLine), document.getLineEndOffset(endLine)))

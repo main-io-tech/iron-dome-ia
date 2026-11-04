@@ -13,6 +13,7 @@ import com.intellij.openapi.vcs.changes.ChangeListManager
 import com.intellij.util.Alarm
 import com.intellij.util.messages.Topic
 import com.mio.irondome.base.IronDomeIcons
+import com.mio.irondome.base.IronDomeRoot
 import com.mio.irondome.base.Tone
 import com.mio.irondome.base.plural
 import com.mio.irondome.impacto.ChangeRisk
@@ -135,6 +136,13 @@ class DefenseStatus(private val project: Project) : Disposable {
         connection.subscribe(ReviewCommentsListener.TOPIC, ReviewCommentsListener { scheduleRecount() })
         connection.subscribe(ChangeListListener.TOPIC, object : ChangeListListener {
             override fun changeListUpdateDone() = scheduleRecount()
+        })
+        connection.subscribe(IronDomeRoot.Listener.TOPIC, IronDomeRoot.Listener {
+            snapshots.clear()
+            lastSnapshot = null
+            notifiedConflicts.clear()
+            ChangeHistoryService.getInstance(project).refresh()
+            scheduleRecount()
         })
         scheduleRecount()
     }

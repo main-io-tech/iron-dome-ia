@@ -1,10 +1,12 @@
 package com.mio.irondome.base
 
 import com.intellij.icons.AllIcons
+import com.intellij.ide.util.PropertiesComponent
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.panels.VerticalLayout
 import com.intellij.util.IconUtil
+import com.intellij.util.containers.ContainerUtil
 import com.intellij.util.ui.GraphicsUtil
 import com.intellij.util.ui.JBFont
 import com.intellij.util.ui.JBUI
@@ -12,11 +14,14 @@ import com.intellij.util.ui.UIUtil
 import com.intellij.util.ui.WrapLayout
 import java.awt.BorderLayout
 import java.awt.Color
+import java.awt.Cursor
 import java.awt.Dimension
 import java.awt.FlowLayout
 import java.awt.GradientPaint
 import java.awt.Graphics
 import java.awt.Graphics2D
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseEvent
 import java.awt.geom.Ellipse2D
 import java.awt.geom.RoundRectangle2D
 import javax.swing.Icon
@@ -31,12 +36,16 @@ class Stat(val count: Int, val label: String, val tone: Tone)
  * Cabeçalho das abas: o ícone do mecanismo num ladrilho colorido, o título com um ponto na cor do estado,
  * uma linha de contexto, os indicadores de cada estado, a barra com a proporção entre eles e, se houver,
  * um aviso. O fundo ganha um leve degradê na cor do estado e a linha de baixo acompanha essa cor.
+ *
+ * Minimizado (o padrão), cabe numa linha: ícone, título e indicadores, com o contexto e o aviso no tooltip. A
+ * seta do canto alterna, e a escolha vale para as abas de todos os mecanismos.
  */
 class SummaryHeader(icon: Icon, private val tone: Tone = Tone.GRAY) : JPanel(BorderLayout()) {
 
     private val tile = IconTile(icon, tone)
+    private val smallTile = IconTile(icon, tone, scale = 1f, size = 22)
     private val dot = StatusDot()
-    private val title = JBLabel().apply { font = JBFont.h4() }
+    private val title = JBLabel()
     private val subtitle = JBLabel().apply {
         font = JBFont.small()
         foreground = UIUtil.getContextHelpForeground()
@@ -44,40 +53,30 @@ class SummaryHeader(icon: Icon, private val tone: Tone = Tone.GRAY) : JPanel(Bor
     private val chips = JPanel(WrapLayout(FlowLayout.LEFT, JBUI.scale(6), JBUI.scale(4))).apply { isOpaque = false }
     private val barSlot = JPanel(BorderLayout()).apply {
         isOpaque = false
-        border = JBUI.Borders.emptyTop(4)
+        border = JBUI.Borders.emptyTop(2)
     }
     private val banner = NoticeBox(AllIcons.General.Warning, Tone.YELLOW).apply { isVisible = false }
+    private val warningIcon = JBLabel(AllIcons.General.Warning).apply { isVisible = false }
+    private val toggle = JBLabel().apply {
+        cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+        border = JBUI.Borders.empty(2)
+        addMouseListener(object : MouseAdapter() {
+            override fun mouseClicked(e: MouseEvent) {
+                expanded = !expanded
+            }
+        })
+    }
 
     /** A cor do estado atual: tinge o fundo e a linha de baixo. */
     private var accent: Color? = null
+    private var subtitleText: String? = null
+    private var warningText: String? = null
 
     init {
         isOpaque = true
         background = UIUtil.getPanelBackground()
-        border = JBUI.Borders.empty(12, 14, 10, 14)
-        val titleLine = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
-            isOpaque = false
-            add(dot)
-            add(title)
-        }
-        val text = JPanel(VerticalLayout(JBUI.scale(2), SwingConstants.LEFT)).apply {
-            isOpaque = false
-            add(titleLine)
-            add(subtitle)
-        }
-        val body = JPanel(VerticalLayout(JBUI.scale(5), VerticalLayout.FILL)).apply {
-            isOpaque = false
-            add(text)
-            add(chips)
-            add(barSlot)
-            add(banner)
-        }
-        add(JPanel(BorderLayout()).apply {
-            isOpaque = false
-            border = JBUI.Borders.emptyRight(12)
-            add(tile, BorderLayout.NORTH)
-        }, BorderLayout.WEST)
-        add(body, BorderLayout.CENTER)
+        headers += this
+        relayout()
     }
 
     fun update(
@@ -93,18 +92,93 @@ class SummaryHeader(icon: Icon, private val tone: Tone = Tone.GRAY) : JPanel(Bor
         accent = titleColor
         dot.color = titleColor
         dot.isVisible = titleColor != null
+        subtitleText = subtitle?.takeIf { it.isNotEmpty() }
         this.subtitle.text = subtitle.orEmpty()
-        this.subtitle.isVisible = !subtitle.isNullOrEmpty()
         chips.removeAll()
         stats.filter { it.count > 0 }.forEach { chips.add(StatChip(it.count.toString(), it.label, it.tone)) }
-        chips.isVisible = chips.componentCount > 0
         barSlot.removeAll()
         if (bar.any { it.value > 0 }) barSlot.add(SegmentBar(bar), BorderLayout.CENTER)
-        barSlot.isVisible = barSlot.componentCount > 0
-        banner.isVisible = warning != null
+        warningText = warning
         warning?.let { banner.text = it }
+        applyVisibility()
         revalidate()
         repaint()
+    }
+
+    private fun relayout() {
+        removeAll()
+        val expanded = expanded
+        toggle.icon = if (expanded) AllIcons.General.ChevronUp else AllIcons.General.ChevronDown
+        toggle.toolTipText = if (expanded) "Minimizar os cabeçalhos" else "Expandir os cabeçalhos"
+        val corner = JPanel(BorderLayout()).apply {
+            isOpaque = false
+            add(toggle, BorderLayout.NORTH)
+        }
+        if (expanded) {
+            border = JBUI.Borders.empty(8, 12, 8, 6)
+            title.font = JBFont.h4()
+            val titleLine = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
+                isOpaque = false
+                add(dot)
+                add(title)
+            }
+            val body = JPanel(VerticalLayout(JBUI.scale(4), VerticalLayout.FILL)).apply {
+                isOpaque = false
+                add(JPanel(VerticalLayout(JBUI.scale(2), SwingConstants.LEFT)).apply {
+                    isOpaque = false
+                    add(titleLine)
+                    add(subtitle)
+                })
+                add(chips)
+                add(barSlot)
+                add(banner)
+            }
+            add(JPanel(BorderLayout()).apply {
+                isOpaque = false
+                border = JBUI.Borders.emptyRight(10)
+                add(tile, BorderLayout.NORTH)
+            }, BorderLayout.WEST)
+            add(body, BorderLayout.CENTER)
+        } else {
+            border = JBUI.Borders.empty(3, 8, 3, 6)
+            title.font = JBFont.label().asBold()
+            add(JPanel(WrapLayout(FlowLayout.LEFT, JBUI.scale(6), JBUI.scale(2))).apply {
+                isOpaque = false
+                add(smallTile)
+                add(dot)
+                add(title)
+                add(warningIcon)
+                add(chips)
+            }, BorderLayout.CENTER)
+        }
+        add(corner, BorderLayout.EAST)
+        applyVisibility()
+        revalidate()
+        repaint()
+    }
+
+    private fun applyVisibility() {
+        val expanded = expanded
+        subtitle.isVisible = expanded && subtitleText != null
+        chips.isVisible = chips.componentCount > 0
+        barSlot.isVisible = expanded && barSlot.componentCount > 0
+        banner.isVisible = expanded && warningText != null
+        warningIcon.isVisible = !expanded && warningText != null
+        warningIcon.toolTipText = warningText
+        title.toolTipText = if (expanded) null else listOfNotNull(subtitleText, warningText).joinToString("\n").ifEmpty { null }
+    }
+
+    companion object {
+        private const val EXPANDED_KEY = "IronDome.Header.Expanded"
+        private val headers = ContainerUtil.createWeakSet<SummaryHeader>()
+
+        /** Os cabeçalhos completos, com o contexto, a barra e o aviso; vale para todas as abas abertas. */
+        var expanded: Boolean
+            get() = PropertiesComponent.getInstance().getBoolean(EXPANDED_KEY, false)
+            set(value) {
+                PropertiesComponent.getInstance().setValue(EXPANDED_KEY, value, false)
+                headers.toList().forEach(SummaryHeader::relayout)
+            }
     }
 
     override fun paintComponent(g: Graphics) {

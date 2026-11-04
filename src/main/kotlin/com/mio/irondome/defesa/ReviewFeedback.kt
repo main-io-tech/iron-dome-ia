@@ -6,6 +6,7 @@ import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
+import com.mio.irondome.base.rootPath
 import com.mio.irondome.radar.CommentMarkdown
 import com.mio.irondome.radar.ReviewComment
 import com.mio.irondome.radar.ReviewCommentService
@@ -157,7 +158,7 @@ class ReviewFeedback(private val project: Project) {
     /** Rascunhos já contados como aceitos: a remoção deles depois do envio não é descarte. */
     private val settled: MutableSet<String> = Collections.synchronizedSet(mutableSetOf())
 
-    fun file(): Path? = project.basePath?.let { Path.of(it, ReviewCommentService.REVIEW_DIR, DIR, FeedbackMarkdown.FILE_NAME) }
+    fun file(): Path? = project.rootPath()?.let { Path.of(it, ReviewCommentService.REVIEW_DIR, DIR, FeedbackMarkdown.FILE_NAME) }
 
     fun state(): FeedbackState {
         val file = file()?.takeIf(Files::isRegularFile) ?: return FeedbackState()

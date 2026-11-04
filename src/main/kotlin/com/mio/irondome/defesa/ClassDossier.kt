@@ -3,6 +3,7 @@ package com.mio.irondome.defesa
 import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
+import com.mio.irondome.base.rootPath
 import com.mio.irondome.comando.ReviewMarkdown
 import com.mio.irondome.patrulha.PatrulhaService
 import com.mio.irondome.radar.CommentMarkdown
@@ -115,7 +116,7 @@ object ClassDossier {
     }
 
     fun decisionsFile(project: Project): Path? =
-        project.basePath?.let { Path.of(it, ReviewCommentService.REVIEW_DIR, ReviewFeedback.DIR, DECISIONS_FILE) }
+        project.rootPath()?.let { Path.of(it, ReviewCommentService.REVIEW_DIR, ReviewFeedback.DIR, DECISIONS_FILE) }
 
     /** Os comentários de revisões encerradas do Radar e os pedidos já enviados a PRs, por arquivo. */
     private fun pastComments(project: Project): Map<String, List<String>> {

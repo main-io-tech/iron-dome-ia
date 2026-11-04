@@ -112,27 +112,23 @@ object Compatibility {
     /** Os que merecem aviso ao abrir o projeto. */
     fun problems(checks: List<CompatibilityCheck>) = checks.filter { it.status == CheckStatus.WARNING || it.status == CheckStatus.ERROR }
 
-    /** Mecanismos que esta versão do IntelliJ não comporta: pedem atualizar a IDE ou trabalhar sem eles. */
+    /** Mecanismos que esta versão do IntelliJ não comporta: ficam desligados, e o restante funciona. */
     fun limited(env: Environment): List<Mechanism> = Mechanism.entries.filter { it.title in env.missingApis }
 
-    /** O texto da pergunta ao abrir o projeto: atualizar o IntelliJ ou trabalhar limitado. */
+    /** Só informa o que ficou desligado nesta versão do IntelliJ, sem pedir para atualizar. */
     fun limitedMessage(env: Environment): String = buildString {
-        append("Esta versão do IntelliJ (build ${env.ideBuild}) não tem tudo de que o Iron Dome IA precisa. ")
-        append("Ele foi testado com o IntelliJ ${IdeSupport.TESTED_VERSION} (build ${IdeSupport.TESTED_BUILD}) ou mais novo.\n\n")
-        limited(env).forEach { mechanism ->
-            append("• ${mechanism.title}: falta ${env.missingApis.getValue(mechanism.title).joinToString()}\n")
-        }
-        append("\nAtualize o IntelliJ para usar tudo. Se não puder atualizar agora, trabalhe limitado: ")
-        append("só esses mecanismos ficam desligados, e o restante funciona normalmente.")
+        append("Nesta versão do IntelliJ (build ${env.ideBuild}) ficam desligados: ")
+        append(limited(env).joinToString("; ") { "${it.title}, que usa ${env.missingApis.getValue(it.title).joinToString()}" })
+        append(". O restante funciona normalmente. Testado com o IntelliJ ${IdeSupport.TESTED_VERSION} (build ${IdeSupport.TESTED_BUILD}).")
     }
 
     private fun ideVersion(env: Environment, mechanism: Mechanism): CompatibilityCheck? {
         val missing = env.missingApis[mechanism.title]
-        val fix = "Atualize o IntelliJ para ${IdeSupport.TESTED_VERSION} ou mais novo (Help > Check for Updates)."
+        val fix = "Testado com o IntelliJ ${IdeSupport.TESTED_VERSION} (build ${IdeSupport.TESTED_BUILD}). Use Copiar Diagnóstico ou Reportar Bug para avisar."
         return when {
             missing != null -> CompatibilityCheck(
                 mechanism, CheckStatus.ERROR,
-                "Desligado no modo limitado: esta versão do IntelliJ (build ${env.ideBuild}) não tem ${missing.joinToString()}.",
+                "Desligado nesta versão do IntelliJ (build ${env.ideBuild}), que não tem ${missing.joinToString()}.",
                 fix,
             )
             mechanism.title in env.ideVersionFailures -> CompatibilityCheck(
@@ -179,7 +175,8 @@ object Compatibility {
             !env.jcef -> CompatibilityCheck(
                 Mechanism.IMPACTO, CheckStatus.WARNING,
                 "O navegador embutido (JCEF) não está disponível: a aba abre, mas o diagrama não é desenhado.",
-                "Em Help > Find Action, rode Choose Boot Java Runtime for the IDE, escolha um runtime com JCEF e reinicie a IDE.",
+                "Na IntelliJ 2026.2 ou mais nova, confira se o plugin Web Browser (JCEF) está ativo em Settings > Plugins. " +
+                    "Nas anteriores, em Help > Find Action, rode Choose Boot Java Runtime for the IDE, escolha um runtime com JCEF e reinicie a IDE.",
             )
             else -> CompatibilityCheck(Mechanism.IMPACTO, CheckStatus.OK, "Plugin Java ativo e navegador embutido (JCEF) disponível.")
         }

@@ -5,6 +5,7 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.SystemInfo
+import com.mio.irondome.base.rootPath
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.LocalDateTime
@@ -46,13 +47,22 @@ object AgentVerifier {
                 ExecUtil.execAndGetOutput(launch.process(command, workspace, key), TIMEOUT_MS)
             }.fold(
                 onSuccess = { output ->
-                    val answer = output.stdoutLines.mapNotNull(AgentEvents::parse).filterIsInstance<AgentEvent.Result>().firstOrNull()
-                    val model = output.stdoutLines.mapNotNull(AgentEvents::parse).filterIsInstance<AgentEvent.Init>().firstOrNull()?.model
+                    val events = output.stdoutLines.mapNotNull(AgentEvents::parse)
+                    val answer = events.filterIsInstance<AgentEvent.Result>().firstOrNull()
+                    val model = events.filterIsInstance<AgentEvent.Init>().firstOrNull()?.model
+                    val reported = answer?.takeIf { it.error }?.text?.takeIf { it.isNotBlank() }
                     when {
                         output.isTimeout -> Outcome(false, "Sem resposta em ${TIMEOUT_MS / 60_000} minutos.")
-                        output.exitCode != 0 -> Outcome(false, output.stderrLines.lastOrNull { it.isNotBlank() } ?: "O CLI terminou com o código ${output.exitCode}.")
-                        answer == null -> Outcome(false, "O CLI respondeu, mas sem o resultado esperado. Confira se ele está atualizado.")
-                        answer.error -> Outcome(false, answer.text.ifBlank { "A IA informou um erro." })
+                        output.exitCode != 0 -> Outcome(
+                            false,
+                            explain(provider, reported ?: output.stderrLines.lastOrNull { it.isNotBlank() } ?: "O CLI terminou com o código ${output.exitCode}."),
+                        )
+                        answer == null -> Outcome(
+                            false,
+                            "O CLI respondeu, mas sem o resultado esperado. Confira se ele está atualizado" +
+                                (output.stdoutLines.lastOrNull { it.isNotBlank() }?.let { ": a última linha foi \"${it.take(120)}\"" } ?: "."),
+                        )
+                        answer.error -> Outcome(false, explain(provider, answer.text.ifBlank { "A IA informou um erro." }))
                         else -> Outcome(true, "${provider.title}${launch.where}${model?.let { " · modelo $it" }.orEmpty()} respondeu: ${answer.text.trim().take(40)}")
                     }
                 },
@@ -65,6 +75,17 @@ object AgentVerifier {
             }, ModalityState.any())
         }
     }
+
+    /** O erro do CLI com o que fazer, quando ele é conhecido, como o login que falta. */
+    fun explain(provider: AgentProvider, message: String): String = when {
+        AUTH_REQUIRED.containsMatchIn(message) -> when (provider) {
+            AgentProvider.ANTIGRAVITY -> "$message. Falta entrar no Antigravity: rode agy uma vez no terminal e entre com a conta Google, depois teste de novo."
+            AgentProvider.CURSOR -> "$message. Falta entrar no Cursor: rode agent login no terminal ou informe uma chave de API, depois teste de novo."
+        }
+        else -> message
+    }
+
+    private val AUTH_REQUIRED = Regex("""authenticat|not logged in|login required|unauthori[sz]ed""", RegexOption.IGNORE_CASE)
 
     @Volatile
     var testingTerminal = false
@@ -81,7 +102,7 @@ object AgentVerifier {
         val provider = AgentSettings.provider
         val launch = AgentSettings.launch()
             ?: return onDone(Outcome(false, if (AgentSettings.host == AgentHost.WSL) "Escolha a distribuição do WSL." else "Executável não encontrado."))
-        val root = project.basePath ?: return onDone(Outcome(false, "O projeto não tem pasta no disco."))
+        val root = project.rootPath() ?: return onDone(Outcome(false, "O projeto não tem pasta no disco."))
         val dir = AgentRunner.getInstance(project).transcriptsDir()?.resolve(TERMINAL_TEST_DIR)
             ?: return onDone(Outcome(false, "O projeto não tem pasta no disco."))
         val file = dir.resolve("teste-terminal-${System.currentTimeMillis()}.md")

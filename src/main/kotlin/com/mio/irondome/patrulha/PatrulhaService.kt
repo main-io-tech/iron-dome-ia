@@ -12,6 +12,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VfsUtil
 import com.intellij.util.messages.Topic
+import com.mio.irondome.base.rootPath
 import com.mio.irondome.radar.CommentTarget
 import com.mio.irondome.radar.ReviewComment
 import com.mio.irondome.radar.ReviewCommentService
@@ -36,6 +37,16 @@ class PatrulhaException(message: String) : Exception(message)
 
 /** Alterações não commitadas fora de `iron-dome/` e `.idea/`, como no `git status --porcelain`. */
 class LocalChanges(val branch: String?, val files: List<String>)
+
+/** O que fazer com as alterações não commitadas antes do checkout do PR. */
+enum class LocalChangesChoice {
+    /** Não há alterações: o checkout vai direto. */
+    NONE,
+    /** Guarda no stash, que volta ao encerrar a revisão. */
+    STASH,
+    /** Apaga as alterações (as que o stash guardaria), sem stash: não voltam. */
+    DISCARD,
+}
 
 /**
  * Onde o usuário estava antes de entrar no PR: a branch (ou o commit, se estava sem branch) e o stash com
@@ -224,15 +235,16 @@ class PatrulhaService(private val project: Project) : PersistentStateComponent<P
     }
 
     /**
-     * Guarda as alterações locais no stash, se [stash], e faz o checkout do PR. Lembra de onde o usuário veio
-     * para [leave], a não ser que ele já esteja vindo de outro PR, quando vale o ponto de volta original.
+     * Guarda no stash ou descarta as alterações locais, conforme [local], e faz o checkout do PR. Lembra de onde
+     * o usuário veio para [leave], a não ser que ele já esteja vindo de outro PR, quando vale o ponto de volta original.
      */
-    fun enter(context: RepoContext, number: Int, stash: Boolean): EnterResult {
+    fun enter(context: RepoContext, number: Int, local: LocalChangesChoice): EnterResult {
         val repository = context.repository
         val origin = repository.currentBranchName?.let { it to true } ?: repository.currentRevision?.let { it to false }
         var stashSha = ""
         var stashMessage = ""
-        if (stash) {
+        if (local == LocalChangesChoice.DISCARD) discardLocalChanges(context)
+        if (local == LocalChangesChoice.STASH) {
             stashMessage = "iron-dome: antes do PR #$number, em ${origin?.first?.take(40) ?: "HEAD"}"
             val before = stashTop(context)
             try {
@@ -285,6 +297,23 @@ class PatrulhaService(private val project: Project) : PersistentStateComponent<P
         return warning
     }
 
+    private fun discardLocalChanges(context: RepoContext) {
+        val root = context.repository.root
+        discard(root.toNioPath(), workPaths(context)) { args ->
+            val command = when (args.first()) {
+                "reset" -> GitCommand.RESET
+                "checkout" -> GitCommand.CHECKOUT
+                else -> GitCommand.LS_FILES
+            }
+            gitOutput(GitLineHandler(project, root, command).apply {
+                setSilent(command == GitCommand.LS_FILES)
+                addParameters(args.drop(1))
+            }).joinToString("\n")
+        }
+        context.repository.update()
+        VfsUtil.markDirtyAndRefresh(false, true, true, root)
+    }
+
     /** [KEPT_OUT] que o `.gitignore` ignora, pelo `git check-ignore`; com o Git falhando, nenhum. */
     private fun workPaths(context: RepoContext): Array<String> {
         val ignored = gitOutput(GitLineHandler(project, context.repository.root, GitCommand.CHECK_IGNORE).apply {
@@ -320,8 +349,11 @@ class PatrulhaService(private val project: Project) : PersistentStateComponent<P
 
     fun context(): RepoContext? {
         val repositories = GitRepositoryManager.getInstance(project).repositories
-        val root = project.basePath?.replace('\\', '/')
-        val ordered = repositories.sortedByDescending { it.root.path == root }
+        val root = project.rootPath()
+        // O repositório do projeto escolhido no Iron Dome: o da própria pasta ou o que a contém.
+        val ordered = repositories.sortedWith(
+            compareByDescending<GitRepository> { it.root.path == root }.thenByDescending { root != null && root.startsWith(it.root.path + "/") },
+        )
         for (repository in ordered) {
             val remotes = repository.remotes.sortedByDescending { it.name == "origin" }
             for (remote in remotes) {
@@ -735,7 +767,7 @@ class PatrulhaService(private val project: Project) : PersistentStateComponent<P
     }
     fun recordFile(number: Int): Path? = recordsDir()?.resolve(PullRequestRecord.fileName(number))
 
-    fun recordsDir(): Path? = project.basePath?.let { Path.of(it, ReviewCommentService.REVIEW_DIR, PullRequestRecord.DIR) }
+    fun recordsDir(): Path? = project.rootPath()?.let { Path.of(it, ReviewCommentService.REVIEW_DIR, PullRequestRecord.DIR) }
 
     private fun write(record: PullRequestRecord): PullRequestRecord {
         val file = recordFile(record.number) ?: throw PatrulhaException("O projeto não tem pasta no disco.")
@@ -775,6 +807,29 @@ class PatrulhaService(private val project: Project) : PersistentStateComponent<P
          */
         fun workPaths(ignored: Set<String>): Array<String> =
             arrayOf(".") + KEPT_OUT.filterNot { it in ignored }.map { ":(exclude)$it" }
+
+        /**
+         * Apaga o que o stash guardaria em [paths]: tira tudo do index, volta os versionados ao HEAD e remove os
+         * não versionados, com as pastas que ficarem vazias; os ignorados pelo `.gitignore` ficam. [git] roda
+         * `git` com os argumentos, na raiz [root], e devolve a saída.
+         */
+        fun discard(root: Path, paths: Array<String>, git: (List<String>) -> String) {
+            git(listOf("reset", "-q", "--") + paths)
+            git(listOf("checkout", "--") + paths)
+            val untracked = git(listOf("ls-files", "--others", "--exclude-standard", "-z", "--") + paths)
+                .split('\u0000').map { it.trim('\n', '\r') }.filter { it.isNotBlank() }
+            val base = root.toAbsolutePath().normalize()
+            untracked.forEach { relative ->
+                val file = base.resolve(relative).normalize()
+                if (!file.startsWith(base)) return@forEach
+                Files.deleteIfExists(file)
+                var dir = file.parent
+                while (dir != null && dir != base && Files.isDirectory(dir) && Files.list(dir).use { !it.findAny().isPresent }) {
+                    Files.delete(dir)
+                    dir = dir.parent
+                }
+            }
+        }
 
         fun getInstance(project: Project): PatrulhaService = project.service()
     }

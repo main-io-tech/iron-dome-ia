@@ -84,6 +84,8 @@
     <!-- mio-review-ia, o nome antigo: registra os mesmos componentes (AiReviewComments) e não pode rodar junto -->
     <incompatible-with>com.mio.review</incompatible-with>
     <depends optional="true" config-file="raio-de-impacto-java.xml">com.intellij.java</depends>
+    <!-- Da 2026.2 em diante o navegador embutido (JCEF) do diagrama vem neste plugin; antes, da plataforma. -->
+    <depends optional="true" config-file="raio-de-impacto-jcef.xml">com.intellij.modules.jcef</depends>
     <depends optional="true" config-file="escudo-junit.xml">JUnit</depends>
     <depends optional="true" config-file="patrulha-git.xml">Git4Idea</depends>
     <depends optional="true" config-file="patrulha-github.xml">org.jetbrains.plugins.github</depends>

@@ -35,6 +35,7 @@ import com.intellij.ui.SearchTextField
 import com.intellij.ui.SimpleTextAttributes
 import com.intellij.util.ui.JBUI
 import com.mio.irondome.base.IronDomeIcons
+import com.mio.irondome.base.IronDomeRoot
 import com.mio.irondome.base.MechanismTree
 import com.mio.irondome.base.RichTreeCellRenderer
 import com.mio.irondome.base.Segment
@@ -43,6 +44,7 @@ import com.mio.irondome.base.SummaryHeader
 import com.mio.irondome.base.Tone
 import com.mio.irondome.base.plural
 import com.mio.irondome.base.refreshAction
+import com.mio.irondome.base.rootPath
 import com.mio.irondome.radar.CommentStatus
 import com.mio.irondome.radar.ReviewCommentService
 import com.mio.irondome.radar.ReviewCommentsListener
@@ -281,10 +283,13 @@ class ChangesPanel(private val project: Project) : SimpleToolWindowPanel(true, t
             return Entry(change, path, relative, locationOf(path), comments[relative] ?: 0, unversioned)
         }
 
+        // Com mais de um projeto na janela, só as alterações do escolhido no Iron Dome.
+        val base = IronDomeRoot.getInstance(project).selectedDir()?.path
+        fun inProject(path: FilePath) = base == null || path.path.replace('\\', '/').startsWith("$base/")
         val versioned = changeListManager.allChanges.mapNotNull { change ->
-            (change.afterRevision ?: change.beforeRevision)?.file?.let { entry(change, it, unversioned = false) }
+            (change.afterRevision ?: change.beforeRevision)?.file?.takeIf(::inProject)?.let { entry(change, it, unversioned = false) }
         }
-        val unversioned = changeListManager.unversionedFilesPaths.map {
+        val unversioned = changeListManager.unversionedFilesPaths.filter(::inProject).map {
             entry(ChangeDiff.unversioned(it), it, unversioned = true)
         }
         commentsByPath = comments
@@ -552,13 +557,13 @@ class ChangesPanel(private val project: Project) : SimpleToolWindowPanel(true, t
                 }
             }
             val relative = dirPath?.let { relativePath(project, it) }
-            val atRoot = relative == null || relative == project.basePath?.replace('\\', '/')
+            val atRoot = relative == null || relative == project.rootPath()
             return Location(if (atRoot) "(raiz do projeto)" else relative, null)
         }
 
         fun relativePath(project: Project, path: String): String {
             val normalized = path.replace('\\', '/')
-            val base = project.basePath?.replace('\\', '/') ?: return normalized
+            val base = project.rootPath() ?: return normalized
             return normalized.removePrefix("$base/")
         }
     }

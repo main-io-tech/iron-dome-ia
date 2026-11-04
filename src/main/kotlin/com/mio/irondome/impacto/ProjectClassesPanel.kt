@@ -12,6 +12,7 @@ import com.intellij.openapi.roots.ProjectFileIndex
 import com.intellij.openapi.vcs.FileStatus
 import com.intellij.openapi.vcs.changes.ChangeListListener
 import com.intellij.openapi.vcs.changes.ChangeListManager
+import com.intellij.openapi.vfs.VfsUtilCore
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.PsiManager
 import com.intellij.psi.search.FilenameIndex
@@ -26,6 +27,7 @@ import com.intellij.ui.components.JBLabel
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
 import com.mio.irondome.base.IronDomeIcons
+import com.mio.irondome.base.IronDomeRoot
 import com.mio.irondome.base.MechanismList
 import com.mio.irondome.base.Tone
 import org.jetbrains.uast.UFile
@@ -210,8 +212,11 @@ class ProjectClassesPanel(private val project: Project, private val onAnalyze: (
         /** Classes de topo dos arquivos .java e .kt do projeto, em lotes para não segurar a IDE. */
         internal fun collect(project: Project, indicator: ProgressIndicator): List<ProjectClass> {
             val scope = GlobalSearchScope.projectScope(project)
+            // Com mais de um projeto na janela, só as classes do escolhido no Iron Dome.
+            val base = IronDomeRoot.getInstance(project).selectedDir()
             val files = ReadAction.nonBlocking(Callable { listOf("java", "kt").flatMap { FilenameIndex.getAllFilesByExt(project, it, scope) } })
                 .inSmartMode(project).wrapProgress(indicator).executeSynchronously()
+                .filter { base == null || VfsUtilCore.isAncestor(base, it, true) }
             val fileIndex = ProjectFileIndex.getInstance(project)
             val result = mutableListOf<ProjectClass>()
             files.chunked(BATCH).forEachIndexed { batch, chunk ->

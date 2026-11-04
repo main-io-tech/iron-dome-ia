@@ -27,8 +27,6 @@ import com.intellij.openapi.vcs.FileStatus
 import com.intellij.openapi.vcs.ProjectLevelVcsManager
 import com.intellij.openapi.vcs.changes.ChangeListListener
 import com.intellij.openapi.wm.ToolWindow
-import com.intellij.openapi.wm.ToolWindowManager
-import com.intellij.openapi.wm.ToolWindowType
 import com.intellij.pom.Navigatable
 import com.intellij.psi.JavaPsiFacade
 import com.intellij.psi.PsiDocumentManager
@@ -190,18 +188,6 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
             },
             object : DumbAwareAction("Manual de Campo", "Explica o que cada número, cor e coluna significa", AllIcons.Actions.Help) {
                 override fun actionPerformed(e: AnActionEvent) = showTab(HELP_TAB)
-            },
-            object : DumbAwareToggleAction("Expandir", "Ocupa toda a janela da IDE", AllIcons.General.ExpandComponent) {
-                override fun getActionUpdateThread() = ActionUpdateThread.EDT
-                override fun isSelected(e: AnActionEvent) = ToolWindowManager.getInstance(project).isMaximized(toolWindow)
-                override fun setSelected(e: AnActionEvent, state: Boolean) =
-                    ToolWindowManager.getInstance(project).setMaximized(toolWindow, state)
-            },
-            object : DumbAwareToggleAction("Abrir em Janela", "Destaca o painel numa janela separada", AllIcons.Actions.MoveToWindow) {
-                override fun getActionUpdateThread() = ActionUpdateThread.EDT
-                override fun isSelected(e: AnActionEvent) = toolWindow.type == ToolWindowType.WINDOWED
-                override fun setSelected(e: AnActionEvent, state: Boolean) =
-                    toolWindow.setType(if (state) ToolWindowType.WINDOWED else ToolWindowType.DOCKED, null)
             },
         )
         val toolbar = ActionManager.getInstance().createActionToolbar("IronDome.DependenciesToolbar", actions, true)

@@ -16,7 +16,8 @@ enum class AgentProvider(val title: String, val executables: List<String>, val i
     ANTIGRAVITY(
         "Antigravity",
         listOf("agy"),
-        "Instale o Antigravity CLI e entre uma vez com agy, no terminal: o modo sem janela usa a credencial guardada.",
+        "Instale o Antigravity CLI (no PowerShell: irm https://antigravity.google/cli/install.ps1 | iex) e rode agy uma vez no " +
+            "terminal para entrar com a conta Google: o modo sem janela usa essa credencial.",
     ),
 }
 
@@ -87,6 +88,8 @@ object AgentCommand {
                 add("stream-json")
                 add("--print-timeout")
                 add("${timeoutMinutes}m")
+                // Sem janela não há quem aprove: como o --force do Cursor, só nas tarefas que alteram arquivos.
+                if (task.write) add("--dangerously-skip-permissions")
                 chosenModel?.let { addAll(listOf("--model", it)) }
             }
         }
@@ -190,6 +193,7 @@ object AgentEvents {
         if (text.isEmpty()) return null
         val json = runCatching { JsonParser.parseString(text) }.getOrNull()?.takeIf { it.isJsonObject }?.asJsonObject
             ?: return AgentEvent.Other(text)
+        if (json.has("event")) return antigravity(json, text)
         return when (json.str("type")) {
             "system" -> AgentEvent.Init(json.str("model"))
             "assistant" -> messageText(json)?.let(AgentEvent::Text)
@@ -202,6 +206,52 @@ object AgentEvents {
             else -> AgentEvent.Other(text)
         }
     }
+
+    /**
+     * O `stream-json` do Antigravity CLI: `init`, `step_update` (texto em `text_delta`, ferramentas em
+     * `tool_info`) e `result`, com a resposta em `response` e o desfecho em `status`. Cada ferramenta conta uma
+     * vez, quando o passo termina.
+     */
+    private fun antigravity(json: JsonObject, line: String): AgentEvent? = when (json.str("event")) {
+        "init" -> AgentEvent.Init(json.getAsJsonObject("init")?.str("model"))
+        "step_update" -> json.getAsJsonObject("step_update")?.let { step ->
+            when (step.str("step_type")) {
+                "agent_response" -> step.str("text_delta")?.takeIf { it.isNotBlank() }?.let(AgentEvent::Text)
+                "tool" -> step.takeIf { it.str("state") == "DONE" }?.let {
+                    val info = step.getAsJsonObject("tool_info")
+                    val name = step.str("tool_name") ?: info?.str("name") ?: "ferramenta"
+                    val path = info?.getAsJsonObject("parameters")?.entrySet()
+                        ?.firstOrNull { (key, value) -> value.isJsonPrimitive && PATH_KEY.containsMatchIn(key) }?.value?.asString
+                    AgentEvent.Tool(true, ANTIGRAVITY_TOOLS[name] ?: name, path)
+                }
+                else -> null
+            }
+        }
+        "result" -> json.getAsJsonObject("result")?.let { result ->
+            val failed = result.str("status") != "SUCCESS"
+            AgentEvent.Result(
+                result.str("response")?.takeIf { it.isNotBlank() } ?: result.str("error").orEmpty(),
+                failed,
+            )
+        }
+        "user" -> null
+        else -> AgentEvent.Other(line)
+    }
+
+    /** Os nomes das ferramentas do Antigravity nos tipos do registro e do Interceptador. */
+    private val ANTIGRAVITY_TOOLS = mapOf(
+        "view_file" to "read",
+        "write_to_file" to "write",
+        "replace_file_content" to "edit",
+        "multi_replace_file_content" to "multiEdit",
+        "delete_file" to "delete",
+        "grep_search" to "grep",
+        "find_by_name" to "glob",
+        "list_dir" to "ls",
+        "run_command" to "shell",
+    )
+
+    private val PATH_KEY = Regex("file|path", RegexOption.IGNORE_CASE)
 
     /**
      * Ferramentas como `readToolCall`, `writeToolCall` ou `editToolCall`, com o caminho em `args.path`; os

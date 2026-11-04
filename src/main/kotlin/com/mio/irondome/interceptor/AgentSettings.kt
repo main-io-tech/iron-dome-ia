@@ -186,6 +186,8 @@ object AgentSettings {
             )
             AgentProvider.ANTIGRAVITY -> listOfNotNull(
                 File(home, ".local/bin"),
+                localAppData?.let { File(it, "agy/bin") },
+                System.getenv("ProgramFiles")?.let { File(it, "Google/antigravity-cli") },
                 File(home, ".antigravity/bin"),
                 localAppData?.let { File(it, "Programs/Antigravity/bin") },
             )

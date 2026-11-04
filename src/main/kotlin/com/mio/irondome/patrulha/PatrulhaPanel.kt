@@ -160,7 +160,7 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
         val actions = DefaultActionGroup(
             action(
                 "Revisar Este PR",
-                "Faz o checkout do PR, se precisar (com o que não está commitado no stash), e entra no modo revisão do PR: os comentários feitos no editor vão para o PR, não para a IA",
+                "Faz o checkout do PR, se precisar (guardando no stash ou descartando o que não está commitado, à sua escolha), e entra no modo revisão do PR: os comentários feitos no editor vão para o PR, não para a IA",
                 IronDomeIcons.patrulha,
                 enabled = { selectedPr()?.pr != null }, text = {
                     val item = selectedPr()
@@ -191,7 +191,7 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
                     selectedPr()?.let { it.active && it.checkedOut } == true && runner.running == null && runner.available()
                 },
             ) { reviewWithAi() },
-            action("Enviar ao GitHub", "Envia os comentários não enviados deste PR: como rascunho, que só você vê, ou publicados", AllIcons.Actions.Upload,
+            action("Enviar ao GitHub", "Envia os comentários não enviados deste PR, como rascunho que só você vê ou publicados. Escolha quais enviar, quais deixar para depois e quais excluir", AllIcons.Actions.Upload,
                 enabled = { selectedPr()?.let { it.pr != null && it.drafts.isNotEmpty() } == true }) { send() },
             action(
                 "Publicar Rascunho",
@@ -660,7 +660,7 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
     }
 
     /**
-     * Já no head do PR, liga a revisão; senão, faz o checkout antes, guardando no stash o que não está commitado.
+     * Já no head do PR, liga a revisão; senão, faz o checkout antes, guardando no stash ou descartando o que não está commitado.
      * Com a revisão ligada e o código fora do head (commits novos no PR ou troca de branch), oferece atualizar.
      */
     private fun toggleReview() {
@@ -699,7 +699,7 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
     private fun enterPr(context: RepoContext, pr: PullRequest) {
         FileDocumentManager.getInstance().saveAllDocuments()
         background("Conferindo as alterações locais", { patrulha.localChanges(context) }) { changes ->
-            if (changes.files.isNotEmpty() && !confirmStash(pr, changes)) return@background
+            val local = if (changes.files.isEmpty()) LocalChangesChoice.NONE else chooseLocalChanges(pr, changes) ?: return@background
             val title = "Fazendo o checkout do PR #${pr.number}"
             val branch = PatrulhaService.branchName(pr.number)
             // Antes do checkout: a troca de branch que ele causa não pode encerrar a revisão de outro PR.
@@ -707,7 +707,7 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
             patrulha.setReviewRef(branch)
             val work = {
                 try {
-                    patrulha.enter(context, pr.number, stash = changes.files.isNotEmpty())
+                    patrulha.enter(context, pr.number, local)
                 } catch (e: Throwable) {
                     patrulha.setReviewRef(previousRef)
                     throw e
@@ -716,6 +716,7 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
             background(title, work) { result ->
                 startReview(pr.number, branch)
                 val stashNote = when {
+                    local == LocalChangesChoice.DISCARD -> "As alterações não commitadas foram descartadas."
                     result.stash.isEmpty() -> null
                     result.restorable -> "Suas alterações estão no stash \"${result.stashMessage}\" e voltam quando você encerrar a revisão."
                     else -> "Suas alterações estão no stash \"${result.stashMessage}\"; restaure pelo Git > Unstash Changes quando quiser."
@@ -731,26 +732,44 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
         }
     }
 
-    private fun confirmStash(pr: PullRequest, changes: LocalChanges): Boolean {
+    /** Stash ou descarte das alterações antes do checkout; nulo se o usuário cancelar. */
+    private fun chooseLocalChanges(pr: PullRequest, changes: LocalChanges): LocalChangesChoice? {
         val shown = changes.files.take(STASH_PREVIEW).joinToString("\n") { "  • $it" }
         val more = (changes.files.size - STASH_PREVIEW).takeIf { it > 0 }?.let { "\n  … e mais $it" }.orEmpty()
         val where = changes.branch?.let { "na branch $it" } ?: "no checkout atual"
+        val count = plural(changes.files.size, "alteração não commitada", "alterações não commitadas")
         val back = if (patrulha.returnPoint() == null) {
-            "Ao encerrar a revisão, a Patrulha oferece voltar para ${changes.branch ?: "o commit de agora"} e devolver as alterações."
+            "No stash, ao encerrar a revisão a Patrulha oferece voltar para ${changes.branch ?: "o commit de agora"} e devolver as alterações."
         } else {
             "Você já veio de outra branch para revisar um PR: este stash não volta sozinho, restaure pelo Git > Unstash Changes."
         }
-        return Messages.showOkCancelDialog(
+        val choice = Messages.showYesNoCancelDialog(
             project,
-            "Há ${plural(changes.files.size, "alteração não commitada", "alterações não commitadas")} $where:\n\n$shown$more\n\n" +
-                "Para trazer o código do PR #${pr.number} para a branch ${PatrulhaService.branchName(pr.number)}, elas vão para o stash " +
-                "(as revisões em ${ReviewCommentService.REVIEW_DIR}/ ficam onde estão).\n\n$back",
+            "Há $count $where:\n\n$shown$more\n\n" +
+                "Para trazer o código do PR #${pr.number} para a branch ${PatrulhaService.branchName(pr.number)}, guarde as alterações " +
+                "no stash ou descarte-as (as revisões em ${ReviewCommentService.REVIEW_DIR}/ e a pasta .idea ficam onde estão).\n\n$back",
             "Iniciar a revisão do PR #${pr.number}",
             "Guardar no Stash e Revisar",
+            "Descartar e Revisar",
             "Cancelar",
             Messages.getWarningIcon(),
-        ) == Messages.OK
+        )
+        return when (choice) {
+            Messages.YES -> LocalChangesChoice.STASH
+            Messages.NO -> LocalChangesChoice.DISCARD.takeIf { confirmDiscard(count) }
+            else -> null
+        }
     }
+
+    private fun confirmDiscard(count: String): Boolean = Messages.showOkCancelDialog(
+        project,
+        "Descartar $count? Os arquivos voltam como estão no último commit e os novos são apagados, sem stash: " +
+            "pelo Git não dá para desfazer (só pelo Local History da IDE).",
+        "Descartar as alterações",
+        "Descartar",
+        "Cancelar",
+        Messages.getWarningIcon(),
+    ) == Messages.OK
 
     /** Desliga a revisão e, se a Patrulha trouxe o usuário para o PR, oferece voltar à branch de antes com o stash. */
     private fun endReview(number: Int) {
@@ -1077,18 +1096,34 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
         background("Lendo os arquivos do PR #${pr.number}", { ReviewPlan.plan(drafts, patrulha.client(context).files(context.repo, pr.number)) }) { planned ->
             val dialog = SendReviewDialog(project, pr, planned, warning, isOwn(pr))
             if (!dialog.showAndGet()) return@background
+            val toSend = dialog.toSend
+            val toDelete = dialog.toDelete
+            val kept = drafts.size - toSend.size - toDelete.size
+            radar.remove(toDelete)
+            val leftover = listOfNotNull(
+                toDelete.takeIf { it.isNotEmpty() }?.let { plural(it.size, "comentário excluído", "comentários excluídos") },
+                kept.takeIf { it > 0 }?.let { plural(it, "comentário ficou", "comentários ficaram") + " para depois" },
+            ).joinToString(" e ").takeIf { it.isNotEmpty() }?.let { "${it.replaceFirstChar(Char::uppercase)}." }
+            if (toSend.isEmpty()) {
+                notify("PR #${pr.number}: nada enviado", leftover.orEmpty(), NotificationType.INFORMATION)
+                rebuild()
+                return@background
+            }
             val event = dialog.event
             val general = dialog.generalText
             val asDraft = dialog.asDraft
             val title = if (asDraft) "Enviando o rascunho ao PR #${pr.number}" else "Enviando os pedidos ao PR #${pr.number}"
-            background(title, { patrulha.send(context, pr, drafts, general, event, asDraft) }) { result ->
-                ReviewFeedback.getInstance(project).accepted(drafts)
-                radar.remove(drafts)
+            background(title, { patrulha.send(context, pr, toSend, general, event, asDraft) }) { result ->
+                ReviewFeedback.getInstance(project).accepted(toSend)
+                radar.remove(toSend)
                 notify(
                     if (asDraft) "${plural(result.requests.size, "rascunho enviado", "rascunhos enviados")} ao PR #${pr.number}"
                     else "${plural(result.requests.size, "pedido publicado", "pedidos publicados")} no PR #${pr.number}",
-                    if (asDraft) "Só você vê no GitHub. Edite ou exclua aqui, e use Publicar Rascunho quando estiver pronto."
-                    else "Ficaram em iron-dome/pull-requests/${PullRequestRecord.fileName(pr.number)} para verificar depois.",
+                    listOfNotNull(
+                        if (asDraft) "Só você vê no GitHub. Edite ou exclua aqui, e use Publicar Rascunho quando estiver pronto."
+                        else "Ficaram em iron-dome/pull-requests/${PullRequestRecord.fileName(pr.number)} para verificar depois.",
+                        leftover,
+                    ).joinToString(" "),
                     NotificationType.INFORMATION,
                     NotificationAction.createSimpleExpiring("Abrir no GitHub") { BrowserUtil.browse(result.reviewUrl.ifBlank { pr.url }) },
                     NotificationAction.createSimple("Abrir .md") { openRecord(pr.number) },

@@ -4,6 +4,7 @@ import com.intellij.icons.AllIcons
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.ui.TitledSeparator
+import com.intellij.ui.components.ActionLink
 import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBRadioButton
@@ -16,13 +17,25 @@ import com.mio.irondome.base.NoticeBox
 import com.mio.irondome.base.Pill
 import com.mio.irondome.base.Tone
 import com.mio.irondome.radar.CommentTarget
+import com.mio.irondome.radar.ReviewComment
+import java.awt.BorderLayout
 import java.awt.FlowLayout
 import javax.swing.BoxLayout
 import javax.swing.ButtonGroup
 import javax.swing.JComponent
 import javax.swing.JPanel
 
-/** Confirma o envio dos rascunhos como uma revisão do PR, mostrando onde cada um vai entrar. */
+/** O que fazer com cada comentário no envio: enviar agora, guardar para outro envio ou excluir. */
+internal enum class SendChoice(val label: String) {
+    SEND("Enviar"),
+    LATER("Depois"),
+    DELETE("Excluir"),
+}
+
+/**
+ * Confirma o envio dos rascunhos como uma revisão do PR, mostrando onde cada um vai entrar. Cada comentário pode
+ * ser enviado agora, ficar para depois ou ser excluído.
+ */
 internal class SendReviewDialog(
     project: Project,
     private val pr: PullRequest,
@@ -58,6 +71,13 @@ internal class SendReviewDialog(
 
     val generalText: String get() = general.text
 
+    private val choices = planned.map { ChoiceButtons(it) }
+    private val summary = JBLabel()
+
+    val toSend: List<ReviewComment> get() = chosen(SendChoice.SEND)
+
+    val toDelete: List<ReviewComment> get() = chosen(SendChoice.DELETE)
+
     init {
         title = "Enviar Pedidos ao PR #${pr.number}"
         ButtonGroup().apply {
@@ -69,24 +89,78 @@ internal class SendReviewDialog(
         updateMode()
     }
 
-    /** No rascunho, o tipo da revisão é escolhido ao publicar. */
+    private fun chosen(choice: SendChoice) = choices.filter { it.choice == choice }.map { it.request.comment }
+
+    /** No rascunho, o tipo da revisão é escolhido ao publicar; sem nada a enviar, a revisão não vale. */
     private fun updateMode() {
-        approve.isEnabled = !asDraft && !ownPr
-        requestChanges.isEnabled = !asDraft && !ownPr
-        commentOnly.isEnabled = !asDraft
-        setOKButtonText(if (asDraft) "Enviar Rascunho" else "Publicar no GitHub")
+        val sending = toSend.size
+        val deleting = toDelete.size
+        val later = choices.size - sending - deleting
+        asDraftBox.isEnabled = sending > 0
+        general.isEnabled = sending > 0
+        approve.isEnabled = sending > 0 && !asDraft && !ownPr
+        requestChanges.isEnabled = sending > 0 && !asDraft && !ownPr
+        commentOnly.isEnabled = sending > 0 && !asDraft
+        summary.text = listOfNotNull(
+            "$sending para enviar",
+            "$later para depois".takeIf { later > 0 },
+            "$deleting para excluir".takeIf { deleting > 0 },
+        ).joinToString(" · ")
+        val sendText = if (asDraft) "Enviar Rascunho" else "Publicar no GitHub"
+        setOKButtonText(
+            when {
+                sending == 0 && deleting == 0 -> sendText
+                sending == 0 -> "Excluir $deleting"
+                deleting == 0 -> "$sendText ($sending)"
+                else -> "$sendText ($sending) e Excluir $deleting"
+            },
+        )
+        isOKActionEnabled = sending + deleting > 0
+    }
+
+    private fun chooseAll(choice: SendChoice) {
+        choices.forEach { it.select(choice) }
+        updateMode()
+    }
+
+    /** Enviar, Depois e Excluir de um comentário. */
+    private inner class ChoiceButtons(val request: PlannedRequest) {
+        private val buttons = SendChoice.entries.associateWith { choice ->
+            JBRadioButton(choice.label, choice == SendChoice.SEND).apply { addActionListener { updateMode() } }
+        }
+        val panel = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(4), 0)).apply {
+            val group = ButtonGroup()
+            buttons.values.forEach {
+                group.add(it)
+                add(it)
+            }
+        }
+
+        val choice: SendChoice get() = buttons.entries.first { it.value.isSelected }.key
+
+        fun select(choice: SendChoice) {
+            buttons.getValue(choice).isSelected = true
+        }
     }
 
     override fun getPreferredFocusedComponent(): JComponent = general
 
     override fun createCenterPanel(): JComponent {
         val list = JPanel().apply { layout = BoxLayout(this, BoxLayout.Y_AXIS) }
-        planned.forEach { list.add(row(it)) }
+        choices.forEach { list.add(row(it)) }
+        val bulk = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(10), 0)).apply {
+            add(summary.apply { font = font.deriveFont(java.awt.Font.BOLD) })
+            add(ActionLink("Enviar todos") { chooseAll(SendChoice.SEND) })
+            add(ActionLink("Todos para depois") { chooseAll(SendChoice.LATER) })
+            add(ActionLink("Excluir todos") { chooseAll(SendChoice.DELETE) })
+        }
         val builder = FormBuilder.createFormBuilder()
             .addComponent(JBLabel("<html><b>#${pr.number}</b> ${escape(pr.title)}<br>${escape("@${pr.author} · ${pr.headRef} → ${pr.baseRef}")}</html>"))
         warning?.let { builder.addComponent(NoticeBox(AllIcons.General.Warning, Tone.YELLOW).apply { text = it }) }
         return builder
             .addComponent(TitledSeparator("Pedidos (${planned.size})"))
+            .addComponent(bulk)
+            .addComponent(comment("Depois guarda o comentário para outro envio. Excluir apaga o comentário, que ainda não foi enviado ao GitHub."))
             .addComponent(JBScrollPane(list).apply {
                 border = JBUI.Borders.empty()
                 preferredSize = JBUI.size(640, minOf(60 + planned.size * 52, 300))
@@ -109,7 +183,8 @@ internal class SendReviewDialog(
             .panel
     }
 
-    private fun row(request: PlannedRequest): JComponent {
+    private fun row(choice: ChoiceButtons): JComponent {
+        val request = choice.request
         val comment = request.comment
         val where = when (comment.target) {
             CommentTarget.LINES -> if (comment.startLine == comment.endLine) "linha ${comment.startLine + 1}" else "linhas ${comment.startLine + 1}–${comment.endLine + 1}"
@@ -136,11 +211,16 @@ internal class SendReviewDialog(
                 )
             }
         }
-        return JPanel().apply {
+        val info = JPanel().apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
-            border = JBUI.Borders.emptyBottom(6)
+            isOpaque = false
             add(header)
             add(comment(comment.text.trim().lines().first().take(140)).apply { border = JBUI.Borders.emptyLeft(8) })
+        }
+        return JPanel(BorderLayout()).apply {
+            border = JBUI.Borders.emptyBottom(6)
+            add(info, BorderLayout.CENTER)
+            add(choice.panel, BorderLayout.EAST)
         }
     }
 

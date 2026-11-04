@@ -1,4 +1,6 @@
+import org.jetbrains.intellij.platform.gradle.IntelliJPlatformType
 import org.jetbrains.intellij.platform.gradle.TestFrameworkType
+import org.jetbrains.intellij.platform.gradle.tasks.VerifyPluginTask
 
 plugins {
     id("org.jetbrains.kotlin.jvm") version "2.4.21"
@@ -32,6 +34,7 @@ dependencies {
         bundledPlugin("org.jetbrains.plugins.terminal")
         testFramework(TestFrameworkType.Platform)
         testFramework(TestFrameworkType.Plugin.Java)
+        pluginVerifier()
     }
 }
 
@@ -43,6 +46,15 @@ intellijPlatform {
         }
     }
     buildSearchableOptions = false
+    // A partir da 2025.3 só existe a IntelliJ IDEA unificada: o verifyPlugin confere as APIs nas versões novas.
+    pluginVerification {
+        failureLevel = listOf(VerifyPluginTask.FailureLevel.COMPATIBILITY_PROBLEMS, VerifyPluginTask.FailureLevel.INVALID_PLUGIN)
+        ides {
+            providers.gradleProperty("verifierIdeVersions").get().split(',').map(String::trim).forEach {
+                create(IntelliJPlatformType.IntellijIdea, it)
+            }
+        }
+    }
 }
 
 tasks.named("buildPlugin") {

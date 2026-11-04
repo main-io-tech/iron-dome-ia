@@ -12,6 +12,7 @@ import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
 import com.mio.irondome.base.IronDomeIcons
 import com.mio.irondome.base.ReviewToolWindowFactory
+import com.mio.irondome.base.rootPath
 import com.mio.irondome.radar.ReviewComment
 import com.mio.irondome.radar.ReviewCommentService
 import java.awt.datatransfer.StringSelection
@@ -63,7 +64,7 @@ class FireWithAiAction : DumbAwareAction() {
             if (AgentRunner.getInstance(project).refusesWrite()) return
             val service = project.service<ReviewCommentService>()
             val written = service.exportAll().firstOrNull() ?: return
-            val relative = relativeTo(project.basePath, written)
+            val relative = relativeTo(project.rootPath(), written)
             val runner = AgentRunner.getInstance(project)
             runner.run(
                 AgentTask(
@@ -90,7 +91,7 @@ class FireWithAiAction : DumbAwareAction() {
             if (targets.isEmpty() || AgentRunner.getInstance(project).refusesWrite()) return
             val service = project.service<ReviewCommentService>()
             val written = service.exportPaths(targets.map { it.filePath }) ?: return
-            val relative = relativeTo(project.basePath, written)
+            val relative = relativeTo(project.rootPath(), written)
             val ids = targets.joinToString(", ") { it.id }
             val what = if (targets.size == 1) "o alvo ${targets.single().id}" else "os alvos $ids"
             val prompt = "Execute somente $what da ordem de interceptação em $relative, seguindo as instruções do arquivo: corrija o " +

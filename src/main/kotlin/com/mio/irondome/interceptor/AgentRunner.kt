@@ -18,6 +18,7 @@ import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VfsUtil
 import com.intellij.util.messages.Topic
 import com.mio.irondome.base.IronDomeIcons
+import com.mio.irondome.base.rootPath
 import com.mio.irondome.radar.ReviewCommentService
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
@@ -132,7 +133,7 @@ class AgentRunner(private val project: Project) {
             notify("A IA já está trabalhando", "Espere ${running?.title} terminar ou cancele na barra de progresso da aba.", NotificationType.WARNING)
             return
         }
-        val root = project.basePath ?: return
+        val root = project.rootPath() ?: return
         val terminal = if (task.automatic) null else when (chooseMode(task)) {
             null -> return
             AgentRunMode.TERMINAL -> AgentTerminal.available() ?: run {
@@ -330,10 +331,14 @@ class AgentRunner(private val project: Project) {
             reader.join(2_000)
             errors.join(1_000)
             if (!cancelled && error == null && process.exitValue() != 0) {
-                error = synchronized(stderr) { stderr.toString() }.lines().lastOrNull { it.isNotBlank() }
-                    ?: "O ${provider.title} terminou com o código ${process.exitValue()}."
+                error = AgentVerifier.explain(
+                    provider,
+                    answer?.takeIf { failed && it.isNotBlank() }
+                        ?: synchronized(stderr) { stderr.toString() }.lines().lastOrNull { it.isNotBlank() }
+                        ?: "O ${provider.title} terminou com o código ${process.exitValue()}.",
+                )
             }
-            if (!cancelled && error == null && failed) error = answer?.takeIf { it.isNotBlank() } ?: "A IA informou um erro."
+            if (!cancelled && error == null && failed) error = AgentVerifier.explain(provider, answer?.takeIf { it.isNotBlank() } ?: "A IA informou um erro.")
         } catch (e: Exception) {
             LOG.warn("Falha ao rodar ${command.firstOrNull()}", e)
             error = "Não foi possível rodar ${launch.description}: ${e.message ?: e.javaClass.simpleName}"
@@ -347,7 +352,7 @@ class AgentRunner(private val project: Project) {
 
     /** Os arquivos que a IA mexeu aparecem atualizados no editor, e os `.md` de `iron-dome/` disparam as abas. */
     private fun refresh(result: AgentResult) {
-        val base = project.basePath?.let { LocalFileSystem.getInstance().refreshAndFindFileByPath(it) } ?: return
+        val base = project.rootPath()?.let { LocalFileSystem.getInstance().refreshAndFindFileByPath(it) } ?: return
         VfsUtil.markDirtyAndRefresh(true, true, true, base)
     }
 
@@ -387,7 +392,7 @@ class AgentRunner(private val project: Project) {
         return file
     }
 
-    fun transcriptsDir(): Path? = project.basePath?.let { Path.of(it, ReviewCommentService.REVIEW_DIR, DIR) }
+    fun transcriptsDir(): Path? = project.rootPath()?.let { Path.of(it, ReviewCommentService.REVIEW_DIR, DIR) }
 
     /** Os registros das execuções, do mais recente para o mais antigo. */
     fun transcripts(): List<Path> {

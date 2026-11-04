@@ -15,7 +15,6 @@ import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.startup.ProjectActivity
 import com.intellij.openapi.ui.DialogWrapper
-import com.intellij.openapi.ui.Messages
 import com.intellij.ui.TitledSeparator
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
@@ -55,16 +54,17 @@ class CheckCompatibilityAction : DumbAwareAction() {
 }
 
 /**
- * Confere ao abrir o projeto. Se a versão do IntelliJ não comporta algum mecanismo, pergunta se o usuário
- * atualiza a IDE ou trabalha limitado; os demais problemas viram um aviso, até ele pedir para não avisar mais.
+ * Confere ao abrir o projeto e só informa: o que esta versão do IntelliJ não comporta fica desligado (avisado
+ * uma vez por versão da IDE), e os demais problemas viram um aviso, até o usuário pedir para não avisar mais.
  */
 class CompatibilityStartup : ProjectActivity {
 
     override suspend fun execute(project: Project) {
         val env = Compatibility.environment(project)
         val limited = Compatibility.limited(env)
-        if (limited.isNotEmpty() && !IdeSupport.limitedAccepted) {
-            ApplicationManager.getApplication().invokeLater({ askUpdateOrLimited(project, env) }, project.disposed)
+        if (limited.isNotEmpty() && !IdeSupport.limitedNotified) {
+            IdeSupport.limitedNotified = true
+            notify(project, "Iron Dome IA: ${limited.joinToString { it.title }} desligado nesta versão", escapeHtml(Compatibility.limitedMessage(env)))
         }
         val problems = Compatibility.problems(Compatibility.evaluate(env)).filter { it.mechanism !in limited }
         if (problems.isEmpty()) return
@@ -72,51 +72,25 @@ class CompatibilityStartup : ProjectActivity {
         if (PropertiesComponent.getInstance().getValue(DISMISSED_KEY) == signature) return
         val title = if (problems.size == 1) "Iron Dome IA: ${problems.single().mechanism.title} com problema"
         else "Iron Dome IA: ${problems.size} mecanismos com problema"
+        notify(
+            project, title, problems.joinToString("<br>") { "<b>${it.mechanism.title}:</b> ${escapeHtml(it.detail)}" },
+            NotificationAction.createSimpleExpiring("Não Avisar de Novo") { PropertiesComponent.getInstance().setValue(DISMISSED_KEY, signature) },
+        )
+    }
+
+    private fun notify(project: Project, title: String, content: String, vararg extra: NotificationAction) {
         NotificationGroupManager.getInstance().getNotificationGroup("Iron Dome IA")
-            .createNotification(title, problems.joinToString("<br>") { "<b>${it.mechanism.title}:</b> ${escapeHtml(it.detail)}" }, NotificationType.WARNING)
+            .createNotification(title, content, NotificationType.INFORMATION)
             .setIcon(IronDomeIcons.caixaPreta)
             .addAction(NotificationAction.createSimpleExpiring("Ver Compatibilidade") { CompatibilityDialog.show(project) })
             .addAction(NotificationAction.createSimpleExpiring("Ver Logs de Erro") { ErrorLogDialog.show(project) })
-            .addAction(NotificationAction.createSimpleExpiring("Não Avisar de Novo") {
-                PropertiesComponent.getInstance().setValue(DISMISSED_KEY, signature)
-            })
+            .apply { extra.forEach(::addAction) }
             .notify(project)
-    }
-
-    /** Atualizar não grava a escolha: se a IDE continuar a mesma, pergunta de novo na próxima vez. */
-    private fun askUpdateOrLimited(project: Project, env: Environment) {
-        val choice = Messages.showDialog(
-            project,
-            Compatibility.limitedMessage(env),
-            "Iron Dome IA: atualize o IntelliJ",
-            arrayOf(UPDATE, LIMITED),
-            0,
-            Messages.getWarningIcon(),
-        )
-        when (choice) {
-            0 -> IdeSupport.openUpdate()
-            1 -> {
-                IdeSupport.limitedAccepted = true
-                val titles = Compatibility.limited(env).joinToString { it.title }
-                NotificationGroupManager.getInstance().getNotificationGroup("Iron Dome IA")
-                    .createNotification(
-                        "Iron Dome IA no modo limitado",
-                        "Desligados nesta versão do IntelliJ: ${escapeHtml(titles)}. O restante funciona normalmente.",
-                        NotificationType.INFORMATION,
-                    )
-                    .setIcon(IronDomeIcons.caixaPreta)
-                    .addAction(NotificationAction.createSimpleExpiring(UPDATE) { IdeSupport.openUpdate() })
-                    .addAction(NotificationAction.createSimpleExpiring("Ver Compatibilidade") { CompatibilityDialog.show(project) })
-                    .notify(project)
-            }
-        }
     }
 
     private companion object {
         /** Guarda os problemas dispensados: um problema diferente volta a avisar. */
         const val DISMISSED_KEY = "IronDome.Compatibility.Dismissed"
-        const val UPDATE = "Atualizar o IntelliJ"
-        const val LIMITED = "Trabalhar Limitado"
     }
 }
 
@@ -135,13 +109,7 @@ internal class CompatibilityDialog private constructor(
 
     override fun createActions(): Array<Action> = arrayOf(okAction)
 
-    override fun createLeftSideActions(): Array<Action> = listOfNotNull(
-        object : AbstractAction("Atualizar o IntelliJ") {
-            override fun actionPerformed(e: ActionEvent) {
-                close(OK_EXIT_CODE)
-                IdeSupport.openUpdate()
-            }
-        }.takeIf { env.missingApis.isNotEmpty() || env.ideVersionFailures.isNotEmpty() || env.olderThanTested },
+    override fun createLeftSideActions(): Array<Action> = listOf(
         object : AbstractAction("Copiar Diagnóstico") {
             override fun actionPerformed(e: ActionEvent) {
                 CopyPasteManager.getInstance().setContents(StringSelection(Compatibility.markdown(env, checks, errors)))
@@ -169,8 +137,8 @@ internal class CompatibilityDialog private constructor(
             .addComponent(comment("Plugin ${env.pluginVersion} · ${env.ide} · ${env.system}"))
             .addComponent(
                 comment(
-                    "Testado com o IntelliJ ${IdeSupport.TESTED_VERSION} (build ${IdeSupport.TESTED_BUILD}) ou mais novo" +
-                        if (env.olderThanTested) ": esta IDE é mais antiga, atualize se algo não funcionar." else ".",
+                    "Testado com o IntelliJ ${IdeSupport.TESTED_VERSION} (build ${IdeSupport.TESTED_BUILD})" +
+                        if (env.olderThanTested) ": esta IDE é mais antiga que a testada." else ".",
                 ),
             )
             .addComponent(TitledSeparator("Mecanismos"))

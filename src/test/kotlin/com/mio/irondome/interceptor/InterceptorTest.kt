@@ -101,6 +101,40 @@ class InterceptorTest {
 
         assertEquals(listOf("agy", "-p", "Revise o PR seguindo as instrucoes responda", "--output-format", "stream-json", "--print-timeout", "15m"), command.take(7))
         assertTrue(command.containsAll(listOf("--model", "gemini-3-pro")))
+        assertFalse("só leitura não aprova nada sozinho", "--dangerously-skip-permissions" in command)
+        assertTrue(
+            "sem janela, quem altera arquivos precisa das permissões aprovadas, como o --force do Cursor",
+            "--dangerously-skip-permissions" in AgentCommand.build(AgentProvider.ANTIGRAVITY, "agy", readOnly.copy(write = true), "C:/proj", null, 15),
+        )
+    }
+
+    /** Linhas do stream-json do Antigravity CLI, da documentação do modo headless. */
+    @Test
+    fun antigravityStreamEventsBecomeProgressFilesAndTheFinalAnswer() {
+        val init = """{"event":"init","conversation_id":"c3b6","init":{"cwd":"/home/user/project","tools":["run_command"],"permission_mode":"request-review","model":"gemini-3.8-flash-medium"}}"""
+        val input = """{"event":"step_update","step_update":{"conversation_id":"c3b6","step_index":0,"state":"DONE","step_type":"user_input"}}"""
+        val text = """{"event":"step_update","step_update":{"conversation_id":"c3b6","step_index":3,"state":"ACTIVE","step_type":"agent_response","text_delta":"Git rebase reescreve"}}"""
+        val tool = """{"event":"step_update","step_update":{"conversation_id":"edb1","step_index":4,"state":"DONE","step_type":"tool","tool_name":"write_to_file",""" +
+            """"duration_seconds":0.07,"tool_info":{"name":"write_to_file","parameters":{"TargetFile":"src/Frete.kt","CodeContent":"val frete = 10"},"output":"ok"}}}"""
+        val toolRunning = """{"event":"step_update","step_update":{"step_index":4,"state":"ACTIVE","step_type":"tool","tool_name":"write_to_file"}}"""
+        val result = """{"event":"result","result":{"conversation_id":"c3b6","status":"SUCCESS","response":"OK\n","duration_seconds":6.88,"num_turns":1}}"""
+        val failure = """{"conversation_id":"","status":"ERROR","response":"","error":"invalid model selection","duration_seconds":0}"""
+
+        assertEquals(AgentEvent.Init("gemini-3.8-flash-medium"), AgentEvents.parse(init))
+        assertNull(AgentEvents.parse(input))
+        assertEquals(AgentEvent.Text("Git rebase reescreve"), AgentEvents.parse(text))
+        assertEquals(AgentEvent.Tool(true, "write", "src/Frete.kt"), AgentEvents.parse(tool))
+        assertNull("a ferramenta conta uma vez, quando termina", AgentEvents.parse(toolRunning))
+        assertEquals(AgentEvent.Result("OK\n", false), AgentEvents.parse(result))
+        assertEquals(AgentEvent.Result("invalid model selection", true), AgentEvents.parse("""{"event":"result","result":$failure}"""))
+    }
+
+    @Test
+    fun aMissingLoginExplainsHowToSignIn() {
+        val antigravity = AgentVerifier.explain(AgentProvider.ANTIGRAVITY, "Error: authentication required")
+        assertTrue(antigravity, antigravity.contains("rode agy uma vez no terminal e entre com a conta Google"))
+        assertTrue(AgentVerifier.explain(AgentProvider.CURSOR, "Not logged in").contains("agent login"))
+        assertEquals("model not found", AgentVerifier.explain(AgentProvider.ANTIGRAVITY, "model not found"))
     }
 
     @Test
