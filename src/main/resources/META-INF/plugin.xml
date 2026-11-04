@@ -35,6 +35,12 @@
       <li><b>🛰️ Patrulha:</b> revise os pull requests abertos no GitHub comentando o código no modo revisão do PR, envie
         os pedidos de alteração como revisão e confira depois, no código e nas conversas do PR, se
         cada um foi atendido.</li>
+      <li><b>🧠 Defesa Automática:</b> intercepta o risco sem ninguém pedir. Confere cada commit (alvos pendentes,
+        classe de risco sem teste alterado, arquivos que costumam mudar juntos), calcula o raio da classe ao salvar
+        (status bar e acima da classe), sugere ou roda os testes do raio, vigia os PRs (comentários novos, CI quebrada,
+        revisão pedida) e, se ligada, pede à IA a análise de impacto quando as alterações param, com triagem, orçamento
+        diário e intervalo mínimo. O risco usa o histórico do git, a IA recebe o dossiê de cada classe e aprende com o
+        que o time aceita e descarta.</li>
     </ul>
     ]]></description>
 
@@ -66,6 +72,10 @@
       <li>Patrulha: revisa os pull requests abertos no GitHub no modo revisão do PR, envia os comentários como revisão com
         a conta do IntelliJ e guarda os pedidos em iron-dome/pull-requests para verificar no código e nas
         conversas do PR se foram atendidos.</li>
+      <li>Defesa Automática: defesa no commit, Status da Defesa na status bar, raio passivo ao salvar com CodeVision,
+        testes do raio no Escudo, Patrulha de plantão, impacto da IA em segundo plano, risco com histórico do git,
+        dossiê das classes, aprendizado com o feedback do time e aviso de comentários no mesmo trecho com síntese
+        pela IA. Cada defesa liga e desliga em Settings > Tools > Iron Dome IA > Defesa Automática.</li>
     </ul>
     ]]></change-notes>
 
@@ -100,6 +110,11 @@
         <notificationGroup id="Iron Dome IA" displayType="BALLOON"/>
         <notificationGroup id="Iron Dome IA: Gravação" displayType="STICKY_BALLOON"/>
         <postStartupActivity implementation="com.mio.irondome.caixapreta.CompatibilityStartup"/>
+        <postStartupActivity implementation="com.mio.irondome.defesa.DefenseStartup"/>
+        <checkinHandlerFactory implementation="com.mio.irondome.defesa.CommitGuardFactory"/>
+        <statusBarWidgetFactory id="IronDome.DefenseStatus"
+                                implementation="com.mio.irondome.defesa.DefenseStatusWidgetFactory"
+                                order="first"/>
         <errorHandler implementation="com.mio.irondome.caixapreta.IronDomeErrorSubmitter"/>
         <applicationConfigurable parentId="tools"
                                  instance="com.mio.irondome.caixapreta.LinearConfigurable"
@@ -109,6 +124,10 @@
                                  instance="com.mio.irondome.interceptor.AgentConfigurable"
                                  id="com.mio.irondome.settings.agent"
                                  displayName="Interceptador (IA)"/>
+        <applicationConfigurable parentId="com.mio.irondome.settings"
+                                 instance="com.mio.irondome.defesa.DefenseConfigurable"
+                                 id="com.mio.irondome.settings.defense"
+                                 displayName="Defesa Automática"/>
         <toolWindow id="Iron Dome IA"
                     anchor="right"
                     icon="/icons/toolWindow.svg"

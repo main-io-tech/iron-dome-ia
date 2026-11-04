@@ -3,6 +3,17 @@
         <toolWindowTab implementation="com.mio.irondome.impacto.DependencyTab"/>
     </extensions>
 
+    <extensions defaultExtensionNs="com.intellij">
+        <codeInsight.daemonBoundCodeVisionProvider implementation="com.mio.irondome.impacto.ImpactCodeVisionProvider"/>
+        <config.codeVisionGroupSettingProvider implementation="com.mio.irondome.impacto.ImpactCodeVisionSettings"/>
+        <postStartupActivity implementation="com.mio.irondome.impacto.BackgroundImpactStartup"/>
+    </extensions>
+
+    <projectListeners>
+        <listener class="com.mio.irondome.impacto.ImpactRadarListener"
+                  topic="com.intellij.openapi.vfs.newvfs.BulkFileListener"/>
+    </projectListeners>
+
     <actions>
         <action id="IronDome.DependencyDiagram"
                 class="com.mio.irondome.impacto.ShowDependencyDiagramAction"
@@ -15,5 +26,10 @@
             <add-to-group group-id="StructureViewPopupMenu" anchor="last"/>
             <add-to-group group-id="NavbarPopupMenu" anchor="last"/>
         </action>
+        <action id="IronDome.BackgroundImpactNow"
+                class="com.mio.irondome.impacto.BackgroundImpactNowAction"
+                text="Iron Dome IA: Analisar Impacto das Alterações com IA Agora"
+                description="A triagem confere o diff e, valendo, a IA analisa só para ler o impacto das alterações sem commit"
+                icon="/icons/ia.svg"/>
     </actions>
 </idea-plugin>

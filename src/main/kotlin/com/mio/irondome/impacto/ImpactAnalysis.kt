@@ -33,7 +33,7 @@ object ImpactAnalysis {
     /**
      * [comments] e [changes] por classe do diagrama; [diff] é o `git diff` das classes alteradas, que pode vir
      * vazio (sem git ou arquivos novos). [outside] são os comentários pendentes em classes fora do diagrama, e
-     * [pullRequest], o PR em revisão.
+     * [pullRequest], o PR em revisão; [dossier], o histórico e as decisões das classes alteradas ou comentadas.
      */
     fun instructions(
         graph: DependencyGraph,
@@ -42,6 +42,7 @@ object ImpactAnalysis {
         diff: String,
         outside: List<ImpactComment> = emptyList(),
         pullRequest: ReviewedPullRequest? = null,
+        dossier: String = "",
     ): String = buildString {
         val names = graph.nodes.associate { it.qualifiedName to it.name }
         val inPullRequest = pullRequest?.files.orEmpty().associateBy { it.path }
@@ -134,6 +135,10 @@ object ImpactAnalysis {
             budget -= lines.size.coerceAtMost(budget)
         }
         if (pullRequest != null) appendPullRequest(pullRequest, graph, budget)
+        if (dossier.isNotBlank()) {
+            appendLine()
+            appendLine(dossier.trimEnd())
+        }
     }
 
     private fun StringBuilder.appendComment(comment: ImpactComment) {

@@ -51,6 +51,10 @@ class ReviewComment(
      */
     var suggestion: String = "",
     var origin: CommentOrigin = CommentOrigin.RADAR,
+    /** Rascunho proposto pela IA na Patrulha: o que o time faz com ele ensina o pedido seguinte. */
+    var fromAi: Boolean = false,
+    /** O texto como a IA escreveu, para medir o que o time mudou antes de enviar. */
+    var aiText: String = "",
 ) {
     /** O comentário como foi gravado no `.md`, para regravá-lo igual quando outro arquivo é salvo. */
     fun asExported(): ReviewComment? = exported?.let {

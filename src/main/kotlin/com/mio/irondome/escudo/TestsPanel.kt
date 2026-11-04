@@ -51,6 +51,7 @@ import com.mio.irondome.base.Stat
 import com.mio.irondome.base.SummaryHeader
 import com.mio.irondome.base.Tone
 import com.mio.irondome.base.plural
+import com.mio.irondome.defesa.DefenseStatus
 import com.intellij.ui.components.panels.VerticalLayout
 import com.mio.irondome.interceptor.AgentProgressPanel
 import com.mio.irondome.interceptor.AgentRunner
@@ -101,6 +102,10 @@ class TestsPanel(private val project: Project) : SimpleToolWindowPanel(true, tru
     private var notStarted = false
     private var results: List<TestNode> = emptyList()
     private var onlyFailures = false
+    /** O que a execução atual cobre, como "raio de Frete"; nulo para todos os testes. */
+    private var runScope: String? = null
+    /** A execução cujo resultado já foi para a status bar da defesa. */
+    private var reported: ExecutionEnvironment? = null
     /** Nós com falha já abertos sozinhos uma vez: se o usuário os recolher, ficam recolhidos. */
     private val autoExpanded = mutableSetOf<String>()
 
@@ -242,12 +247,26 @@ class TestsPanel(private val project: Project) : SimpleToolWindowPanel(true, tru
 
     override fun dispose() = Unit
 
-    private fun runAll() {
-        val configuration = JUnitConfiguration(RUN_NAME, project).apply {
-            persistentData.TEST_OBJECT = JUnitConfiguration.TEST_PACKAGE
-            persistentData.PACKAGE_NAME = ""
-            persistentData.scope = TestSearchScope.WHOLE_PROJECT
+    private fun runAll() = execute(RUN_NAME, null) {
+        TEST_OBJECT = JUnitConfiguration.TEST_PACKAGE
+        PACKAGE_NAME = ""
+        scope = TestSearchScope.WHOLE_PROJECT
+    }
+
+    /** Roda só os testes do raio de [label]: os que citam a classe e as que dependem dela. Falso se já há testes rodando. */
+    fun runClasses(classes: List<String>, label: String): Boolean {
+        if (running || classes.isEmpty()) return false
+        execute("Iron Dome IA: testes do raio de $label", "raio de $label") {
+            TEST_OBJECT = JUnitConfiguration.TEST_PATTERN
+            setPatterns(LinkedHashSet(classes))
+            scope = TestSearchScope.WHOLE_PROJECT
         }
+        return true
+    }
+
+    private fun execute(name: String, runScope: String?, setup: JUnitConfiguration.Data.() -> Unit) {
+        val configuration = JUnitConfiguration(name, project).apply { persistentData.setup() }
+        this.runScope = runScope
         val settings = RunManager.getInstance(project)
             .createConfiguration(configuration, JUnitConfigurationType.getInstance().factory)
             .apply { isActivateToolWindowBeforeRun = false }
@@ -317,7 +336,13 @@ class TestsPanel(private val project: Project) : SimpleToolWindowPanel(true, tru
         val classes = results.flatMap { it.classes }
         val failed = tests.count { it.outcome == TestOutcome.FAILED }
         val keys = results.count { it.classKey != null }
+        val finished = environment?.takeIf { !running && process?.isProcessTerminated == true && tests.isNotEmpty() }
+        if (finished != null && finished !== reported) {
+            reported = finished
+            DefenseStatus.getInstance(project).testsFinished(failed, tests.size, runScope)
+        }
         val context = listOfNotNull(
+            runScope?.replaceFirstChar(Char::uppercase),
             plural(classes.size, "classe", "classes"),
             plural(keys, "chave", "chaves").takeIf { keys > 0 },
             testsRoot?.duration?.let(TestResults::formatDuration),
@@ -416,7 +441,7 @@ class TestsPanel(private val project: Project) : SimpleToolWindowPanel(true, tru
             TestKind.TAG -> escape(item.tags.firstOrNull()?.let { "@$it" } ?: TestResults.NO_TAG)
             else -> escape(item.classKey?.let { "[$it]" } ?: TestResults.NO_KEY)
         }
-        append("<h2 style='margin: 0 0 6px 0'>$title</h2>")
+        if (title.isNotBlank()) append("<h2 style='margin: 0 0 6px 0'>$title</h2>")
         append("<p>${pill("${symbolOf(item.outcome)} ${item.outcome.label}", toneOf(item.outcome))}")
         TestResults.formatDuration(item.durationMillis)?.let { append("&nbsp;&nbsp;${gray(it)}") }
         item.convention?.problem?.let { append("&nbsp;&nbsp;${pill("⚠ $it", Tone.YELLOW)}") }
@@ -709,19 +734,11 @@ class TestsPanel(private val project: Project) : SimpleToolWindowPanel(true, tru
 
         fun padded(text: String) = "\u2009$text\u2009"
 
+        /** Etapas dado/quando/então e parâmetros ficam de fora: já têm a sua seção nos detalhes. */
         fun nameHtml(name: DisplayNameParts): String = buildString {
             name.index?.let { append(pill("#$it", Tone.GRAY)).append("&nbsp;") }
             name.key?.let { append(pill(it, Tone.forKey(it))).append("&nbsp;") }
-            name.steps.forEachIndexed { i, step ->
-                if (i > 0) append(" ")
-                step.role?.let { append(pill(step.keyword.orEmpty().uppercase(), toneOf(it))).append("&nbsp;") }
-                append(fragmentsHtml(step.fragments))
-            }
-            name.parameters.forEachIndexed { i, parameter ->
-                if (i > 0) append(gray(" · "))
-                parameter.name?.let { append(gray("${escape(it)} = ")) }
-                append(codeSpan(parameter.value, Tone.PURPLE))
-            }
+            if (name.steps.none { it.role != null }) append(name.steps.joinToString(" ") { fragmentsHtml(it.fragments) })
         }
 
         fun fragmentsHtml(fragments: List<Fragment>): String = fragments.joinToString("") { fragment ->

@@ -57,6 +57,9 @@ import com.mio.irondome.base.Stat
 import com.mio.irondome.base.SummaryHeader
 import com.mio.irondome.base.Tone
 import com.mio.irondome.base.rootDir
+import com.mio.irondome.defesa.ChangeHistoryService
+import com.mio.irondome.defesa.ClassDossier
+import com.mio.irondome.defesa.RiskScore
 import com.mio.irondome.interceptor.AgentProgressPanel
 import com.mio.irondome.interceptor.AgentRunner
 import com.mio.irondome.interceptor.AgentSettings
@@ -297,6 +300,12 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
         run("Calculando o raio de impacto de ${DependencyAnalyzer.simpleName(qualifiedName)}") { qualifiedName }
     }
 
+    /** Mira a classe de [report], uma análise da IA feita em segundo plano, e mostra o impacto dela no diagrama. */
+    fun showReport(report: ImpactReport) {
+        impact = report
+        analyze(report.focus)
+    }
+
     /** Só o resultado da análise mais recente aparece; as anteriores são canceladas. [after] roda com o diagrama novo na tela. */
     private fun run(title: String, after: (() -> Unit)? = null, resolveFocus: () -> String?) {
         running?.cancel()
@@ -403,9 +412,11 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
             }
             // As instruções (com o diff e os patches do PR) são montadas e gravadas aqui, fora da EDT.
             val instructions = runCatching {
+                val commented = snapshot.values.flatten().map { it.path }
+                val dossier = ClassDossier.collect(project, paths + commented)
                 runner.writeInstructions(
                     ImpactAnalysis.fileName(graph.focus),
-                    ImpactAnalysis.instructions(graph, snapshot, kinds, diff, outside, pullRequest),
+                    ImpactAnalysis.instructions(graph, snapshot, kinds, diff, outside, pullRequest, dossier),
                 )
             }.getOrNull()
             ApplicationManager.getApplication().invokeLater({ startImpact(graph, instructions) }, project.disposed)
@@ -497,10 +508,13 @@ class DependencyPanel(private val project: Project, private val toolWindow: Tool
             graph.focus.substringBeforeLast('.', "").takeIf { it.isNotEmpty() },
         ).joinToString(" · ")
         val risks = graph.nodes.groupingBy { it.risk.ordinal }.eachCount()
+        // O histórico do git já em cache: sem ele, a leitura roda em segundo plano e o cabeçalho fica só com a estrutura.
+        val memory = node?.let { RiskScore.of(it.afferent, it.inCycle, it.tests.coverage, ChangeHistoryService.getInstance(project).current.of(it.filePath)) }
+        val explained = memory?.takeIf { it.reasons.isNotEmpty() }?.let { "Risco com histórico ${it.explain().replaceFirstChar(Char::lowercase)}" }
         header.update(
             DependencyAnalyzer.simpleName(graph.focus),
             messageColor ?: node?.let { colorOf(it.risk.ordinal) },
-            subtitle,
+            listOfNotNull(subtitle, explained).joinToString(" · "),
             stats = listOf(
                 Stat(graph.nodes.size, "classes no raio", Tone.BLUE),
                 Stat(graph.edges.size, if (graph.edges.size == 1) "ligação" else "ligações", Tone.GRAY),

@@ -41,6 +41,8 @@ import com.mio.irondome.base.Stat
 import com.mio.irondome.base.SummaryHeader
 import com.mio.irondome.base.Tone
 import com.mio.irondome.base.plural
+import com.mio.irondome.defesa.ClassDossier
+import com.mio.irondome.defesa.ReviewFeedback
 import com.mio.irondome.base.refreshAction
 import com.intellij.ui.components.panels.VerticalLayout
 import com.mio.irondome.interceptor.AgentProgressPanel
@@ -813,8 +815,13 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
         val pr = item.pr ?: return
         val context = context ?: return
         val runner = AgentRunner.getInstance(project)
-        background("Preparando a revisão do PR #${pr.number} para a IA", { patrulha.files(context, pr) }) { files ->
-            val instructions = runner.writeInstructions(AiReview.fileName(pr.number), AiReview.instructions(pr, files)) ?: return@background
+        val feedback = ReviewFeedback.getInstance(project)
+        background("Preparando a revisão do PR #${pr.number} para a IA", {
+            val files = patrulha.files(context, pr)
+            val content = AiReview.instructions(pr, files, feedback.promptHints(), ClassDossier.collect(project, files.files.map { it.path }))
+            runner.writeInstructions(AiReview.fileName(pr.number), content)
+        }) { instructions ->
+            if (instructions == null) return@background
             runner.run(
                 AgentTask(
                     "Revisão do PR #${pr.number}",
@@ -838,7 +845,12 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
             val first = (comment.startLine - 1).coerceAtMost(last)
             if (first < 0) return@mapNotNull null
             radar.addComment(file, document, first..last, comment.comment, discuss = false, suggestion = comment.suggestion)
+                ?.apply {
+                    fromAi = true
+                    aiText = comment.comment
+                }
         }
+        ReviewFeedback.getInstance(project).proposed(added)
         val skipped = comments.size - added.size
         notify(
             if (added.isEmpty()) "A IA não apontou nada no PR #$number" else "${plural(added.size, "rascunho", "rascunhos")} da IA no PR #$number",
@@ -1070,6 +1082,7 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
             val asDraft = dialog.asDraft
             val title = if (asDraft) "Enviando o rascunho ao PR #${pr.number}" else "Enviando os pedidos ao PR #${pr.number}"
             background(title, { patrulha.send(context, pr, drafts, general, event, asDraft) }) { result ->
+                ReviewFeedback.getInstance(project).accepted(drafts)
                 radar.remove(drafts)
                 notify(
                     if (asDraft) "${plural(result.requests.size, "rascunho enviado", "rascunhos enviados")} ao PR #${pr.number}"

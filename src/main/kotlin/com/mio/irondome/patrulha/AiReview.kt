@@ -29,7 +29,11 @@ object AiReview {
 
     fun fileName(number: Int) = "pr-$number-revisao.md"
 
-    fun instructions(pr: PullRequest, files: PullRequestFiles): String = buildString {
+    /**
+     * [hints] são as preferências que o time ensinou ao descartar ou rebaixar sugestões; [dossier], o que se sabe dos
+     * arquivos alterados (comentários antigos, correções no git e decisões registradas).
+     */
+    fun instructions(pr: PullRequest, files: PullRequestFiles, hints: List<String> = emptyList(), dossier: String = ""): String = buildString {
         appendLine("# Revisão do PR #${pr.number}: ${pr.title}")
         appendLine()
         appendLine("Você é um revisor de código experiente, que também orienta desenvolvedores júnior. O PR leva `${pr.headRef}` para `${pr.baseRef}`, e o código do PR está no")
@@ -82,6 +86,18 @@ object AiReview {
         appendLine()
         appendLine("Se não houver nada a apontar, responda `[]`.")
         appendLine()
+        if (hints.isNotEmpty()) {
+            appendLine("## Preferências do time")
+            appendLine()
+            appendLine("Aprendidas com o que o time aceitou e descartou das revisões anteriores. Siga-as:")
+            appendLine()
+            hints.forEach { appendLine("- $it") }
+            appendLine()
+        }
+        if (dossier.isNotBlank()) {
+            appendLine(dossier.trimEnd())
+            appendLine()
+        }
         appendLine("## Arquivos alterados (${files.files.size})")
         files.files.forEach { file ->
             appendLine()

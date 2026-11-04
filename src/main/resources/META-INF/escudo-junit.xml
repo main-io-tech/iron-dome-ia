@@ -2,4 +2,17 @@
     <extensions defaultExtensionNs="com.mio.irondome">
         <toolWindowTab implementation="com.mio.irondome.escudo.TestsTab"/>
     </extensions>
+
+    <projectListeners>
+        <listener class="com.mio.irondome.escudo.RadiusTestsListener"
+                  topic="com.mio.irondome.defesa.DefenseListener"/>
+    </projectListeners>
+
+    <actions>
+        <action id="IronDome.RunRadiusTests"
+                class="com.mio.irondome.escudo.RunRadiusTestsAction"
+                text="Rodar Testes do Raio"
+                description="Roda os testes que cobrem a última classe salva e as classes que dependem dela"
+                icon="/icons/escudo.svg"/>
+    </actions>
 </idea-plugin>

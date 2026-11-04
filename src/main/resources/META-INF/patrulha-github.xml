@@ -4,10 +4,23 @@
     <extensions defaultExtensionNs="com.mio.irondome">
         <toolWindowTab implementation="com.mio.irondome.patrulha.PatrulhaTab"/>
         <editorCardProvider implementation="com.mio.irondome.patrulha.PullRequestCards"/>
+        <editorCardProvider implementation="com.mio.irondome.patrulha.PullRequestThreadCards"/>
+    </extensions>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <postStartupActivity implementation="com.mio.irondome.patrulha.PatrolStartup"/>
     </extensions>
 
     <projectListeners>
         <listener class="com.mio.irondome.patrulha.ReviewBranchWatcher"
                   topic="git4idea.repo.GitRepositoryChangeListener"/>
     </projectListeners>
+
+    <actions>
+        <action id="IronDome.PatrolNow"
+                class="com.mio.irondome.patrulha.PatrolNowAction"
+                text="Iron Dome IA: Patrulhar os PRs Agora"
+                description="Consulta agora os PRs abertos seus ou com revisão pedida a você: comentários novos, CI e pedidos de revisão"
+                icon="/icons/patrulha.svg"/>
+    </actions>
 </idea-plugin>

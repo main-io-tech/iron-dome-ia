@@ -22,6 +22,7 @@ import com.intellij.openapi.vfs.VirtualFile
 import com.mio.irondome.base.rootDir
 import com.mio.irondome.comando.ReviewArchive
 import com.mio.irondome.comando.ReviewMarkdown
+import com.mio.irondome.defesa.ReviewFeedback
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
@@ -350,6 +351,7 @@ class ReviewCommentService(private val project: Project) : PersistentStateCompon
     fun remove(comments: Collection<ReviewComment>) {
         if (comments.isEmpty()) return
         val removed = comments.toSet()
+        ReviewFeedback.getInstance(project).discarded(removed)
         state.comments.removeAll(removed)
         editing.removeAll(removed)
         removed.forEach { markers.remove(it)?.dispose() }
