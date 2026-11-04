@@ -98,7 +98,7 @@ class GitHubClient(private val apiUrl: String, private val graphQlUrl: String, p
         return response.body()
     }
 
-    /** [event] é `REQUEST_CHANGES` ou `COMMENT`; nulo cria a revisão pendente, o rascunho que só quem revisa vê. */
+    /** [event] é um [ReviewVerdict.event]; nulo cria a revisão pendente, o rascunho que só quem revisa vê. */
     fun createReview(
         repo: GitHubRepo,
         number: Int,

@@ -10,6 +10,7 @@ import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.util.SystemInfo
@@ -125,17 +126,22 @@ class AgentRunner(private val project: Project) {
         } else {
             val answer = answerFile(task) ?: return finish(failure(task, provider, "O projeto não tem pasta no disco."), actions, onDone)
             val relative = "${ReviewCommentService.REVIEW_DIR}/$DIR/$ANSWERS_DIR/${answer.fileName}"
-            val shell = ShellKind.of(terminal.shellPath(project), SystemInfo.isWindows)
             val prompt = "${task.prompt} ${AgentCommand.answerInstruction(relative)}"
-            val command = launch.terminal(provider, prompt, AgentSettings.model, AgentSettings.timeoutMinutes, shell, root)
-            current.step = "No terminal: esperando a resposta em $relative"
-            try {
-                terminal.run(project, root, "IA: ${task.title}", command)
-            } catch (e: Exception) {
-                LOG.warn("O terminal da IDE não abriu", e)
-                return finish(failure(task, provider, "O terminal não abriu: ${e.message ?: e.javaClass.simpleName}"), actions, onDone)
+            current.step = "No terminal: abrindo o terminal"
+            work@{
+                val shell = ShellKind.of(terminal.shellPath(project), SystemInfo.isWindows)
+                val command = launch.terminal(provider, prompt, AgentSettings.model, AgentSettings.timeoutMinutes, shell, root)
+                var opened: Throwable? = null
+                ApplicationManager.getApplication().invokeAndWait({
+                    opened = runCatching { terminal.run(project, root, "IA: ${task.title}", command) }.exceptionOrNull()
+                }, ModalityState.any())
+                opened?.let {
+                    LOG.warn("O terminal da IDE não abriu", it)
+                    return@work failure(task, provider, "O terminal não abriu: ${it.message ?: it.javaClass.simpleName}")
+                }
+                current.step = "No terminal: esperando a resposta em $relative"
+                waitForAnswer(task, provider, answer, command, current)
             }
-            ({ waitForAnswer(task, provider, answer, command, current) })
         }
         ApplicationManager.getApplication().executeOnPooledThread {
             val result = try {

@@ -20,6 +20,20 @@ data class GitHubRepo(val host: String, val owner: String, val name: String) {
     }
 }
 
+/** O que a revisão diz do PR ao ser publicada, pelos eventos de revisão do GitHub. */
+enum class ReviewVerdict(val event: String, val label: String, val done: String) {
+    APPROVE("APPROVE", "Aprovar", "aprovado"),
+    REQUEST_CHANGES("REQUEST_CHANGES", "Solicitar alterações", "com alterações solicitadas"),
+    COMMENT("COMMENT", "Só comentar", "comentado"),
+    ;
+
+    /** O GitHub não deixa aprovar nem solicitar alterações no próprio PR. */
+    val allowedOnOwnPr: Boolean get() = this == COMMENT
+
+    /** Sem nenhum comentário na revisão, o GitHub exige texto para solicitar alterações ou comentar. */
+    val needsBody: Boolean get() = this != APPROVE
+}
+
 data class PullRequest(
     val number: Int,
     val title: String,

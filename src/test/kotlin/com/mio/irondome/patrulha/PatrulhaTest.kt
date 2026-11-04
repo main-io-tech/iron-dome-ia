@@ -22,6 +22,21 @@ class PatrulhaTest {
     }
 
     @Test
+    fun theStashLeavesOutIronDomeAndIdeaWithoutExcludingWhatGitAlreadyIgnores() {
+        assertEquals(listOf(".", ":(exclude)iron-dome", ":(exclude).idea"), PatrulhaService.workPaths(emptySet()).toList())
+        assertEquals(listOf(".", ":(exclude)iron-dome"), PatrulhaService.workPaths(setOf(".idea")).toList())
+        assertEquals(listOf("."), PatrulhaService.workPaths(setOf(".idea", "iron-dome")).toList())
+    }
+
+    @Test
+    fun theVerdictUsesTheGitHubEventsAndOnlyCommentsAreAllowedOnOwnPullRequests() {
+        assertEquals(listOf("APPROVE", "REQUEST_CHANGES", "COMMENT"), ReviewVerdict.entries.map { it.event })
+        assertEquals(listOf(ReviewVerdict.COMMENT), ReviewVerdict.entries.filter { it.allowedOnOwnPr })
+        assertFalse("aprovar dispensa o texto", ReviewVerdict.APPROVE.needsBody)
+        assertTrue(ReviewVerdict.REQUEST_CHANGES.needsBody && ReviewVerdict.COMMENT.needsBody)
+    }
+
+    @Test
     fun commentableLinesAreTheNewSideOfEachHunk() {
         val patch = """
             @@ -10,4 +10,5 @@ fun a() {

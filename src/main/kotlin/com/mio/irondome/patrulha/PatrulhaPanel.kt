@@ -185,6 +185,30 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
                 enabled = { selectedPr()?.record?.pendingReviewId != null && context != null },
                 text = { selectedPr()?.record?.drafts?.size?.takeIf { it > 0 }?.let { "Publicar Rascunho ($it)" } ?: "Publicar Rascunho" },
             ) { publishDraft() },
+            action(
+                "Aprovar PR",
+                "Aprova o PR no GitHub",
+                AllIcons.General.InspectionsOK,
+                enabled = { selectedPr()?.pr?.let { context != null && !isOwn(it) } == true },
+                tooltipFor = {
+                    verdictDescription(
+                        ReviewVerdict.APPROVE,
+                        "Aprova o PR no GitHub, com um texto opcional; os comentários não enviados e o rascunho vão junto, como sugestões",
+                    )
+                },
+            ) { verdict(ReviewVerdict.APPROVE) },
+            action(
+                "Solicitar Alterações",
+                "Solicita alterações no PR",
+                AllIcons.General.BalloonWarning,
+                enabled = { selectedPr()?.pr?.let { context != null && !isOwn(it) } == true },
+                tooltipFor = {
+                    verdictDescription(
+                        ReviewVerdict.REQUEST_CHANGES,
+                        "Solicita alterações no PR, bloqueando o merge; os comentários não enviados e o rascunho vão junto",
+                    )
+                },
+            ) { verdict(ReviewVerdict.REQUEST_CHANGES) },
             action("Editar", "Edita o comentário selecionado: o não enviado no editor, ou o rascunho e o publicado também no GitHub", AllIcons.Actions.Edit,
                 enabled = { selectedNode()?.userObject.let { it is DraftItem || (it is RequestItem && !it.request.deleted) } }) { editSelected() },
             action("Excluir", "Exclui o comentário selecionado: o não enviado, o rascunho (também no GitHub) ou o publicado (no GitHub, se você quiser)", AllIcons.General.Remove,
@@ -792,33 +816,60 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
         }
     }
 
-    /** Publica o rascunho do PR no GitHub, escolhendo se pede alterações ou só comenta. */
+    /** Publica o rascunho do PR no GitHub, escolhendo o veredito: aprovar, solicitar alterações ou só comentar. */
     private fun publishDraft() {
-        val item = selectedPr() ?: return
-        val record = item.record?.takeIf { it.pendingReviewId != null } ?: return
-        val context = context ?: return
-        val choice = Messages.showDialog(
-            project,
-            "Publicar o rascunho do PR #${item.number} (${plural(record.drafts.size, "comentário", "comentários")})? " +
-                "Depois disso, o autor do PR vê os comentários.\n\nO GitHub não deixa pedir alterações no próprio PR: nesse caso, use Só Comentar.",
-            "Publicar Rascunho",
-            arrayOf("Pedir Alterações", "Só Comentar", "Cancelar"),
-            0,
-            Messages.getQuestionIcon(),
-        )
-        val event = when (choice) {
-            0 -> "REQUEST_CHANGES"
-            1 -> "COMMENT"
-            else -> return
+        if (selectedPr()?.record?.pendingReviewId == null) return
+        verdict(ReviewVerdict.REQUEST_CHANGES)
+    }
+
+    private fun isOwn(pr: PullRequest): Boolean = context?.account?.name?.equals(pr.author, ignoreCase = true) == true
+
+    /** Dica dos botões de veredito: por que estão desligados, ou o que vai junto. */
+    private fun verdictDescription(verdict: ReviewVerdict, enabled: String): String {
+        val pr = selectedPr()?.pr
+        return when {
+            pr == null -> "Selecione um PR aberto"
+            !verdict.allowedOnOwnPr && isOwn(pr) -> "O PR é seu: o GitHub não deixa ${verdict.label.lowercase()} no próprio PR"
+            else -> enabled
         }
-        background("Publicando o rascunho do PR #${item.number}", { patrulha.publishDraft(context, item.number, event, "") }) { url ->
-            notify(
-                "Rascunho do PR #${item.number} publicado",
-                "O autor do PR já vê os comentários. Use Verificar Pedidos para conferir depois se foram atendidos.",
-                NotificationType.INFORMATION,
-                NotificationAction.createSimpleExpiring("Abrir no GitHub") { BrowserUtil.browse(url.ifBlank { item.pr?.url ?: record.url }) },
-            )
-            rebuild()
+    }
+
+    /**
+     * Publica a revisão do PR com o veredito escolhido. Os comentários não enviados vão antes para o rascunho do
+     * GitHub (e saem do editor), para nada se perder nem se repetir se a publicação falhar; depois o rascunho é
+     * publicado com o veredito, ou, sem rascunho, a revisão vai só com o texto.
+     */
+    private fun verdict(initial: ReviewVerdict) {
+        val item = selectedPr() ?: return
+        val pr = item.pr ?: return
+        val context = context ?: return
+        val unsent = radar.pullRequestComments(pr.number)
+        val dialog = VerdictDialog(project, pr, initial, unsent.size, item.record?.drafts?.size ?: 0, isOwn(pr))
+        if (!dialog.showAndGet()) return
+        val verdict = dialog.verdict
+        val text = dialog.text
+        val publish = {
+            background("Publicando a revisão do PR #${pr.number}", { patrulha.submitVerdict(context, pr, verdict, text) }) { url ->
+                notify(
+                    "PR #${pr.number} ${verdict.done}",
+                    when (verdict) {
+                        ReviewVerdict.APPROVE -> "A aprovação está no GitHub${if (unsent.isNotEmpty() || item.record?.drafts?.isNotEmpty() == true) ", com os comentários como sugestões" else ""}."
+                        ReviewVerdict.REQUEST_CHANGES -> "O merge fica bloqueado até as alterações serem atendidas. Use Verificar Pedidos para conferir depois."
+                        ReviewVerdict.COMMENT -> "O autor do PR já vê a revisão."
+                    },
+                    NotificationType.INFORMATION,
+                    NotificationAction.createSimpleExpiring("Abrir no GitHub") { BrowserUtil.browse(url.ifBlank { pr.url }) },
+                )
+                rebuild()
+            }
+        }
+        if (unsent.isEmpty()) {
+            publish()
+            return
+        }
+        background("Enviando os comentários ao rascunho do PR #${pr.number}", { patrulha.send(context, pr, unsent, "", verdict.event, asDraft = true) }) {
+            radar.remove(unsent)
+            publish()
         }
     }
 
@@ -887,7 +938,7 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
             null
         }
         background("Lendo os arquivos do PR #${pr.number}", { ReviewPlan.plan(drafts, patrulha.client(context).files(context.repo, pr.number)) }) { planned ->
-            val dialog = SendReviewDialog(project, pr, planned, warning)
+            val dialog = SendReviewDialog(project, pr, planned, warning, isOwn(pr))
             if (!dialog.showAndGet()) return@background
             val event = dialog.event
             val general = dialog.generalText
@@ -1116,6 +1167,8 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
         icon: Icon,
         enabled: () -> Boolean,
         text: () -> String = { description },
+        /** A dica que muda com a seleção, no lugar de [tooltip]. */
+        tooltipFor: (() -> String)? = null,
         perform: () -> Unit,
     ) = object : DumbAwareAction(description, tooltip, icon) {
         override fun getActionUpdateThread() = ActionUpdateThread.EDT
@@ -1123,6 +1176,7 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
         override fun update(e: AnActionEvent) {
             e.presentation.isEnabled = enabled()
             e.presentation.text = text()
+            tooltipFor?.let { e.presentation.description = it() }
         }
 
         override fun actionPerformed(e: AnActionEvent) = perform()

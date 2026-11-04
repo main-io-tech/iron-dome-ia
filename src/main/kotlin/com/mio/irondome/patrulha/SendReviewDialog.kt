@@ -29,10 +29,13 @@ internal class SendReviewDialog(
     private val planned: List<PlannedRequest>,
     /** Aviso quando o código local não é o head do PR e as linhas podem não bater. */
     private val warning: String?,
+    /** O PR é da conta do GitHub em uso: o GitHub não deixa aprovar nem solicitar alterações. */
+    private val ownPr: Boolean = false,
 ) : DialogWrapper(project, true) {
 
-    private val requestChanges = JBRadioButton("Pedir alterações", true)
-    private val commentOnly = JBRadioButton("Só comentar, sem bloquear o merge")
+    private val approve = JBRadioButton("Aprovar, com os comentários como sugestões")
+    private val requestChanges = JBRadioButton("Solicitar alterações, bloqueando o merge até serem atendidas", !ownPr)
+    private val commentOnly = JBRadioButton("Só comentar, sem aprovar nem bloquear o merge", ownPr)
     private val asDraftBox = JBCheckBox("Enviar como rascunho no GitHub: só você vê, e dá para editar e apagar antes de publicar", true).apply {
         addActionListener { updateMode() }
     }
@@ -44,13 +47,21 @@ internal class SendReviewDialog(
         emptyText.text = "Texto geral da revisão (opcional)"
     }
 
-    val event: String get() = if (requestChanges.isSelected) "REQUEST_CHANGES" else "COMMENT"
+    val verdict: ReviewVerdict
+        get() = when {
+            approve.isSelected -> ReviewVerdict.APPROVE
+            requestChanges.isSelected -> ReviewVerdict.REQUEST_CHANGES
+            else -> ReviewVerdict.COMMENT
+        }
+
+    val event: String get() = verdict.event
 
     val generalText: String get() = general.text
 
     init {
         title = "Enviar Pedidos ao PR #${pr.number}"
         ButtonGroup().apply {
+            add(approve)
             add(requestChanges)
             add(commentOnly)
         }
@@ -60,7 +71,8 @@ internal class SendReviewDialog(
 
     /** No rascunho, o tipo da revisão é escolhido ao publicar. */
     private fun updateMode() {
-        requestChanges.isEnabled = !asDraft
+        approve.isEnabled = !asDraft && !ownPr
+        requestChanges.isEnabled = !asDraft && !ownPr
         commentOnly.isEnabled = !asDraft
         setOKButtonText(if (asDraft) "Enviar Rascunho" else "Publicar no GitHub")
     }
@@ -83,9 +95,15 @@ internal class SendReviewDialog(
             .addComponent(TitledSeparator("Revisão"))
             .addComponent(asDraftBox)
             .addComponent(comment("Os rascunhos ficam na revisão pendente do GitHub, que o autor do PR não vê. Publique pela Patrulha (Publicar Rascunho) ou pelo GitHub."))
+            .addComponent(approve)
             .addComponent(requestChanges)
             .addComponent(commentOnly)
-            .addComponent(comment("O GitHub não deixa pedir alterações no próprio PR: nesse caso, use Só comentar."))
+            .addComponent(
+                comment(
+                    if (ownPr) "O PR é seu: o GitHub não deixa aprovar nem solicitar alterações no próprio PR, só comentar."
+                    else "O GitHub não deixa aprovar nem solicitar alterações no próprio PR: nesse caso, use Só comentar.",
+                ),
+            )
             .addComponent(JBScrollPane(general).apply { preferredSize = JBUI.size(640, 80) })
             .addComponent(comment("Os pedidos ficam em iron-dome/pull-requests/pr-${pr.number}.md para você verificar depois se foram atendidos."))
             .panel

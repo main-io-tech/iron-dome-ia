@@ -86,18 +86,28 @@ object AgentVerifier {
             ?: return onDone(Outcome(false, "O projeto não tem pasta no disco."))
         val file = dir.resolve("teste-terminal-${System.currentTimeMillis()}.md")
         val relative = Path.of(root).relativize(file).toString().replace('\\', '/')
-        val shellPath = terminal.shellPath(project)
-        val shell = ShellKind.of(shellPath, SystemInfo.isWindows)
-        val prompt = "Teste de integracao do Iron Dome IA: grave apenas a palavra OK no arquivo $relative (crie as pastas se faltarem) e termine, sem fazer mais nada."
-        val command = launch.terminal(provider, prompt, AgentSettings.model, 2, shell, root, interactive = false)
-        try {
-            Files.createDirectories(dir)
-            terminal.run(project, root, "IA: Teste", command)
-        } catch (e: Exception) {
-            return onDone(Outcome(false, "O terminal não abriu: ${e.message ?: e.javaClass.simpleName}"))
-        }
         testingTerminal = true
-        val shellName = shellPath?.replace('\\', '/')?.substringAfterLast('/') ?: shell.name.lowercase()
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val shellPath = terminal.shellPath(project)
+            val shell = ShellKind.of(shellPath, SystemInfo.isWindows)
+            val prompt = "Teste de integracao do Iron Dome IA: grave apenas a palavra OK no arquivo $relative (crie as pastas se faltarem) e termine, sem fazer mais nada."
+            val command = runCatching { launch.terminal(provider, prompt, AgentSettings.model, 2, shell, root, interactive = false) }
+            ApplicationManager.getApplication().invokeLater({
+                try {
+                    Files.createDirectories(dir)
+                    terminal.run(project, root, "IA: Teste", command.getOrThrow())
+                } catch (e: Exception) {
+                    testingTerminal = false
+                    onDone(Outcome(false, "O terminal não abriu: ${e.message ?: e.javaClass.simpleName}"))
+                    return@invokeLater
+                }
+                val shellName = shellPath?.replace('\\', '/')?.substringAfterLast('/') ?: shell.name.lowercase()
+                waitForTerminalAnswer(file, provider, launch, shellName, onDone)
+            }, ModalityState.any())
+        }
+    }
+
+    private fun waitForTerminalAnswer(file: Path, provider: AgentProvider, launch: AgentLaunch, shellName: String, onDone: (Outcome) -> Unit) {
         ApplicationManager.getApplication().executeOnPooledThread {
             val started = System.currentTimeMillis()
             var answer: String? = null

@@ -201,7 +201,7 @@ class PatrulhaService(private val project: Project) : PersistentStateComponent<P
             setSilent(true)
             addParameters("--porcelain")
             endOptions()
-            addParameters(*WORK_PATHS)
+            addParameters(*workPaths(context))
         }
         val files = gitOutput(handler).filter { it.length > 3 }.map { it.substring(3) }
         return LocalChanges(context.repository.currentBranchName, files)
@@ -219,11 +219,19 @@ class PatrulhaService(private val project: Project) : PersistentStateComponent<P
         if (stash) {
             stashMessage = "iron-dome: antes do PR #$number, em ${origin?.first?.take(40) ?: "HEAD"}"
             val before = stashTop(context)
-            git(GitLineHandler(project, repository.root, GitCommand.STASH).apply {
-                addParameters("push", "--include-untracked", "-m", stashMessage)
-                endOptions()
-                addParameters(*WORK_PATHS)
-            })
+            try {
+                git(GitLineHandler(project, repository.root, GitCommand.STASH).apply {
+                    addParameters("push", "--include-untracked", "-m", stashMessage)
+                    endOptions()
+                    addParameters(*workPaths(context))
+                })
+            } catch (e: PatrulhaException) {
+                if (stashTop(context) == before) throw e
+                throw PatrulhaException(
+                    "${e.message} O stash \"$stashMessage\" chegou a ser criado, mas as alterações continuam nos arquivos: " +
+                        "apague esse stash (Git > Unstash Changes) para não ficar com uma cópia repetida.",
+                )
+            }
             stashSha = stashTop(context)?.takeIf { it != before }.orEmpty()
         }
         val previous = state.returnPoint
@@ -259,6 +267,16 @@ class PatrulhaService(private val project: Project) : PersistentStateComponent<P
         context.repository.update()
         VfsUtil.markDirtyAndRefresh(false, true, true, root)
         return warning
+    }
+
+    /** [KEPT_OUT] que o `.gitignore` ignora, pelo `git check-ignore`; com o Git falhando, nenhum. */
+    private fun workPaths(context: RepoContext): Array<String> {
+        val ignored = gitOutput(GitLineHandler(project, context.repository.root, GitCommand.CHECK_IGNORE).apply {
+            setSilent(true)
+            endOptions()
+            addParameters(*KEPT_OUT)
+        }, failOnError = false).map { it.trim().trimEnd('/') }.toSet()
+        return workPaths(ignored)
     }
 
     private fun stashTop(context: RepoContext): String? =
@@ -331,7 +349,7 @@ class PatrulhaService(private val project: Project) : PersistentStateComponent<P
     /**
      * Envia os rascunhos ao PR e grava os pedidos no `.md`. Com [asDraft], eles vão para a revisão pendente do
      * GitHub (só quem revisa vê, até [publishDraft]), acrescentados à que já existir; senão, numa revisão
-     * publicada com [event], `REQUEST_CHANGES` ou `COMMENT`. Não tira os rascunhos do Radar: isso é com quem
+     * publicada com [event], o [ReviewVerdict.event]. Não tira os rascunhos do Radar: isso é com quem
      * chama, na EDT.
      */
     fun send(context: RepoContext, pr: PullRequest, drafts: List<ReviewComment>, general: String, event: String, asDraft: Boolean): SendResult {
@@ -350,13 +368,17 @@ class PatrulhaService(private val project: Project) : PersistentStateComponent<P
             val inline = planned.filter { it.placement == Placement.INLINE }
             val review = try {
                 client.createReview(
-                    context.repo, pr.number, pr.headSha, ReviewPlan.reviewBody(general, planned).ifBlank { DEFAULT_BODY }, event,
+                    context.repo, pr.number, pr.headSha,
+                    ReviewPlan.reviewBody(general, planned).ifBlank { if (event == ReviewVerdict.APPROVE.event) "" else DEFAULT_BODY }, event,
                     inline.map { GitHubClient.InlineComment(it.comment.filePath, it.startLine, it.line!!, it.body) },
                 )
             } catch (e: GitHubException) {
-                throw if (e.status == 422 && existing?.pendingReviewId != null) {
-                    PatrulhaException("Há um rascunho deste PR no GitHub: publique ou descarte o rascunho antes de publicar outra revisão.")
-                } else e
+                throw when {
+                    e.status == 422 && existing?.pendingReviewId != null ->
+                        PatrulhaException("Há um rascunho deste PR no GitHub: publique ou descarte o rascunho antes de publicar outra revisão.")
+                    e.status == 422 -> refused(e)
+                    else -> e
+                }
             }
             reviewUrl = review.url
             posted += client.reviewComments(context.repo, pr.number, review.id)
@@ -454,11 +476,41 @@ class PatrulhaService(private val project: Project) : PersistentStateComponent<P
             write(record.withoutDraft(published = true))
             return current.url
         }
-        val body = listOf(general.trim(), current.body.trim()).filter { it.isNotBlank() }.joinToString("\n\n").ifBlank { DEFAULT_BODY }
-        val submitted = client.submitReview(context.repo, number, id, event, body)
+        val body = listOf(general.trim(), current.body.trim()).filter { it.isNotBlank() }.joinToString("\n\n")
+            .ifBlank { if (event == ReviewVerdict.APPROVE.event) "" else DEFAULT_BODY }
+        val submitted = try {
+            client.submitReview(context.repo, number, id, event, body)
+        } catch (e: GitHubException) {
+            throw if (e.status == 422) refused(e) else e
+        }
         write(record.withoutDraft(published = true))
         return submitted.url.ifBlank { current.url }
     }
+
+    /**
+     * Publica o veredito do PR, com [body] no texto geral. O rascunho que estiver no GitHub vai junto, na mesma
+     * revisão; para levar também os comentários não enviados, mande-os antes ao rascunho com [send]. Devolve o
+     * link da revisão.
+     */
+    fun submitVerdict(context: RepoContext, pr: PullRequest, verdict: ReviewVerdict, body: String): String {
+        val client = client(context)
+        val draft = record(pr.number)?.let { reconcileDraft(client, context, it) }
+        if (draft != null && (draft.published || draft.discarded)) write(draft.record)
+        if (draft?.record?.pendingReviewId != null) return publishDraft(context, pr.number, verdict.event, body)
+        val text = body.trim()
+        if (verdict.needsBody && text.isEmpty()) throw PatrulhaException("Escreva o texto da revisão: o GitHub exige texto para ${verdict.label.lowercase()} sem comentários.")
+        val review = try {
+            client.createReview(context.repo, pr.number, pr.headSha, text, verdict.event, emptyList())
+        } catch (e: GitHubException) {
+            throw if (e.status == 422) refused(e) else e
+        }
+        return review.url.ifBlank { pr.url }
+    }
+
+    private fun refused(e: GitHubException) = PatrulhaException(
+        "O GitHub recusou a revisão (${e.message}). Ele não deixa aprovar nem solicitar alterações no próprio PR, " +
+            "nem publicar outra revisão com um rascunho seu aberto pelo GitHub.",
+    )
 
     /** Descarta o rascunho no GitHub, com todos os comentários dele, e tira os pedidos dele do `.md`. Devolve quantos saíram. */
     fun discardDraft(context: RepoContext, number: Int): Int {
@@ -655,7 +707,15 @@ class PatrulhaService(private val project: Project) : PersistentStateComponent<P
         fun refOf(repository: GitRepository): String? = repository.currentBranchName ?: repository.currentRevision?.let { "@$it" }
 
         /** Revisões do Radar e pedidos dos PRs ficam fora do stash, e as configurações da IDE também. */
-        private val WORK_PATHS = arrayOf(".", ":(exclude)${ReviewCommentService.REVIEW_DIR}", ":(exclude).idea")
+        private val KEPT_OUT = arrayOf(ReviewCommentService.REVIEW_DIR, ".idea")
+
+        /**
+         * Os caminhos do stash e do status: o projeto menos [KEPT_OUT]. Os que estão em [ignored] ficam sem o
+         * exclude: o `stash --include-untracked` já os deixa de fora, e com o exclude ele falha ("paths are
+         * ignored by one of your .gitignore files") depois de já ter criado o stash.
+         */
+        fun workPaths(ignored: Set<String>): Array<String> =
+            arrayOf(".") + KEPT_OUT.filterNot { it in ignored }.map { ":(exclude)$it" }
 
         fun getInstance(project: Project): PatrulhaService = project.service()
     }
