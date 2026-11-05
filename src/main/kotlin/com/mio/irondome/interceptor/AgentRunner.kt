@@ -386,7 +386,7 @@ class AgentRunner(private val project: Project) {
         }.trim().ifEmpty { "Sem resposta." }
         val notification = NotificationGroupManager.getInstance().getNotificationGroup("Iron Dome IA")
             .createNotification(title, escape(summary), if (result.ok) NotificationType.INFORMATION else NotificationType.WARNING)
-            .setIcon(IronDomeIcons.interceptador)
+            .setIcon(IronDomeIcons.arsenal)
         result.transcript?.let { path ->
             notification.addAction(NotificationAction.createSimple("Ver Resposta") { open(path) })
         }
@@ -437,8 +437,8 @@ class AgentRunner(private val project: Project) {
         }
         NotificationGroupManager.getInstance().getNotificationGroup("Iron Dome IA")
             .createNotification(title, content, NotificationType.WARNING)
-            .setIcon(IronDomeIcons.interceptador)
-            .addAction(NotificationAction.createSimpleExpiring("Abrir Interceptador") { InterceptorTab.show(project) })
+            .setIcon(IronDomeIcons.arsenal)
+            .addAction(NotificationAction.createSimpleExpiring("Abrir Arsenal") { InterceptorTab.show(project) })
             .addAction(NotificationAction.createSimpleExpiring("Configurações") {
                 ShowSettingsUtil.getInstance().showSettingsDialog(project, AgentConfigurable::class.java)
             })
@@ -448,7 +448,7 @@ class AgentRunner(private val project: Project) {
     private fun notify(title: String, content: String, type: NotificationType) {
         NotificationGroupManager.getInstance().getNotificationGroup("Iron Dome IA")
             .createNotification(title, escape(content), type)
-            .setIcon(IronDomeIcons.interceptador)
+            .setIcon(IronDomeIcons.arsenal)
             .notify(project)
     }
 

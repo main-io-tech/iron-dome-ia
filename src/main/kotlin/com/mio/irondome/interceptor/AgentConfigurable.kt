@@ -27,7 +27,7 @@ import javax.swing.JPanel
 import javax.swing.JSpinner
 import javax.swing.SpinnerNumberModel
 
-/** Settings > Tools > Iron Dome IA > Interceptador (IA): qual CLI de IA usar e como. */
+/** Settings > Tools > Iron Dome IA > Arsenal (IA): qual CLI de IA usar e como. */
 class AgentConfigurable : Configurable {
 
     private val provider = ComboBox(AgentProvider.entries.toTypedArray()).apply {
@@ -60,7 +60,7 @@ class AgentConfigurable : Configurable {
     private val terminalStatus = JBLabel()
     private val autoFailure = NoticeBox(AllIcons.General.Warning, Tone.YELLOW).apply { isVisible = false }
 
-    override fun getDisplayName() = "Interceptador (IA)"
+    override fun getDisplayName() = "Arsenal (IA)"
 
     override fun createComponent(): JComponent {
         val test = JButton("Salvar e Testar").apply { addActionListener { test() } }

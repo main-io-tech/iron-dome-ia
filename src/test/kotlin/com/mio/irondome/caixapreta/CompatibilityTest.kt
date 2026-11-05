@@ -95,7 +95,7 @@ class CompatibilityTest {
         assertEquals(CheckStatus.INFO, check(env, Mechanism.SENTINELA).status)
         assertEquals(CheckStatus.INFO, check(env, Mechanism.CAIXA_PRETA).status)
         assertEquals(CheckStatus.INFO, check(env, Mechanism.INTERCEPTOR).status)
-        assertTrue(check(env, Mechanism.INTERCEPTOR).fix!!.contains("Interceptador (IA)"))
+        assertTrue(check(env, Mechanism.INTERCEPTOR).fix!!.contains("Arsenal (IA)"))
         assertTrue(Compatibility.problems(Compatibility.evaluate(env)).isEmpty())
     }
 

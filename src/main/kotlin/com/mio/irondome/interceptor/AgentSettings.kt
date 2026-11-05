@@ -13,7 +13,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 
 /**
- * Qual CLI de IA o Interceptador usa e como. A chave de API do Cursor fica no cofre de senhas da IDE; o resto, nas
+ * Qual CLI de IA o Arsenal usa e como. A chave de API do Cursor fica no cofre de senhas da IDE; o resto, nas
  * preferências. Sem caminho configurado, o executável é procurado no PATH e nas pastas de instalação.
  */
 object AgentSettings {

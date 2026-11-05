@@ -12,7 +12,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 
 /**
- * O Interceptador no navegador embutido, com o visual do Arsenal do Tomahawk IA: configuração automática, os campos
+ * O Arsenal no navegador embutido, com o nome, o ícone e o visual do Arsenal do Tomahawk IA: configuração automática, os campos
  * do CLI (onde está, executável, modelo, tempo, argumentos extras e a chave do Cursor), Salvar e Testar (sem o teste
  * os botões de IA ficam desligados), onde rodar a IA com o teste pelo terminal, o que a IA libera e as execuções.
  */
@@ -120,7 +120,7 @@ class InterceptorWeb(project: Project) : WebTab(project) {
             else -> esc("${AgentSettings.provider.title} CLI${launch.where} · ${AgentSettings.model?.let { "modelo $it" } ?: "modelo padrão"}") +
                 (AgentSettings.verifiedAt?.let { " · testada em ${esc(it)}" } ?: "")
         }
-        append(WebUi.header("🤖", "Interceptador · configuração da IA", title, subtitle, side = badge))
+        append(WebUi.header("🛠️", "Arsenal · configuração da IA", title, subtitle, side = badge))
         append("<div class=\"grid2\" style=\"margin-top:14px;align-items:start\"><div>")
         append(autoCard(busy))
         append(cliCard(busy))

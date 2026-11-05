@@ -59,6 +59,49 @@ class AutoReplyTest {
     }
 
     @Test
+    fun theStatusCountsMyOpenThreadsAndTheOnesWaitingForTheDev() {
+        val discussions = listOf(
+            thread(1, comment(10, "eu"), comment(11, "dev")),
+            thread(2, comment(20, "eu"), comment(21, "dev"), comment(22, "Eu")),
+            thread(3, comment(30, "eu")),
+            thread(4, comment(40, "eu"), resolved = true),
+            thread(5, comment(50, "ana"), comment(51, "eu")),
+        )
+
+        assertEquals("três abertas minhas, duas com a última palavra minha", 3 to 2, AutoReply.tracked(discussions, "eu"))
+    }
+
+    @Test
+    fun aRepeatedEventOnlyRefreshesItsTimeAndTheHistoryIsCapped() {
+        val nothing = AutoEvent(1, AutoEventKind.CHECKED, "Nada novo")
+        val replied = AutoEvent(2, AutoEventKind.REPLIED, "Respondeu @dev")
+
+        val activity = AutoActivity().withEvent(nothing).withEvent(nothing.copy(at = 5)).withEvent(replied).withEvent(nothing.copy(at = 9))
+
+        assertEquals(listOf(9L to AutoEventKind.CHECKED, 2L to AutoEventKind.REPLIED, 5L to AutoEventKind.CHECKED), activity.events.map { it.at to it.kind })
+        val full = (1..50).fold(AutoActivity()) { acc, i -> acc.withEvent(AutoEvent(i.toLong(), AutoEventKind.REPLIED, "resposta $i")) }
+        assertEquals(AutoActivity.MAX_EVENTS, full.events.size)
+        assertEquals("resposta 50", full.events.first().text)
+    }
+
+    @Test
+    fun theReviewerGuidelinesGoToTheAiReviewAndToTheAutomaticReplies() {
+        val guidelines = "Bloqueie só bugs e falta de teste; ignore nomes."
+        val discussion = thread(1, comment(10, "eu"), comment(11, "dev"))
+        val files = PullRequestFiles("abc1234def", "base", listOf(ChangedFile("src/Frete.kt", "modified", "@@ -1 +1 @@\n-a\n+b")))
+
+        val review = AiReview.instructions(pr, files, guidelines = guidelines)
+        val reply = AutoReply.instructions(pr, discussion, "eu", "código", null, 1, guidelines)
+
+        listOf(review, reply).forEach { text ->
+            assertTrue("## Como o revisor avalia PRs" in text)
+            assertTrue(guidelines in text)
+        }
+        assertTrue("sem instruções, sem a seção", "Como o revisor avalia" !in AiReview.instructions(pr, files, guidelines = "  "))
+        assertEquals("", ReviewerGuidelines.section(""))
+    }
+
+    @Test
     fun theFooterSaysTheAnswerCameFromTheAi() {
         assertTrue("@eu" in AutoReply.footer("eu"))
     }

@@ -47,11 +47,11 @@ import javax.swing.JPanel
 import javax.swing.JSpinner
 import javax.swing.SpinnerNumberModel
 
-/** A aba Interceptador no painel do Iron Dome IA. */
+/** A aba Arsenal no painel do Iron Dome IA. */
 object InterceptorTab {
-    const val TITLE = "Interceptador"
+    const val TITLE = "Arsenal"
 
-    /** Abre o painel do Iron Dome IA na aba Interceptador. */
+    /** Abre o painel do Iron Dome IA na aba Arsenal. */
     fun show(project: Project) {
         ReviewToolWindowFactory.showTab(project, TITLE)
     }
@@ -66,7 +66,7 @@ class InterceptorPanel(private val project: Project) : SimpleToolWindowPanel(tru
     private class Run(val path: Path, val title: String, val status: String, val ok: Boolean)
 
     private val runner = AgentRunner.getInstance(project)
-    private val header = SummaryHeader(IronDomeIcons.interceptador, Tone.TEAL)
+    private val header = SummaryHeader(IronDomeIcons.arsenal, Tone.TEAL)
     private val provider = ComboBox(AgentProvider.entries.toTypedArray()).apply {
         renderer = SimpleListCellRenderer.create("") { "${it.title} CLI (${it.executables.first()})" }
         addActionListener { updateProviderFields() }
@@ -173,7 +173,7 @@ class InterceptorPanel(private val project: Project) : SimpleToolWindowPanel(tru
                     loadDistros()
                     reload()
                 },
-                object : com.intellij.openapi.project.DumbAwareAction("Configurações", "Abre Settings > Tools > Iron Dome IA > Interceptador (IA)", AllIcons.General.Settings) {
+                object : com.intellij.openapi.project.DumbAwareAction("Configurações", "Abre Settings > Tools > Iron Dome IA > Arsenal (IA)", AllIcons.General.Settings) {
                     override fun actionPerformed(e: com.intellij.openapi.actionSystem.AnActionEvent) {
                         ShowSettingsUtil.getInstance().showSettingsDialog(project, AgentConfigurable::class.java)
                     }
@@ -416,7 +416,7 @@ class InterceptorPanel(private val project: Project) : SimpleToolWindowPanel(tru
             AgentSettings.launch() == null -> header.update(
                 "IA não configurada",
                 Tone.GRAY.accent,
-                "O Interceptador chama a IA pelo ${chosen.title} CLI, na sua máquina ou no WSL, sobre o projeto aberto.",
+                "O Arsenal chama a IA pelo ${chosen.title} CLI, na sua máquina ou no WSL, sobre o projeto aberto.",
                 warning = autoFailure ?: if (AgentSettings.host == AgentHost.WSL) "Escolha a distribuição do WSL." else chosen.installHint,
             )
             !ready -> header.update(

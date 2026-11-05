@@ -6,7 +6,7 @@ import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import java.text.Normalizer
 
-/** CLI de agente de IA que o Interceptador chama, rodando na máquina do usuário sobre o projeto aberto. */
+/** CLI de agente de IA que o Arsenal chama, rodando na máquina do usuário sobre o projeto aberto. */
 enum class AgentProvider(val title: String, val executables: List<String>, val installHint: String) {
     CURSOR(
         "Cursor",
@@ -58,7 +58,7 @@ data class AgentTask(
     val title: String,
     val prompt: String,
     val write: Boolean,
-    /** A aba do painel que pediu: o andamento aparece nela, e sempre no Interceptador. */
+    /** A aba do painel que pediu: o andamento aparece nela, e sempre no Arsenal. */
     val origin: String? = null,
 )
 
@@ -251,7 +251,7 @@ object AgentEvents {
         return listOfNotNull(messageText(json)?.let(AgentEvent::Text)) + claudeTools(json)
     }
 
-    /** Os blocos `tool_use` de uma mensagem do Claude Code, nos tipos do registro e do Interceptador. */
+    /** Os blocos `tool_use` de uma mensagem do Claude Code, nos tipos do registro e do Arsenal. */
     private fun claudeTools(json: JsonObject): List<AgentEvent.Tool> {
         val content = json.getAsJsonObject("message")?.get("content") as? JsonArray ?: return emptyList()
         return content.mapNotNull { block ->
@@ -307,7 +307,7 @@ object AgentEvents {
         else -> AgentEvent.Other(line)
     }
 
-    /** Os nomes das ferramentas do Antigravity nos tipos do registro e do Interceptador. */
+    /** Os nomes das ferramentas do Antigravity nos tipos do registro e do Arsenal. */
     private val ANTIGRAVITY_TOOLS = mapOf(
         "view_file" to "read",
         "write_to_file" to "write",

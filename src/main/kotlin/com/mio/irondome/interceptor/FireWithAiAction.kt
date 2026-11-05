@@ -54,7 +54,7 @@ class FireWithAiAction : DumbAwareAction() {
 
     companion object {
         /** Dica dos botões de IA desligados. */
-        const val NOT_READY = "Configure e teste a IA na aba Interceptador para habilitar"
+        const val NOT_READY = "Configure e teste a IA na aba Arsenal para habilitar"
 
         /** Dica dos botões de disparar com um PR em revisão. */
         fun reviewingHint(number: Int) =

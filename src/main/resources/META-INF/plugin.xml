@@ -116,7 +116,7 @@
         <applicationConfigurable parentId="com.mio.irondome.settings"
                                  instance="com.mio.irondome.interceptor.AgentConfigurable"
                                  id="com.mio.irondome.settings.agent"
-                                 displayName="Interceptador (IA)"/>
+                                 displayName="Arsenal (IA)"/>
         <applicationConfigurable parentId="com.mio.irondome.settings"
                                  instance="com.mio.irondome.defesa.DefenseConfigurable"
                                  id="com.mio.irondome.settings.defense"

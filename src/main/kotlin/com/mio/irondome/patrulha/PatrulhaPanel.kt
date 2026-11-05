@@ -91,7 +91,15 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
         val historyShown: Boolean,
         /** A IA responde sozinha às conversas que você abriu neste PR. */
         val autoReply: Boolean,
+        /** O modo automático está conferindo ou respondendo agora. */
+        val autoWorking: Boolean,
     )
+
+    /** O modo automático do PR: se está ligado e o que [activity] diz que ele faz e fez. */
+    private class AutoReplyItem(val number: Int, val on: Boolean, val activity: AutoActivity)
+
+    /** Uma conferência ou resposta do modo automático, no histórico do PR. */
+    private class AutoEventItem(val number: Int, val event: AutoEvent)
 
     private class Section(val title: String, val icon: Icon, val count: Int)
 
@@ -163,6 +171,8 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
     private val expandedFiles = mutableSetOf<Int>()
     /** Pastas dos arquivos alterados que o usuário fechou, como `número:caminho`; as outras abrem sozinhas. */
     private val collapsedDirs = mutableSetOf<String>()
+    /** PRs com o histórico das respostas da IA fechado pelo usuário; os outros abrem com o PR. */
+    private val collapsedAuto = mutableSetOf<Int>()
 
     /**
      * PRs com as conversas do GitHub já lidas nesta aba, ao abrir o PR, de novo no Atualizar e depois de responder. As
@@ -234,10 +244,31 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
                             "responde em seu nome, até chegar a uma conclusão, quando resolve a conversa (no máximo ${AutoReply.MAX_ROUNDS} rodadas). " +
                             "Se precisar de uma decisão sua, ela não responde e avisa."
                     } else {
-                        "Configure e teste a IA no Interceptador para ligar as respostas automáticas"
+                        "Configure e teste a IA no Arsenal para ligar as respostas automáticas"
                     }
                 },
             ) { toggleAutoReply() },
+            action(
+                "Minhas Instruções para a IA",
+                "Como você avalia um PR: o que cobra, o que deixa passar e o tom. A IA segue na Revisão com IA e nas respostas automáticas",
+                AllIcons.General.User,
+                enabled = { true },
+                text = { if (ReviewerGuidelines.text.isBlank()) "Minhas Instruções para a IA…" else "Minhas Instruções para a IA (definidas)…" },
+            ) { editGuidelines() },
+            action(
+                "Conferir Respostas Agora",
+                "Confere agora as conversas dos PRs com as respostas da IA ligadas, sem esperar a próxima conferência",
+                AllIcons.Actions.Execute,
+                enabled = { selectedPr()?.let { autoReply.isOn(it.number) } == true && !autoReply.isChecking },
+                tooltipFor = {
+                    if (autoReply.isChecking) "Uma conferência já está em andamento: acompanhe no nó Respostas da IA do PR"
+                    else "Confere agora as conversas dos PRs com as respostas da IA ligadas, sem esperar a próxima conferência"
+                },
+            ) {
+                if (!autoReply.checkNow()) {
+                    notify("Conferência em andamento", "Acompanhe no nó Respostas da IA do PR.", NotificationType.INFORMATION)
+                }
+            },
             action("Enviar ao GitHub", "Envia os comentários não enviados deste PR, como rascunho que só você vê ou publicados. Escolha quais enviar, quais deixar para depois e quais excluir", AllIcons.Actions.Upload,
                 enabled = { selectedPr()?.let { it.pr != null && it.drafts.isNotEmpty() } == true }) { send() },
             action(
@@ -401,6 +432,7 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
                 checkedOut = pr != null && pr.headSha == head && branch == PatrulhaService.branchName(number),
                 historyShown = patrulha.isHistoryShown(number),
                 autoReply = autoReply.isOn(number),
+                autoWorking = autoReply.activity(number).step != null,
             )
         }
     }
@@ -411,6 +443,7 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
         val expandedObjects = TreeUtil.collectExpandedUserObjects(tree)
         val expanded = expandedObjects.mapNotNull { (it as? PrItem)?.number }.toSet()
         val expandedConversations = expandedObjects.filter { it is DiscussionsItem || it is DiscussionItem || it is RequestItem }.mapNotNull(::keyOf).toSet()
+        val expandedAuto = expandedObjects.filterIsInstance<AutoReplyItem>().map { it.number }.toSet()
         val items = items()
         val root = DefaultMutableTreeNode()
         val open = items.filter { it.pr != null }
@@ -428,6 +461,7 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
                         ParticipantsItem(item.number, pr.author, loaded?.let(Discussions::participants), discussionsErrors[item.number], me),
                     ),
                 )
+                if (item.autoReply || autoReply.activity(item.number).events.isNotEmpty()) node.add(autoReplyNode(item))
                 node.add(filesNode(item, pr))
                 node.add(discussionsNode(item, me))
             }
@@ -467,6 +501,13 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
             }
         }
         nodes.filter { keyOf(it.userObject) in expandedConversations }.forEach { tree.expandPath(TreeUtil.getPathFromRoot(it)) }
+        // O histórico das respostas da IA abre sozinho com o PR, até o usuário fechá-lo.
+        nodes.forEach { node ->
+            val item = node.userObject as? AutoReplyItem ?: return@forEach
+            val path = TreeUtil.getPathFromRoot(node)
+            val shown = item.number in expandedAuto || (item.number !in collapsedAuto && tree.isExpanded(path.parentPath))
+            if (shown) tree.expandPath(path)
+        }
         val reselect = nodes.firstOrNull { selectedKey != null && keyOf(it.userObject) == selectedKey }
             ?: nodes.firstOrNull { (it.userObject as? PrItem)?.number == selected }
         reselect?.let { tree.selectionPath = TreeUtil.getPathFromRoot(it) }
@@ -492,6 +533,8 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
         is DiscussionsItem -> "discussions:${item.number}"
         is DiscussionItem -> "discussion:${item.number}:${item.discussion.key}"
         is ReplyItem -> "reply:${item.number}:${item.comment.id}"
+        is AutoReplyItem -> "auto:${item.number}"
+        is AutoEventItem -> "autoevent:${item.number}:${item.event.at}:${item.event.kind}"
         else -> null
     }
 
@@ -512,6 +555,14 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
             discussion.replies.forEach { child.add(DefaultMutableTreeNode(ReplyItem(item.number, discussion, it, Discussions.isMine(it, me)))) }
             node.add(child)
         }
+        return node
+    }
+
+    /** O status das respostas da IA no PR, com o histórico das conferências e respostas abaixo. */
+    private fun autoReplyNode(item: PrItem): DefaultMutableTreeNode {
+        val activity = autoReply.activity(item.number)
+        val node = DefaultMutableTreeNode(AutoReplyItem(item.number, item.autoReply, activity))
+        activity.events.forEach { node.add(DefaultMutableTreeNode(AutoEventItem(item.number, it))) }
         return node
     }
 
@@ -882,9 +933,12 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
         val context = context ?: return
         val runner = AgentRunner.getInstance(project)
         val feedback = ReviewFeedback.getInstance(project)
+        val guidelines = ReviewerGuidelines.text
         background("Preparando a revisão do PR #${pr.number} para a IA", {
             val files = patrulha.files(context, pr)
-            val content = AiReview.instructions(pr, files, feedback.promptHints(), ClassDossier.collect(project, files.files.map { it.path }))
+            val content = AiReview.instructions(
+                pr, files, feedback.promptHints(), ClassDossier.collect(project, files.files.map { it.path }), guidelines,
+            )
             runner.writeInstructions(AiReview.fileName(pr.number), content)
         }) { instructions ->
             if (instructions == null) return@background
@@ -897,6 +951,18 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
                 ),
             ) { result -> if (result.ok) addAiDrafts(pr.number, AiReview.parse(result.answer)) }
         }
+    }
+
+    private fun editGuidelines() {
+        val dialog = ReviewerGuidelinesDialog(project)
+        if (!dialog.showAndGet()) return
+        ReviewerGuidelines.text = dialog.text
+        notify(
+            if (dialog.text.isBlank()) "Instruções para a IA removidas" else "Instruções para a IA salvas",
+            if (dialog.text.isBlank()) "A IA volta ao padrão na Revisão com IA e nas respostas automáticas."
+            else "A próxima Revisão com IA e as próximas respostas automáticas seguem a sua linha de avaliação.",
+            NotificationType.INFORMATION,
+        )
     }
 
     private fun toggleAutoReply() {
@@ -919,7 +985,11 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
         )
         if (confirmed != Messages.YES) return
         autoReply.setOn(number, true)
-        notify("Respostas da IA ligadas no PR #$number", "Conferindo as conversas agora; depois, a cada ${AutoReplyService.POLL_MINUTES} minutos.", NotificationType.INFORMATION)
+        notify(
+            "Respostas da IA ligadas no PR #$number",
+            "Conferindo as conversas agora; depois, a cada ${AutoReplyService.POLL_MINUTES} minutos. Acompanhe no nó Respostas da IA do PR.",
+            NotificationType.INFORMATION,
+        )
     }
 
     private fun addAiDrafts(number: Int, comments: List<AiComment>) {
@@ -1347,6 +1417,7 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
                     is FileItem -> openPrs.firstOrNull { it.number == item.number }?.let { showDiff(it, item.file.path) }
                     is DiscussionItem -> if (!navigateTo(item.discussion)) return
                     is ReplyItem -> if (!navigateTo(item.discussion)) return
+                    is AutoEventItem -> item.event.url.ifBlank { null }?.let(BrowserUtil::browse) ?: return
                     else -> return
                 }
                 e.consume()
@@ -1365,7 +1436,13 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
                     is PrItem -> item.pr?.let {
                         ensureFiles(it)
                         ensureDiscussions(it)
+                        if (item.number !in collapsedAuto) {
+                            node.children().toList().filterIsInstance<DefaultMutableTreeNode>()
+                                .firstOrNull { child -> child.userObject is AutoReplyItem }
+                                ?.let { child -> tree.expandPath(TreeUtil.getPathFromRoot(child)) }
+                        }
                     }
+                    is AutoReplyItem -> collapsedAuto -= item.number
                     is FilesItem -> {
                         expandedFiles += item.number
                         openPrs.firstOrNull { it.number == item.number }?.let(::ensureFiles)
@@ -1379,6 +1456,7 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
                 when (val item = (event.path.lastPathComponent as? DefaultMutableTreeNode)?.userObject) {
                     is FilesItem -> expandedFiles -= item.number
                     is DirItem -> collapsedDirs += dirKey(item)
+                    is AutoReplyItem -> collapsedAuto += item.number
                 }
             }
         })
@@ -1413,6 +1491,7 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
         is RequestItem -> item.request.url
         is DiscussionItem -> item.discussion.first.url.ifBlank { null } ?: selectedPr()?.pr?.url
         is ReplyItem -> item.comment.url.ifBlank { null } ?: selectedPr()?.pr?.url
+        is AutoEventItem -> item.event.url.ifBlank { null } ?: selectedPr()?.pr?.url
         is FilesItem, is DirItem, is FileItem -> selectedPr()?.pr?.url?.let { "$it/files" }
         else -> selectedPr()?.let { it.pr?.url ?: it.record?.url }
     }
@@ -1524,6 +1603,8 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
                     row.detail(firstLine(item.comment.body))
                     row.tooltip(item.comment.body.trim())
                 }
+                is AutoReplyItem -> describeAutoReply(row, item)
+                is AutoEventItem -> describeAutoEvent(row, item.event)
                 is FilesItem -> describeFiles(row, item)
                 is DirItem -> describeDir(row, item)
                 is FileItem -> describeFile(row, item)
@@ -1626,6 +1707,64 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
 
         private fun firstLine(text: String) = CommentMarkdown.plain(text, 160)
 
+        private fun describeAutoReply(row: Row, item: AutoReplyItem) {
+            val activity = item.activity
+            val working = item.on && activity.step != null
+            row.icon(if (working) AllIcons.Process.Step_1 else AllIcons.Actions.Lightning)
+            row.text("Respostas da IA", SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
+            when {
+                !item.on -> row.pill("Desligadas", Tone.GRAY)
+                working -> row.pill("Trabalhando", Tone.PINK, bold = true)
+                activity.problem != null -> row.pill("Parado", Tone.ORANGE, bold = true)
+                else -> row.pill("Ligadas", Tone.PINK)
+            }
+            val times = listOfNotNull(
+                activity.checkedAt?.let { "conferido às ${AutoReplyService.time(it)}" },
+                activity.nextAt?.takeIf { item.on && !working }?.let { "próxima às ${AutoReplyService.time(it)}" },
+            )
+            if (times.isNotEmpty()) row.text(times.joinToString(" · "), SimpleTextAttributes.GRAYED_ATTRIBUTES)
+            if (activity.checkedAt != null) {
+                row.pill(plural(activity.mine, "conversa sua aberta", "conversas suas abertas"), Tone.GRAY)
+                if (activity.waiting > 0) row.pill("${activity.waiting} aguardando o dev", Tone.BLUE)
+                if (activity.forAi > 0) row.pill("${activity.forAi} para a IA", Tone.PINK, bold = true)
+            }
+            val detail = when {
+                working -> activity.step
+                activity.problem != null && item.on -> activity.problem
+                item.on && activity.checkedAt == null -> "Aguardando a primeira conferência…"
+                else -> null
+            }
+            detail?.let(row::detail)
+            row.tooltip(
+                "A cada ${AutoReplyService.POLL_MINUTES} minutos, a Patrulha confere as conversas que você abriu neste PR. Quando o dev responde, " +
+                    "a IA avalia e responde em seu nome, até concluir e resolver a conversa (no máximo ${AutoReply.MAX_ROUNDS} rodadas). " +
+                    "Abaixo, o histórico das conferências; Conferir Agora não espera a próxima.",
+            )
+        }
+
+        private fun describeAutoEvent(row: Row, event: AutoEvent) {
+            row.icon(
+                when (event.kind) {
+                    AutoEventKind.CHECKED -> AllIcons.Actions.Checked
+                    AutoEventKind.REPLIED -> AllIcons.Actions.Back
+                    AutoEventKind.CONCLUDED -> AllIcons.General.InspectionsOK
+                    AutoEventKind.NEEDS_YOU -> AllIcons.General.User
+                    AutoEventKind.LIMIT, AutoEventKind.BLOCKED -> AllIcons.General.Warning
+                    AutoEventKind.ERROR -> AllIcons.General.Error
+                },
+            )
+            row.text(AutoReplyService.time(event.at), SimpleTextAttributes.GRAYED_ATTRIBUTES)
+            row.text(
+                event.text,
+                when (event.kind) {
+                    AutoEventKind.CHECKED -> SimpleTextAttributes.GRAYED_ATTRIBUTES
+                    AutoEventKind.NEEDS_YOU, AutoEventKind.ERROR -> SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES
+                    else -> SimpleTextAttributes.REGULAR_ATTRIBUTES
+                },
+            )
+            row.tooltip(event.text + if (event.url.isNotBlank()) "\nDuplo clique abre a conversa no GitHub." else "")
+        }
+
         private fun autoPill(row: Row, status: AutoStatus) = row.pill(
             status.label,
             when (status) {
@@ -1708,7 +1847,7 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
             if (item.pr?.draft == true) row.pill("Rascunho", Tone.GRAY)
             if (item.active) row.pill("Em revisão", Tone.PURPLE, bold = true)
             if (item.checkedOut) row.pill("No checkout", Tone.TEAL)
-            if (item.autoReply) row.pill("Respostas da IA", Tone.PINK, bold = true)
+            if (item.autoReply) row.pill(if (item.autoWorking) "IA trabalhando" else "Respostas da IA", Tone.PINK, bold = true)
             if (item.historyShown && item.record?.requests?.isNotEmpty() == true) row.pill("Histórico no editor", Tone.BLUE)
             if (item.drafts.isNotEmpty()) row.pill(plural(item.drafts.size, "não enviado", "não enviados"), CommentStatus.UNSAVED.tone)
             item.record?.drafts?.size?.takeIf { it > 0 }?.let { row.pill(plural(it, "rascunho no GitHub", "rascunhos no GitHub"), Tone.YELLOW, bold = true) }

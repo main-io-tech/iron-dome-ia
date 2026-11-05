@@ -104,7 +104,7 @@ object Compatibility {
         null -> CompatibilityCheck(
             Mechanism.INTERCEPTOR, CheckStatus.INFO,
             "${env.agentProvider} CLI não encontrado: as ações com IA ficam indisponíveis ou só copiam o pedido.",
-            "Instale o CLI ou informe o caminho em Settings > Tools > Iron Dome IA > Interceptador (IA).",
+            "Instale o CLI ou informe o caminho em Settings > Tools > Iron Dome IA > Arsenal (IA).",
         )
         else -> CompatibilityCheck(Mechanism.INTERCEPTOR, CheckStatus.OK, "${env.agentProvider} CLI em $cli.")
     }

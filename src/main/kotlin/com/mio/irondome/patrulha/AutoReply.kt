@@ -23,11 +23,65 @@ enum class AutoStatus(val label: String) {
     LIMIT("IA no limite de rodadas"),
 }
 
+/** O que aconteceu numa conferência do modo automático, para o histórico do PR. */
+enum class AutoEventKind {
+    /** Nada novo: as conversas foram lidas e nenhuma tinha resposta nova do dev. */
+    CHECKED,
+    REPLIED,
+    CONCLUDED,
+    NEEDS_YOU,
+    LIMIT,
+    /** A conferência não pôde seguir: IA ocupada ou sem configuração, GitHub fora do ar, sem conta. */
+    BLOCKED,
+    ERROR,
+}
+
+/** [at] em milissegundos da época; [url] abre a conversa no GitHub, quando há. */
+data class AutoEvent(val at: Long, val kind: AutoEventKind, val text: String, val url: String = "")
+
+/**
+ * O modo automático de um PR agora: [step] é o que ele faz neste momento (nulo entre conferências); [mine], as
+ * conversas abertas que você começou; [waiting], as que têm a última palavra sua; [forAi], as que têm resposta nova
+ * do dev; [problem], por que a última conferência não seguiu. [events], do mais recente para o mais antigo.
+ */
+data class AutoActivity(
+    val checkedAt: Long? = null,
+    val nextAt: Long? = null,
+    val step: String? = null,
+    val mine: Int = 0,
+    val waiting: Int = 0,
+    val forAi: Int = 0,
+    val problem: String? = null,
+    val events: List<AutoEvent> = emptyList(),
+) {
+    /**
+     * Com [event] no topo do histórico. Um igual ao mais recente (mesmo tipo e texto, como "nada novo" a cada
+     * conferência) só atualiza a hora dele, para o histórico não encher de repetições.
+     */
+    fun withEvent(event: AutoEvent): AutoActivity {
+        val last = events.firstOrNull()
+        val rest = if (last != null && last.kind == event.kind && last.text == event.text) events.drop(1) else events
+        return copy(events = (listOf(event) + rest).take(MAX_EVENTS))
+    }
+
+    companion object {
+        const val MAX_EVENTS = 30
+    }
+}
+
 /**
  * As respostas automáticas da IA nas conversas de quem revisa: quais conversas esperam resposta, as instruções que
  * a IA lê e a leitura do JSON que ela devolve.
  */
 object AutoReply {
+
+    /** As conversas de linha abertas que [me] começou, e quantas delas têm a última palavra de [me]. */
+    fun tracked(discussions: List<Discussion>, me: String): Pair<Int, Int> {
+        val mine = discussions.filter {
+            it.kind == DiscussionKind.THREAD && !it.resolved && it.first.author.equals(me, ignoreCase = true)
+        }
+        return mine.size to mine.count { it.comments.last().author.equals(me, ignoreCase = true) }
+    }
 
     /** Rodadas da IA por conversa: passou disso, a conversa volta para quem revisa. */
     const val MAX_ROUNDS = 5
@@ -57,7 +111,8 @@ object AutoReply {
 
     /**
      * [code] é o arquivo no head do PR (nulo se saiu do PR); [request], o pedido do `.md` que abriu a conversa,
-     * quando há; [round], a rodada desta resposta, de 1 a [MAX_ROUNDS].
+     * quando há; [round], a rodada desta resposta, de 1 a [MAX_ROUNDS]; [guidelines], a linha de avaliação do
+     * revisor, de [ReviewerGuidelines].
      */
     fun instructions(
         pr: PullRequest,
@@ -66,6 +121,7 @@ object AutoReply {
         code: String?,
         request: ChangeRequest?,
         round: Int,
+        guidelines: String = "",
     ): String = buildString {
         val where = "`${discussion.path}`" + (discussion.line?.let { ", linha $it" } ?: ", arquivo inteiro")
         appendLine("# Resposta automática no PR #${pr.number}: ${pr.title}")
@@ -103,6 +159,7 @@ object AutoReply {
         appendLine("  conversa será marcada como resolvida) ou `human` (o revisor precisa responder; `reply` vazio).")
         appendLine("- `reason`: uma frase para o revisor, explicando a decisão.")
         appendLine()
+        append(ReviewerGuidelines.section(guidelines))
         if (request != null) {
             appendLine("## O pedido original do revisor")
             appendLine()

@@ -40,7 +40,7 @@ import javax.swing.Timer
 /**
  * A IA trabalhando, dentro da aba: a tarefa, o passo de agora com a trilha dos anteriores, os contadores de
  * ações, arquivos e tempo, uma barra pulsante e os botões de cancelar e de abrir o terminal. Aparece na aba
- * que pediu a execução ([AgentTask.origin]) e sempre no Interceptador; execuções sem aba de origem, como as
+ * que pediu a execução ([AgentTask.origin]) e sempre no Arsenal; execuções sem aba de origem, como as
  * da Caixa-Preta, aparecem em todas.
  */
 class AgentProgressPanel(private val project: Project, private val tab: String, parent: Disposable) : JPanel(BorderLayout(JBUI.scale(12), 0)) {

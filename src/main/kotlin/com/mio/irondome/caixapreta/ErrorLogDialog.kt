@@ -84,7 +84,7 @@ internal class ErrorLogDialog private constructor(private val project: Project, 
         }
     }
 
-    /** Só com a IA configurada e testada, na aba Interceptador. */
+    /** Só com a IA configurada e testada, na aba Arsenal. */
     private val analyzeAction = object : AbstractAction("Analisar com IA", IronDomeIcons.ia) {
         override fun actionPerformed(e: ActionEvent) {
             val group = list.selectedValue ?: return

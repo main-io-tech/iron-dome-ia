@@ -22,6 +22,9 @@ import com.mio.irondome.interceptor.AgentResult
 import com.mio.irondome.interceptor.AgentRunner
 import com.mio.irondome.interceptor.AgentSettings
 import com.mio.irondome.interceptor.AgentTask
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
@@ -32,6 +35,9 @@ import java.util.concurrent.atomic.AtomicBoolean
  * quando alguém responde, a IA avalia a resposta e responde no GitHub, em nome do revisor, até a conversa chegar a
  * uma conclusão, quando ela é resolvida. A IA pode devolver a conversa ao revisor, e cada conversa tem no máximo
  * [AutoReply.MAX_ROUNDS] rodadas. Uma conversa por vez, porque a IA roda uma tarefa por vez.
+ *
+ * O que ele faz fica em [activity], para a aba mostrar: o passo de agora, as contas das conversas, por que parou e o
+ * histórico das conferências.
  */
 @Service(Service.Level.PROJECT)
 @State(name = "IronDomeAutoReply", storages = [Storage(StoragePathMacros.WORKSPACE_FILE)])
@@ -55,6 +61,8 @@ class AutoReplyService(private val project: Project) : PersistentStateComponent<
     private val lock = Any()
     private val checking = AtomicBoolean(false)
     private var schedule: ScheduledFuture<*>? = null
+    /** O que a aba mostra de cada PR; só na memória, recomeça ao abrir o projeto. */
+    private val activities = mutableMapOf<Int, AutoActivity>()
 
     override fun getState(): AutoReplyState = synchronized(lock) { state }
 
@@ -67,23 +75,40 @@ class AutoReplyService(private val project: Project) : PersistentStateComponent<
     fun status(number: Int, discussion: Discussion): AutoStatus? =
         synchronized(lock) { state.statuses[AutoReply.key(number, discussion)] }?.let { name -> AutoStatus.entries.firstOrNull { it.name == name } }
 
+    fun activity(number: Int): AutoActivity = synchronized(lock) { activities[number] ?: AutoActivity() }
+
+    /** Uma conferência está em andamento. */
+    val isChecking: Boolean get() = checking.get()
+
     /** Liga ou desliga o modo automático no PR [number]; ligar já confere as conversas. */
     fun setOn(number: Int, on: Boolean) {
         synchronized(lock) { if (on) state.pullRequests += number.toString() else state.pullRequests -= number.toString() }
-        changed()
         if (on) {
+            update(number) { it.copy(step = "Começando a conferir…", problem = null) }
             ensureScheduled()
-            ApplicationManager.getApplication().executeOnPooledThread(::tick)
+            if (!checkNow()) update(number) { it.copy(step = null, nextAt = System.currentTimeMillis() + POLL_MINUTES * 60_000) }
+        } else {
+            update(number) { it.copy(step = null, nextAt = null) }
         }
+    }
+
+    /** Confere os PRs ligados agora, sem esperar a próxima conferência; false se uma já está em andamento. */
+    fun checkNow(): Boolean {
+        if (checking.get()) return false
+        ApplicationManager.getApplication().executeOnPooledThread(::tick)
+        return true
     }
 
     /** Começa a conferir de tempos em tempos, se algum PR está ligado. */
     fun ensureScheduled() {
-        synchronized(lock) {
+        val numbers = synchronized(lock) {
             if (schedule != null || state.pullRequests.isEmpty()) return
             schedule = AppExecutorUtil.getAppScheduledExecutorService()
-                .scheduleWithFixedDelay(::tick, POLL_MINUTES, POLL_MINUTES, TimeUnit.MINUTES)
+                .scheduleWithFixedDelay(::tick, FIRST_DELAY_SECONDS, POLL_MINUTES * 60, TimeUnit.SECONDS)
+            state.pullRequests.mapNotNull(String::toIntOrNull)
         }
+        val next = System.currentTimeMillis() + FIRST_DELAY_SECONDS * 1000
+        numbers.forEach { number -> update(number) { if (it.nextAt == null) it.copy(nextAt = next) else it } }
     }
 
     override fun dispose() {
@@ -93,73 +118,125 @@ class AutoReplyService(private val project: Project) : PersistentStateComponent<
         }
     }
 
-    /** Uma passada por todos os PRs ligados. Fora da EDT; uma passada por vez. */
+    /** Uma conferência de todos os PRs ligados. Fora da EDT; uma por vez. */
     private fun tick() {
         if (project.isDisposed || !checking.compareAndSet(false, true)) return
+        val numbers = synchronized(lock) { state.pullRequests.mapNotNull(String::toIntOrNull) }
         try {
-            val numbers = synchronized(lock) { state.pullRequests.mapNotNull(String::toIntOrNull) }
-            if (numbers.isEmpty() || !AgentSettings.ready) return
+            if (numbers.isEmpty()) return
+            if (!AgentSettings.ready) {
+                numbers.forEach { blocked(it, "A IA não está configurada ou testada no Arsenal: configure para as respostas voltarem.") }
+                return
+            }
+            numbers.forEach { number -> update(number) { it.copy(step = "Lendo os PRs abertos no GitHub…") } }
             val patrulha = PatrulhaService.getInstance(project)
-            val context = patrulha.context()?.takeIf { it.account != null } ?: return
+            val context = patrulha.context()?.takeIf { it.account != null }
+            if (context == null) {
+                numbers.forEach { blocked(it, "Sem conta do GitHub para este repositório: entre em Settings > Version Control > GitHub.") }
+                return
+            }
             val client = patrulha.client(context)
             val open = client.openPullRequests(context.repo).associateBy { it.number }
             for (number in numbers) {
-                if (project.isDisposed) return
+                if (project.isDisposed || !isOn(number)) continue
                 val pr = open[number]
                 if (pr == null) {
+                    event(number, AutoEventKind.BLOCKED, "O PR foi fechado ou saiu da lista de abertos: respostas da IA desligadas.")
                     setOn(number, false)
                     notify("Respostas da IA desligadas no PR #$number", "O PR foi fechado ou saiu da lista de abertos.", NotificationType.INFORMATION)
                     continue
                 }
-                if (!check(context, client, pr)) return
+                try {
+                    if (!check(context, client, pr)) {
+                        blocked(number, "A IA está ocupada com outra tarefa: tento de novo na próxima conferência.")
+                        break
+                    }
+                } catch (e: Exception) {
+                    LOG.warn("A conferência do PR #$number falhou", e)
+                    failed(number, "Não deu para conferir: ${e.message ?: e.javaClass.simpleName}")
+                }
             }
         } catch (e: Exception) {
             LOG.warn("O modo automático da Patrulha falhou", e)
+            numbers.forEach { failed(it, "Não deu para ler o GitHub: ${e.message ?: e.javaClass.simpleName}") }
         } finally {
+            val next = System.currentTimeMillis() + POLL_MINUTES * 60_000
+            numbers.filter(::isOn).forEach { number -> update(number) { it.copy(step = null, nextAt = next) } }
             checking.set(false)
+            changed()
         }
     }
 
-    /** Responde às conversas do PR que esperam a IA; false quando a IA está ocupada, para tentar na próxima passada. */
+    /** Responde às conversas do PR que esperam a IA; false quando a IA está ocupada, para tentar na próxima conferência. */
     private fun check(context: RepoContext, client: GitHubClient, pr: PullRequest): Boolean {
         val me = context.account?.name ?: return true
+        val number = pr.number
+        update(number) { it.copy(step = "Lendo as suas conversas no GitHub…") }
         val patrulha = PatrulhaService.getInstance(project)
-        val discussions = patrulha.discussions(context, pr.number)
+        val discussions = patrulha.discussions(context, number)
         val pending = synchronized(lock) {
             val stopped = state.statuses.filterValues { it == AutoStatus.CONCLUDED.name || it == AutoStatus.LIMIT.name }.keys
-            AutoReply.pending(pr.number, discussions, me, state.handled, stopped)
+            AutoReply.pending(number, discussions, me, state.handled, stopped)
         }
-        for (discussion in pending) {
-            if (!isOn(pr.number) || project.isDisposed) return true
-            val key = AutoReply.key(pr.number, discussion)
+        val (mine, waiting) = AutoReply.tracked(discussions, me)
+        update(number) { it.copy(checkedAt = System.currentTimeMillis(), mine = mine, waiting = waiting, forAi = pending.size, problem = null) }
+        if (pending.isEmpty()) {
+            event(
+                number,
+                AutoEventKind.CHECKED,
+                when {
+                    mine == 0 -> "Nada novo: você não tem conversas abertas neste PR."
+                    else -> "Nada novo: ${countText(mine, "conversa sua aberta", "conversas suas abertas")}, " +
+                        "${countText(waiting, "aguardando", "aguardando")} o dev."
+                },
+            )
+            return true
+        }
+        for ((index, discussion) in pending.withIndex()) {
+            if (!isOn(number) || project.isDisposed) return true
+            val key = AutoReply.key(number, discussion)
+            val to = discussion.comments.last()
             val round = synchronized(lock) { (state.rounds[key] ?: 0) + 1 }
             if (round > AutoReply.MAX_ROUNDS) {
                 settle(discussion, key, AutoStatus.LIMIT)
-                notify(
-                    "PR #${pr.number}: a conversa passou de ${AutoReply.MAX_ROUNDS} rodadas",
-                    "A IA parou de responder a @${discussion.comments.last().author} em ${where(discussion)}. Continue por você.",
-                    NotificationType.WARNING,
-                    discussion,
-                )
+                val text = "Parou em ${where(discussion)}: a conversa com @${to.author} passou de ${AutoReply.MAX_ROUNDS} rodadas. Continue por você."
+                event(number, AutoEventKind.LIMIT, text, to.url)
+                notify("PR #$number: a conversa passou de ${AutoReply.MAX_ROUNDS} rodadas", text, NotificationType.WARNING, to.url)
                 continue
+            }
+            update(number) {
+                it.copy(step = "IA avaliando a resposta de @${to.author} em ${where(discussion)} (rodada $round de ${AutoReply.MAX_ROUNDS})…")
             }
             val result = answer(client, context, pr, discussion, me, round) ?: return false
-            if (!result.ok) {
-                settle(discussion, key, AutoStatus.NEEDS_YOU)
-                if (!result.cancelled) {
-                    notify("A IA não respondeu no PR #${pr.number}", "Em ${where(discussion)}: ${result.error}. A conversa ficou para você.", NotificationType.WARNING, discussion)
+            when {
+                result.cancelled -> {
+                    settle(discussion, key, AutoStatus.NEEDS_YOU)
+                    event(number, AutoEventKind.NEEDS_YOU, "Você cancelou a IA em ${where(discussion)}: a resposta a @${to.author} ficou com você.", to.url)
                 }
-                continue
+                !result.ok -> {
+                    settle(discussion, key, AutoStatus.NEEDS_YOU)
+                    val text = "A IA falhou em ${where(discussion)}: ${result.error}. A resposta a @${to.author} ficou com você."
+                    event(number, AutoEventKind.ERROR, text, to.url)
+                    notify("A IA não respondeu no PR #$number", text, NotificationType.WARNING, to.url)
+                }
+                else -> {
+                    val answer = AutoReply.parse(result.answer)
+                    if (answer == null) {
+                        settle(discussion, key, AutoStatus.NEEDS_YOU)
+                        val text = "A IA não decidiu no formato pedido em ${where(discussion)}: a resposta a @${to.author} ficou com você."
+                        event(number, AutoEventKind.ERROR, text, to.url)
+                        notify("A IA não decidiu no PR #$number", text, NotificationType.WARNING, to.url)
+                    } else {
+                        publish(client, pr, discussion, key, round, me, answer)
+                    }
+                }
             }
-            val answer = AutoReply.parse(result.answer)
-            if (answer == null) {
-                settle(discussion, key, AutoStatus.NEEDS_YOU)
-                notify("A IA não decidiu no PR #${pr.number}", "A resposta sobre ${where(discussion)} não veio no formato pedido. A conversa ficou para você.", NotificationType.WARNING, discussion)
-                continue
-            }
-            publish(context, client, pr, discussion, key, round, me, answer)
+            update(number) { it.copy(forAi = pending.size - index - 1) }
         }
-        if (pending.isNotEmpty()) patrulha.discussions(context, pr.number)
+        update(number) { it.copy(step = "Relendo as conversas…") }
+        val after = patrulha.discussions(context, number)
+        val (mineAfter, waitingAfter) = AutoReply.tracked(after, me)
+        update(number) { it.copy(mine = mineAfter, waiting = waitingAfter) }
         return true
     }
 
@@ -168,7 +245,7 @@ class AutoReplyService(private val project: Project) : PersistentStateComponent<
         val patrulha = PatrulhaService.getInstance(project)
         val code = discussion.path?.let { runCatching { client.fileContent(context.repo, it, pr.headSha) }.getOrNull() }
         val request = patrulha.record(pr.number)?.requests?.firstOrNull { it.commentId == discussion.first.id }
-        val content = AutoReply.instructions(pr, discussion, me, code, request, round)
+        val content = AutoReply.instructions(pr, discussion, me, code, request, round, ReviewerGuidelines.text)
         val runner = AgentRunner.getInstance(project)
         val instructions = runner.writeInstructions("pr-${pr.number}-conversa-${discussion.first.id}.md", content) ?: return null
         val done = CountDownLatch(1)
@@ -193,48 +270,50 @@ class AutoReplyService(private val project: Project) : PersistentStateComponent<
         return result
     }
 
-    private fun publish(
-        context: RepoContext,
-        client: GitHubClient,
-        pr: PullRequest,
-        discussion: Discussion,
-        key: String,
-        round: Int,
-        me: String,
-        answer: AutoAnswer,
-    ) {
+    private fun publish(client: GitHubClient, pr: PullRequest, discussion: Discussion, key: String, round: Int, me: String, answer: AutoAnswer) {
+        val number = pr.number
         val to = discussion.comments.last()
         if (answer.decision == AutoDecision.HUMAN) {
             settle(discussion, key, AutoStatus.NEEDS_YOU)
-            notify(
-                "PR #${pr.number}: @${to.author} espera você",
-                "Em ${where(discussion)}, a IA não respondeu: ${answer.reason.ifBlank { "a conversa pede uma decisão sua." }}",
-                NotificationType.WARNING,
-                discussion,
-            )
+            val text = "Em ${where(discussion)}, @${to.author} espera você: ${answer.reason.ifBlank { "a conversa pede uma decisão sua." }}"
+            event(number, AutoEventKind.NEEDS_YOU, text, to.url)
+            notify("PR #$number: @${to.author} espera você", text, NotificationType.WARNING, to.url)
             return
         }
+        update(number) { it.copy(step = "Publicando a resposta a @${to.author} em ${where(discussion)}…") }
         val posted = try {
             client.replyToThread(discussion.nodeId, answer.reply + AutoReply.footer(me), null)
         } catch (e: Exception) {
             LOG.warn("A resposta automática não foi publicada", e)
             settle(discussion, key, AutoStatus.NEEDS_YOU)
-            notify("A resposta da IA não foi publicada no PR #${pr.number}", "Em ${where(discussion)}: ${e.message ?: e.javaClass.simpleName}", NotificationType.ERROR, discussion)
+            val text = "A resposta a @${to.author} em ${where(discussion)} não foi publicada: ${e.message ?: e.javaClass.simpleName}"
+            event(number, AutoEventKind.ERROR, text, to.url)
+            notify("A resposta da IA não foi publicada no PR #$number", text, NotificationType.ERROR, to.url)
             return
         }
         synchronized(lock) { state.rounds[key] = round }
         val concluded = answer.decision == AutoDecision.CONCLUDE
-        val resolveError = if (concluded) runCatching { client.resolveThread(discussion.nodeId) }.exceptionOrNull() else null
+        val resolveError = if (concluded) {
+            update(number) { it.copy(step = "Resolvendo a conversa em ${where(discussion)}…") }
+            runCatching { client.resolveThread(discussion.nodeId) }.exceptionOrNull()
+        } else {
+            null
+        }
         settle(discussion, key, if (concluded) AutoStatus.CONCLUDED else AutoStatus.WAITING)
-        val title = if (concluded) "IA concluiu a conversa com @${to.author} no PR #${pr.number}" else "IA respondeu @${to.author} no PR #${pr.number}"
-        val content = listOfNotNull(
-            "Em ${where(discussion)}, rodada $round de ${AutoReply.MAX_ROUNDS}.",
+        val text = listOfNotNull(
+            if (concluded) "Concluiu a conversa com @${to.author} em ${where(discussion)}" + (if (resolveError == null) " e a resolveu." else ".")
+            else "Respondeu @${to.author} em ${where(discussion)} (rodada $round de ${AutoReply.MAX_ROUNDS}).",
             answer.reason.takeIf { it.isNotBlank() },
             "A resposta ficou no seu rascunho de revisão: publique o rascunho para o dev ver.".takeIf { posted.pending },
             resolveError?.let { "Não deu para resolver a conversa no GitHub: ${it.message ?: it.javaClass.simpleName}." },
-            "O monitor segue esperando o dev.".takeIf { !concluded },
         ).joinToString(" ")
-        notify(title, content, NotificationType.INFORMATION, discussion, posted.url)
+        event(number, if (concluded) AutoEventKind.CONCLUDED else AutoEventKind.REPLIED, text, posted.url.ifBlank { to.url })
+        notify(
+            if (concluded) "IA concluiu a conversa com @${to.author} no PR #$number" else "IA respondeu @${to.author} no PR #$number",
+            text,
+            NotificationType.INFORMATION,
+            posted.url.ifBlank { to.url },
+        )
     }
 
     /** O comentário do dev foi tratado: a conversa fica em [status] até um comentário novo. */
@@ -243,6 +322,25 @@ class AutoReplyService(private val project: Project) : PersistentStateComponent<
             state.handled += discussion.comments.last().id
             state.statuses[key] = status.name
         }
+        changed()
+    }
+
+    /** A conferência do PR não seguiu por [reason], que fica no status e no histórico. */
+    private fun blocked(number: Int, reason: String) {
+        update(number) { it.copy(problem = reason) }
+        event(number, AutoEventKind.BLOCKED, reason)
+    }
+
+    private fun failed(number: Int, reason: String) {
+        update(number) { it.copy(problem = reason) }
+        event(number, AutoEventKind.ERROR, reason)
+    }
+
+    private fun event(number: Int, kind: AutoEventKind, text: String, url: String = "") =
+        update(number) { it.withEvent(AutoEvent(System.currentTimeMillis(), kind, text, url)) }
+
+    private fun update(number: Int, change: (AutoActivity) -> AutoActivity) {
+        synchronized(lock) { activities[number] = change(activities[number] ?: AutoActivity()) }
         changed()
     }
 
@@ -256,21 +354,28 @@ class AutoReplyService(private val project: Project) : PersistentStateComponent<
     private fun where(discussion: Discussion) =
         "${discussion.path.orEmpty()}, ${discussion.line?.let { "linha $it" } ?: "arquivo inteiro"}"
 
-    private fun notify(title: String, content: String, type: NotificationType, discussion: Discussion? = null, url: String = "") {
-        val link = url.ifBlank { discussion?.comments?.last()?.url.orEmpty() }
+    private fun countText(count: Int, one: String, many: String) = "$count ${if (count == 1) one else many}"
+
+    private fun notify(title: String, content: String, type: NotificationType, url: String = "") {
         NotificationGroupManager.getInstance().getNotificationGroup("Iron Dome IA")
             .createNotification(title, content.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"), type)
             .setIcon(IronDomeIcons.patrulha)
-            .apply { if (link.isNotBlank()) addAction(NotificationAction.createSimpleExpiring("Abrir no GitHub") { BrowserUtil.browse(link) }) }
+            .apply { if (url.isNotBlank()) addAction(NotificationAction.createSimpleExpiring("Abrir no GitHub") { BrowserUtil.browse(url) }) }
             .notify(project)
     }
 
     companion object {
         /** De quanto em quanto tempo o monitor confere as conversas. */
         const val POLL_MINUTES = 2L
+        /** A primeira conferência depois de abrir o projeto. */
+        private const val FIRST_DELAY_SECONDS = 20L
         private val LOG = logger<AutoReplyService>()
+        private val TIME = DateTimeFormatter.ofPattern("HH:mm")
 
         fun getInstance(project: Project): AutoReplyService = project.service()
+
+        /** `21:10`, no fuso da máquina. */
+        fun time(millis: Long): String = TIME.format(Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()))
     }
 }
 

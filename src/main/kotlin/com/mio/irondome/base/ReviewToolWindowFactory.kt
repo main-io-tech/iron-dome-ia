@@ -61,10 +61,10 @@ class ReviewToolWindowFactory : ToolWindowFactory, DumbAware {
         for (tab in ReviewToolWindowTab.EP_NAME.extensionList) {
             add(toolWindow, tab.title, tab.icon, tab.description) { tab.createComponent(project, toolWindow) }
         }
-        add(toolWindow, InterceptorTab.TITLE, IronDomeIcons.interceptador, "A IA: qual CLI usar, o teste da integração e as execuções recentes") {
+        add(toolWindow, InterceptorTab.TITLE, IronDomeIcons.arsenal, "A IA: qual CLI usar, o teste da integração e as execuções recentes") {
             val web = if (WebTab.supported) {
                 runCatching { InterceptorWeb(project) }
-                    .onFailure { if (it is ControlFlowException) throw it else LOG.warn("O Interceptador web não abriu; vale o painel sem navegador", it) }
+                    .onFailure { if (it is ControlFlowException) throw it else LOG.warn("O Arsenal web não abriu; vale o painel sem navegador", it) }
                     .getOrNull()
             } else {
                 null

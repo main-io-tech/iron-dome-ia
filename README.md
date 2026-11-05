@@ -24,7 +24,7 @@
   <a href="#sentinela">Sentinela</a> &nbsp;·&nbsp;
   <a href="#escudo">Escudo</a> &nbsp;·&nbsp;
   <a href="#patrulha">Patrulha</a> &nbsp;·&nbsp;
-  <a href="#interceptador">Interceptador</a> &nbsp;·&nbsp;
+  <a href="#arsenal">Arsenal</a> &nbsp;·&nbsp;
   <a href="#instalacao">Instalação</a> &nbsp;·&nbsp;
   <a href="#configure-sua-ia">Configure sua IA</a> &nbsp;·&nbsp;
   <a href="#faq">FAQ</a>
@@ -93,7 +93,7 @@ Cada mecanismo é independente e tem uma aba própria no painel lateral **Iron D
 | 👁️ [**Sentinela**](#sentinela) | Vigia o perímetro: tudo o que ainda não foi commitado, com o diff a um clique. | Aba Sentinela |
 | 🛡️ [**Escudo**](#escudo) | Executa os testes JUnit e mostra o resultado agrupado e com os nomes formatados. | Aba Escudo |
 | 🛰️ [**Patrulha**](#patrulha) | Revisa os pull requests abertos no GitHub no modo revisão do PR, envia os pedidos de alteração e confere depois se foram atendidos. | Aba Patrulha |
-| 🚀 [**Interceptador**](#interceptador) | Chama a IA pelo Cursor CLI ou Antigravity CLI para disparar alvos, revisar PRs, explicar falhas de teste e analisar bugs. | Ações com IA nas abas |
+| 🛠️ [**Arsenal**](#arsenal) | Chama a IA pelo Cursor CLI ou Antigravity CLI para disparar alvos, revisar PRs, explicar falhas de teste e analisar bugs. | Ações com IA nas abas |
 | 🏰 [**Base**](#base) | O painel lateral e os componentes visuais que os mecanismos compartilham. | Lateral da IDE |
 | 📦 [**Caixa-Preta**](#caixa-preta) | Reporta bugs do próprio plugin: um `.md` dizendo onde foi o bug, com print, GIF e erros do log, enviado ao Linear. E confere se a IDE tem o que cada mecanismo precisa. | Topo do painel e menu Help |
 
@@ -523,8 +523,12 @@ foi atendido.
 Um pedido conta como atendido quando o código mudou ou a conversa foi resolvida; e como pendente quando
 nada disso aconteceu depois de commits novos.
 
+   **Minhas Instruções para a IA**, na barra da aba, guarda a sua linha de avaliação de PR, nas suas palavras:
+   o que bloqueia um PR para você, o que é só sugestão, o que ignorar, os padrões que você cobra, quando aceitar
+   a explicação do dev e o tom. A IA segue essas instruções acima do padrão, na **Revisão com IA** e nas
+   respostas automáticas. Elas ficam nas preferências da IDE e valem para todos os projetos.
 6. **Deixe a IA conversar.** **Ligar Respostas da IA**, na barra da aba, liga o modo automático no PR
-   selecionado (com a IA configurada no Interceptador). A cada 2 minutos, enquanto a IDE estiver aberta, a
+   selecionado (com a IA configurada no Arsenal). A cada 2 minutos, enquanto a IDE estiver aberta, a
    Patrulha confere as conversas de linha que você abriu no PR. Quando alguém responde, a IA lê a conversa
    inteira, o pedido original e o código no head do PR, e decide:
    - **Responder:** publica a resposta em seu nome e espera o dev de novo (*IA aguardando o dev*).
@@ -537,6 +541,14 @@ nada disso aconteceu depois de commits novos.
    Cada conversa tem no máximo 5 rodadas da IA; passou disso, ela para e avisa (*IA no limite de rodadas*).
    Responder você mesmo não atrapalha: a IA só entra quando a última palavra é de outra pessoa. O modo
    desliga sozinho quando o PR é fechado, e **Desligar Respostas da IA** para na hora.
+
+   O nó **Respostas da IA**, no PR, mostra o que o modo está fazendo: *Trabalhando* com o passo de agora
+   (*Lendo as suas conversas no GitHub…*, *IA avaliando a resposta de @dev em `Frete.kt`, linha 30…*,
+   *Publicando a resposta…*), *Ligadas* com a hora da última conferência e da próxima, ou *Parado* com o
+   motivo (IA não configurada, ocupada com outra tarefa, sem conta do GitHub, erro do GitHub). As etiquetas
+   contam as suas conversas abertas, as que aguardam o dev e as que têm resposta nova para a IA. Abaixo fica
+   o histórico, com a hora e o resultado de cada conferência e de cada conversa; duplo clique abre a
+   conversa no GitHub. **Conferir Respostas Agora** não espera os 2 minutos.
 
 > [!NOTE]
 > A Patrulha usa os plugins Git e GitHub que vêm no IntelliJ IDEA. Sem eles, a aba não aparece, e
@@ -561,13 +573,13 @@ compartilham os mesmos componentes visuais, para tudo ter a mesma cara:
 
 ---
 
-<a id="interceptador"></a>
+<a id="arsenal"></a>
 
-## 🚀 Interceptador (IA)
+## 🛠️ Arsenal (IA)
 
-O Interceptador chama a IA direto da IDE, pelo CLI do **Cursor** (`agent`) ou do **Antigravity** (`agy`), rodando
+O Arsenal chama a IA direto da IDE, pelo CLI do **Cursor** (`agent`) ou do **Antigravity** (`agy`), rodando
 na sua máquina sobre o projeto aberto. Enquanto ela trabalha, a aba que pediu (Radar, Patrulha, Escudo ou Raio de Impacto) e a
-aba Interceptador mostram uma barra com o passo atual (como *Lendo src/Frete.kt*), o tempo, a última linha que a
+aba Arsenal mostram uma barra com o passo atual (como *Lendo src/Frete.kt*), o tempo, a última linha que a
 IA escreveu e **Cancelar**; o ícone da aba e o do painel viram o ícone de IA, para dar para ver mesmo com o
 painel fechado. Execuções sem aba própria, como as da Caixa-Preta, aparecem em todas as abas. Cada execução fica
 registrada em `iron-dome/ia/` com o pedido, os passos, os arquivos alterados e a resposta (**Ver Resposta**).
@@ -578,7 +590,7 @@ vem do `wsl.exe`, sem as internas do Docker Desktop). O plugin roda o CLI dentro
 `/mnt/c/...` e repassa a chave de API do Cursor pelo ambiente. Vale para o teste, para a aba e para o terminal, e a
 configuração automática procura também nas distribuições do WSL quando não acha o CLI no Windows.
 
-Em **Onde rodar a IA** (na aba Interceptador ou em Settings), escolha **Na aba, em segundo plano**, **No terminal
+Em **Onde rodar a IA** (na aba Arsenal ou em Settings), escolha **Na aba, em segundo plano**, **No terminal
 da IDE** ou **Perguntar a cada vez**. No terminal, cada pedido abre uma aba do terminal com o CLI à vista: o Cursor
 abre interativo, para acompanhar e conversar com a IA (vale o login do `agent login`; a chave de API não vai para o
 terminal, para não ficar no histórico do shell), e o Antigravity roda o pedido e mostra a resposta. A IA grava a
@@ -587,7 +599,7 @@ análise no `bug.md`, os avisos. Enquanto isso, a barra da aba mostra **Mostrar 
 Sem o plugin de terminal da IDE, a IA roda na aba.
 
 Os dois caminhos têm teste, no Windows ou no WSL, como estiver configurado: **Salvar e Testar** confere a execução
-em segundo plano (e habilita os botões de IA), e **Testar no Terminal** (na aba Interceptador, ou **Salvar e Testar
+em segundo plano (e habilita os botões de IA), e **Testar no Terminal** (na aba Arsenal, ou **Salvar e Testar
 no Terminal** em Settings) abre a aba *IA: Teste* do terminal, pede à IA que grave OK num arquivo e mostra quanto
 tempo ela levou e em qual shell rodou. Se a resposta não chega, a aba do terminal mostra o que deu errado: o
 comando, o login ou o PATH.
@@ -606,12 +618,12 @@ pedido que altera código, a IA é instruída a não seguir os comentários de p
 e as revisões de PR em `iron-dome/ia/`); nos pedidos só de leitura, também no terminal, ela é instruída a não
 alterar nada.
 
-Na primeira vez que a aba **Interceptador** abre, a IA se configura sozinha: o plugin procura o Cursor CLI e o
+Na primeira vez que a aba **Arsenal** abre, a IA se configura sozinha: o plugin procura o Cursor CLI e o
 Antigravity CLI instalados e testa cada um, com o modelo padrão, até um responder. Se nenhum responder, a
 configuração manual abre já com o motivo de cada falha no cabeçalho. **Configurar Automaticamente** refaz essa
 busca a qualquer hora, também em Settings.
 
-Na configuração manual, na aba **Interceptador** do painel (ou em **Settings > Tools > Iron Dome IA > Interceptador (IA)**): o
+Na configuração manual, na aba **Arsenal** do painel (ou em **Settings > Tools > Iron Dome IA > Arsenal (IA)**): o
 CLI, o executável (vazio procura no PATH e nas pastas de instalação), o modelo, o tempo máximo e,
 opcionalmente, a chave de API do Cursor (sem ela, vale o `agent login`). **Salvar e Testar** faz uma pergunta curta
 à IA: **os botões de IA só se habilitam depois que o teste passa**, e trocar o CLI, o executável, o modelo ou a
