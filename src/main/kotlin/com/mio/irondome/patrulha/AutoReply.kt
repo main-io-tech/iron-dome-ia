@@ -112,7 +112,7 @@ object AutoReply {
     /**
      * [code] é o arquivo no head do PR (nulo se saiu do PR); [request], o pedido do `.md` que abriu a conversa,
      * quando há; [round], a rodada desta resposta, de 1 a [MAX_ROUNDS]; [guidelines], a linha de avaliação do
-     * revisor, de [ReviewerGuidelines].
+     * revisor, de [ReviewerGuidelines]; [rules], os arquivos de regras do projeto, de [ReviewRules].
      */
     fun instructions(
         pr: PullRequest,
@@ -122,6 +122,7 @@ object AutoReply {
         request: ChangeRequest?,
         round: Int,
         guidelines: String = "",
+        rules: List<RuleFile> = emptyList(),
     ): String = buildString {
         val where = "`${discussion.path}`" + (discussion.line?.let { ", linha $it" } ?: ", arquivo inteiro")
         appendLine("# Resposta automática no PR #${pr.number}: ${pr.title}")
@@ -160,6 +161,7 @@ object AutoReply {
         appendLine("- `reason`: uma frase para o revisor, explicando a decisão.")
         appendLine()
         append(ReviewerGuidelines.section(guidelines))
+        append(ReviewRules.section(rules))
         if (request != null) {
             appendLine("## O pedido original do revisor")
             appendLine()

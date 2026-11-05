@@ -33,6 +33,8 @@ class ReviewComment(
     var discuss: Boolean = false,
     /** Só vale para resolvidos, que aparecem recolhidos até o usuário expandir. */
     var expanded: Boolean = false,
+    /** Só vale para os não resolvidos de PR, que aparecem expandidos até o usuário minimizar. */
+    var minimized: Boolean = false,
     /** Resolvido oculto do editor pelo usuário: continua no `.md` e no estado, e pode voltar a aparecer. */
     var dismissed: Boolean = false,
     /** Como o comentário está no `.md`; nulo enquanto ele nunca foi salvo (rascunho). */
@@ -110,6 +112,9 @@ class ReviewState {
     /** PR em revisão pela Patrulha: os comentários novos vão para ele, não para a IA. 0 quando não há. */
     var activePullRequest: Int = 0
     var nextPullRequestCommentId: Int = 1
+
+    /** Os comentários de PR não enviados saíram do editor pelo usuário; voltam ao comentar de novo. */
+    var pullRequestDraftsHidden: Boolean = false
 
     /** O estado dos outros projetos da janela, guardado ao trocar o projeto do Iron Dome, pela pasta de cada um. */
     var parked: MutableList<ParkedReview> = mutableListOf()

@@ -38,21 +38,36 @@ class InterceptorTest {
         assertEquals(listOf("--model", "gpt-5"), read.subList(read.indexOf("--model"), read.indexOf("--model") + 2))
         assertTrue("--force" in write)
         assertFalse("--model" in write)
+        assertFalse("o sandbox só existe no macOS e no Linux", "--sandbox" in write)
+        val sandboxed = AgentCommand.build(AgentProvider.CURSOR, "agent", readOnly.copy(write = true), "/mnt/c/proj", null, 20, sandbox = true)
+        assertEquals("enabled", sandboxed[sandboxed.indexOf("--sandbox") + 1])
+        assertFalse("só leitura já roda no modo ask", "--sandbox" in AgentCommand.build(AgentProvider.CURSOR, "agent", readOnly, "/mnt/c/proj", null, 20, sandbox = true))
         assertEquals("o prompt vai em uma linha, sem acentos nem os caracteres do cmd.exe", "Revise o PR seguindo as instrucoes responda", read.last())
     }
 
     @Test
-    fun claudeCodeOnlyGetsPermissionToWriteInTasksThatChangeFiles() {
+    fun claudeCodeOnlyGetsPermissionToEditInTasksThatChangeFiles() {
         val read = AgentCommand.build(AgentProvider.CLAUDE, "claude", readOnly, "C:/proj", "sonnet", 20, listOf("--approve-mcps"))
         val write = AgentCommand.build(AgentProvider.CLAUDE, "claude", readOnly.copy(write = true), "C:/proj", null, 20)
 
-        assertEquals(listOf("claude", "-p", "--output-format", "stream-json", "--verbose"), read.take(5))
-        assertFalse("bypassPermissions" in read)
-        assertEquals(listOf("--model", "sonnet", "--approve-mcps", "Revise o PR seguindo as instrucoes responda"), read.takeLast(4))
-        assertTrue(write.containsAll(listOf("--permission-mode", "bypassPermissions")))
         assertEquals(
-            "& 'claude' '-p' '--permission-mode' 'bypassPermissions' 'Teste'",
+            "a lista de bloqueio vem antes de outra opção, para não engolir o prompt",
+            listOf("claude", "-p", "--disallowedTools", AgentGuard.claudeDisallowedTools, "--output-format", "stream-json", "--verbose"),
+            read.take(7),
+        )
+        assertEquals(AgentGuard.claudeDisallowedTools, write[write.indexOf("--disallowedTools") + 1])
+        assertFalse("--permission-mode" in read)
+        assertEquals(listOf("--model", "sonnet", "--approve-mcps", "Revise o PR seguindo as instrucoes responda"), read.takeLast(4))
+        assertTrue("só editar, sem liberar os comandos", write.containsAll(listOf("--permission-mode", "acceptEdits")))
+        assertFalse("bypassPermissions" in write)
+        assertEquals(
+            "o teste não libera nada",
+            "& 'claude' '-p' 'Teste'",
             AgentCommand.terminal(AgentProvider.CLAUDE, "claude", "Teste", null, 20, ShellKind.POWERSHELL, interactive = false),
+        )
+        assertEquals(
+            "& 'agent' '-p' '--trust' '--output-format' 'text' 'Teste'",
+            AgentCommand.terminal(AgentProvider.CURSOR, "agent", "Teste", null, 20, ShellKind.POWERSHELL, interactive = false),
         )
     }
 
@@ -69,8 +84,13 @@ class InterceptorTest {
             """{"type":"tool_use","name":"Edit","input":{"file_path":"src/Frete.kt"}},{"type":"tool_use","name":"Bash","input":{"command":"gradle test"}}]}}"""
 
         assertEquals(
-            listOf(AgentEvent.Text("Vou corrigir"), AgentEvent.Tool(true, "edit", "src/Frete.kt"), AgentEvent.Tool(true, "shell", null)),
+            listOf(AgentEvent.Text("Vou corrigir"), AgentEvent.Tool(true, "edit", "src/Frete.kt"), AgentEvent.Tool(true, "shell", null, "gradle test")),
             AgentEvents.parseAll(message),
+        )
+        assertEquals(
+            "o comando do Cursor vem para o vigia",
+            AgentEvent.Tool(true, "shell", null, "git push"),
+            AgentEvents.parse("""{"type":"tool_call","subtype":"started","tool_call":{"shellToolCall":{"args":{"command":"git push"}}}}"""),
         )
         assertEquals(
             AgentEvent.Tool(true, "read", "a.kt"),
@@ -88,8 +108,9 @@ class InterceptorTest {
         val write = AgentCommand.guarded(readOnly.copy(prompt = "Corrija", write = true))
         val read = AgentCommand.guarded(readOnly.copy(prompt = "Revise"))
 
-        assertEquals("Corrija ${AgentCommand.PULL_REQUEST_RULE}", write)
+        assertEquals("Corrija ${AgentCommand.PULL_REQUEST_RULE} ${AgentGuard.RULE}", write)
         assertTrue("iron-dome/pull-requests/" in write)
+        assertTrue("quem altera arquivos sabe o que não pode", "git push" in write)
         assertEquals("Revise ${AgentCommand.READ_ONLY_RULE}", read)
     }
 

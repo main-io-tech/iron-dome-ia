@@ -84,7 +84,17 @@ class PatrulhaService(private val project: Project) : PersistentStateComponent<P
          */
         var hiddenDiscussions: MutableSet<String> = mutableSetOf()
         var toggledDiscussions: MutableSet<String> = mutableSetOf()
+
+        /** Como estava o modo revisão do plugin de GitHub da IDE antes da revisão: `true`, `false` ou vazio, sem revisão. */
+        var ideEditorReview: String = ""
     }
+
+    /** O modo revisão do plugin de GitHub da IDE antes da revisão da Patrulha; nulo quando ela não o desligou. */
+    var ideEditorReviewBefore: Boolean?
+        get() = state.ideEditorReview.toBooleanStrictOrNull()
+        set(value) {
+            state.ideEditorReview = value?.toString().orEmpty()
+        }
 
     /** O que [enter] fez: o stash criado agora (vazio se não houve) e se ele vai voltar em [leave]. */
     class EnterResult(val stash: String, val stashMessage: String, val restorable: Boolean)
@@ -232,6 +242,52 @@ class PatrulhaService(private val project: Project) : PersistentStateComponent<P
         val key = key(number, discussion.key)
         if (!state.toggledDiscussions.remove(key)) state.toggledDiscussions += key
         discussionsChanged(number)
+    }
+
+    /** Algum cartão do PR [number] está expandido no editor: pedido enviado, conversa ou comentário não enviado. */
+    fun hasExpandedInEditor(number: Int): Boolean {
+        val requests = historyRecords().filter { it.number == number }.flatMap { it.requests }
+            .any { !isRequestHidden(number, it.id) && isRequestExpanded(number, it.id) }
+        val discussions = number.takeIf(::isDiscussionsShown)?.let(::editorDiscussions).orEmpty()
+            .any { !isDiscussionHidden(number, it) && isDiscussionExpanded(number, it) }
+        return requests || discussions || project.service<ReviewCommentService>().hasExpandedPullRequestDrafts(number)
+    }
+
+    /** Minimiza ou expande no editor todos os cartões do PR [number]. */
+    fun setAllExpandedInEditor(number: Int, expanded: Boolean) {
+        val requests = record(number)?.requests.orEmpty().map { key(number, it.id) }
+        if (expanded) state.expandedRequests += requests else state.expandedRequests -= requests.toSet()
+        editorDiscussions(number).forEach { discussion ->
+            val key = key(number, discussion.key)
+            val openByDefault = !discussion.resolved && !discussion.outdated
+            if (expanded == openByDefault) state.toggledDiscussions -= key else state.toggledDiscussions += key
+        }
+        project.service<ReviewCommentService>().setPullRequestDraftsMinimized(number, !expanded)
+        historyChanged(number)
+        discussionsChanged(number)
+    }
+
+    /** Os cartões do PR [number] ocultados um a um no editor: pedidos enviados e conversas. */
+    fun hiddenInEditor(number: Int): Int =
+        record(number)?.requests.orEmpty().count { isRequestHidden(number, it.id) } +
+            editorDiscussions(number).count { isDiscussionHidden(number, it) }
+
+    /** Traz de volta ao editor os cartões do PR [number] ocultados um a um, ligando os pedidos e as conversas. */
+    fun showHiddenInEditor(number: Int) {
+        val prefix = "$number:"
+        state.hiddenRequests.removeAll { it.startsWith(prefix) }
+        state.hiddenDiscussions.removeAll { it.startsWith(prefix) }
+        setShownInEditor(number, true)
+    }
+
+    /** Os comentários do PR [number] aparecem no editor: pedidos enviados, conversas ou os não enviados. */
+    fun isAnyShownInEditor(number: Int): Boolean =
+        isHistoryShown(number) || isDiscussionsShown(number) || !project.service<ReviewCommentService>().pullRequestDraftsHidden
+
+    /** Tira do editor, ou traz de volta, todos os comentários do PR [number], sem mexer nos ocultados um a um. */
+    fun setAllShownInEditor(number: Int, shown: Boolean) {
+        setShownInEditor(number, shown)
+        project.service<ReviewCommentService>().setPullRequestDraftsHidden(!shown)
     }
 
     /** Redesenha os cartões das conversas do PR [number] nos editores abertos, e também os de [paths]. Na EDT. */

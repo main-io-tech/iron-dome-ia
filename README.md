@@ -506,6 +506,11 @@ foi atendido.
    Os cartões, pedidos e conversas, só aparecem no editor durante a revisão do PR, depois de **Revisar Este
    PR**: fora dela, as linhas não batem com as do GitHub. Encerrar a revisão tira os cartões, e fora dela o
    **Mostrar no Editor** fica desabilitado.
+   Durante a revisão, no próprio editor (na barra do canto e no botão direito): **Minimizar Comentários do PR**
+   recolhe todos numa barra de uma linha, inclusive os seus não enviados, e vira **Expandir** quando já estão
+   recolhidos; o cabeçalho de cada cartão abre e fecha só ele. **Ocultar Comentários do PR** tira todos do
+   editor sem apagar nenhum e fica pressionado enquanto eles aparecem; comentar de novo traz os seus de volta.
+   **Mostrar Comentários Ocultados do PR** traz os que você ocultou um a um pelo **Ocultar** do cartão.
    Se o revisor **editar ou apagar** o comentário direto no GitHub, a Patrulha sincroniza ao atualizar a
    aba, ao iniciar a revisão e em **Verificar Pedidos**: o `.md` passa a ter o texto do GitHub (*Editado no
    GitHub*), e os apagados ficam riscados (*Apagado no GitHub*), fora das contas e sem Editar.
@@ -523,10 +528,16 @@ foi atendido.
 Um pedido conta como atendido quando o código mudou ou a conversa foi resolvida; e como pendente quando
 nada disso aconteceu depois de commits novos.
 
-   **Minhas Instruções para a IA**, na barra da aba, guarda a sua linha de avaliação de PR, nas suas palavras:
+   **Minhas Instruções e Regras para a IA**, na barra da aba, guarda a sua linha de avaliação de PR, nas suas palavras:
    o que bloqueia um PR para você, o que é só sugestão, o que ignorar, os padrões que você cobra, quando aceitar
    a explicação do dev e o tom. A IA segue essas instruções acima do padrão, na **Revisão com IA** e nas
    respostas automáticas. Elas ficam nas preferências da IDE e valem para todos os projetos.
+
+   No mesmo diálogo, **Regras deste projeto** vincula arquivos `.md` com as regras do time (como `AGENTS.md`,
+   `CLAUDE.md` ou `.github/copilot-instructions.md`) ou pastas inteiras (como `.cursor/rules`, pelos `.md` e
+   `.mdc` de dentro); **Detectar** acha os que existem nos lugares de costume. O conteúdo é lido a cada revisão e
+   vai para a IA, que avalia o PR também por essas regras e diz qual regra e de qual arquivo foi descumprida.
+   Cada arquivo entra com até 12 mil caracteres, e todos juntos com até 40 mil. O vínculo vale só para este projeto.
 6. **Deixe a IA conversar.** **Ligar Respostas da IA**, na barra da aba, liga o modo automático no PR
    selecionado (com a IA configurada no Arsenal). A cada 2 minutos, enquanto a IDE estiver aberta, a
    Patrulha confere as conversas de linha que você abriu no PR. Quando alguém responde, a IA lê a conversa
@@ -617,6 +628,18 @@ local é o do PR. Os disparos do Radar e o Corrigir com IA ficam desligados até
 pedido que altera código, a IA é instruída a não seguir os comentários de pull request (`iron-dome/pull-requests/`
 e as revisões de PR em `iron-dome/ia/`); nos pedidos só de leitura, também no terminal, ela é instruída a não
 alterar nada.
+
+**Contenção da IA**, sempre ligada, para a IA não danificar a máquina nem o projeto:
+
+| Proteção | Como funciona |
+| --- | --- |
+| ⏪ Ponto de restauração | Antes de cada tarefa que altera arquivos, o plugin tira uma foto dos arquivos do projeto no git, inclusive o que não foi commitado nem adicionado, numa referência própria (`refs/iron-dome/antes-da-ia/`, as 10 últimas), sem mexer no seu índice, na branch nem nos stashes. O aviso do fim traz **Desfazer Alterações da IA**: o que a IA alterou ou apagou volta, o que ela criou sai, e os registros em `iron-dome/ia/` ficam. Fora de um repositório git, o ponto é o do Local History da IDE, que só volta o que a IDE já tinha lido. |
+| 🔒 Ambiente contido | Na aba, a IA roda sem `git push` (qualquer push dela falha; buscar do remoto continua), sem o git pedir senha e sem os tokens, senhas e chaves do ambiente que o CLI não usa, como `GITHUB_TOKEN` ou `AWS_SECRET_ACCESS_KEY`. |
+| 🚫 Bloqueio no CLI | O Claude Code recusa antes de rodar os comandos destrutivos, mexer no `.git` e ler ou alterar `~/.ssh` e `~/.aws`. No WSL, e fora do Windows, o Cursor roda no sandbox dele. |
+| 🧯 Vigia | O plugin confere cada passo que o CLI informa e para a IA na hora se ela tentar apagar pastas (`rm -rf`, `Remove-Item -Recurse`, `rd /s`), descartar alterações ou reescrever o histórico do git (`reset --hard`, `clean -f`, `checkout --`, `rebase`, `push`), rodar como administrador, formatar disco, desligar a máquina, alterar o registro, baixar e executar scripts, ou escrever fora do projeto ou no `.git`. O aviso diz o que ela tentou. |
+| 📝 Regra no pedido | Toda tarefa que altera arquivos diz à IA o que ela não pode fazer e que, se precisar, deve parar e explicar. |
+
+No terminal da IDE a IA roda interativa e pede a sua aprovação a cada passo; o ponto de restauração vale também lá.
 
 Na primeira vez que a aba **Arsenal** abre, a IA se configura sozinha: o plugin procura o Cursor CLI e o
 Antigravity CLI instalados e testa cada um, com o modelo padrão, até um responder. Se nenhum responder, a

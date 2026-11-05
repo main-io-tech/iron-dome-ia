@@ -20,7 +20,12 @@ class EditorCard(
     val onToggle: () -> Unit,
     val onHide: () -> Unit,
     val onEdit: (() -> Unit)? = null,
+    /** As respostas a [comment], na ordem em que vieram, recuadas abaixo dele no cartão expandido. */
+    val replies: List<CardReply> = emptyList(),
 )
+
+/** Uma resposta na conversa de um [EditorCard]: [detail] vem ao lado de [author], como "respondeu a @ana · …". */
+class CardReply(val author: String, val detail: String, val text: String)
 
 /** Quem desenha [EditorCard]s; o Radar pede os cartões a cada vez que redesenha um editor. */
 interface EditorCardProvider {

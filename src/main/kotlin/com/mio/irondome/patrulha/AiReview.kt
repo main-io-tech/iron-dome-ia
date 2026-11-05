@@ -32,7 +32,7 @@ object AiReview {
     /**
      * [hints] são as preferências que o time ensinou ao descartar ou rebaixar sugestões; [dossier], o que se sabe dos
      * arquivos alterados (comentários antigos, correções no git e decisões registradas); [guidelines], a linha de
-     * avaliação do revisor, de [ReviewerGuidelines].
+     * avaliação do revisor, de [ReviewerGuidelines]; [rules], os arquivos de regras do projeto, de [ReviewRules].
      */
     fun instructions(
         pr: PullRequest,
@@ -40,6 +40,7 @@ object AiReview {
         hints: List<String> = emptyList(),
         dossier: String = "",
         guidelines: String = "",
+        rules: List<RuleFile> = emptyList(),
     ): String = buildString {
         appendLine("# Revisão do PR #${pr.number}: ${pr.title}")
         appendLine()
@@ -94,6 +95,7 @@ object AiReview {
         appendLine("Se não houver nada a apontar, responda `[]`.")
         appendLine()
         append(ReviewerGuidelines.section(guidelines))
+        append(ReviewRules.section(rules))
         if (hints.isNotEmpty()) {
             appendLine("## Preferências do time")
             appendLine()

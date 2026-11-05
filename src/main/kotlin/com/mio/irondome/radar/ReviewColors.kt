@@ -60,6 +60,8 @@ object ReviewColors {
     val pullRequestBadgeBackground = JBColor(Color(0xEFE3FF), Color(0x3A2350))
     val pullRequestBadgeForeground = JBColor(Color(0x6639BA), Color(0xD2A8FF))
     val codeBackground = JBColor(Color(0xF6F8FA), Color(0x22272E))
+    /** A linha que liga o comentário às respostas no cartão. */
+    val threadLine = JBColor(Color(0xAFB8C1), Color(0x545D68))
 }
 
 object ReviewIcons {

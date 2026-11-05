@@ -245,7 +245,7 @@ class AutoReplyService(private val project: Project) : PersistentStateComponent<
         val patrulha = PatrulhaService.getInstance(project)
         val code = discussion.path?.let { runCatching { client.fileContent(context.repo, it, pr.headSha) }.getOrNull() }
         val request = patrulha.record(pr.number)?.requests?.firstOrNull { it.commentId == discussion.first.id }
-        val content = AutoReply.instructions(pr, discussion, me, code, request, round, ReviewerGuidelines.text)
+        val content = AutoReply.instructions(pr, discussion, me, code, request, round, ReviewerGuidelines.text, ReviewRules.getInstance(project).read())
         val runner = AgentRunner.getInstance(project)
         val instructions = runner.writeInstructions("pr-${pr.number}-conversa-${discussion.first.id}.md", content) ?: return null
         val done = CountDownLatch(1)
@@ -383,5 +383,7 @@ class AutoReplyService(private val project: Project) : PersistentStateComponent<
 class AutoReplyStartup : ProjectActivity {
     override suspend fun execute(project: Project) {
         AutoReplyService.getInstance(project).ensureScheduled()
+        // Uma revisão que continuou aberta de uma sessão anterior também deixa o modo revisão do GitHub desligado.
+        if (PatrulhaService.getInstance(project).reviewing() != 0) IdeEditorReview.suspend(project)
     }
 }

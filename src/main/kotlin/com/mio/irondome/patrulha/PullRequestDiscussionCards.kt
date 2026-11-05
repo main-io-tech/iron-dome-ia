@@ -3,6 +3,7 @@ package com.mio.irondome.patrulha
 import com.intellij.openapi.editor.Document
 import com.intellij.openapi.project.Project
 import com.mio.irondome.base.Tone
+import com.mio.irondome.radar.CardReply
 import com.mio.irondome.radar.CommentTarget
 import com.mio.irondome.radar.EditorCard
 import com.mio.irondome.radar.EditorCardProvider
@@ -31,7 +32,7 @@ class PullRequestDiscussionCards : EditorCardProvider {
             filePath = discussion.path.orEmpty(),
             startLine = lines?.first ?: 0,
             endLine = lines?.last ?: 0,
-            text = text(discussion),
+            text = body(first),
             target = if (lines == null) CommentTarget.FILE else CommentTarget.LINES,
             pullRequest = number,
         ).apply { expanded = patrulha.isDiscussionExpanded(number, discussion) }
@@ -53,17 +54,27 @@ class PullRequestDiscussionCards : EditorCardProvider {
             ).joinToString(" · "),
             onToggle = { patrulha.toggleDiscussionExpanded(number, discussion) },
             onHide = { patrulha.setDiscussionHidden(number, discussion, true) },
+            replies = replies(discussion),
         )
     }
 
-    /** O primeiro comentário e, abaixo, cada resposta com quem respondeu e quando. */
-    private fun text(discussion: Discussion): String = buildString {
-        append(discussion.first.body.trim().ifEmpty { "_Sem texto._" })
-        discussion.replies.forEach { reply ->
-            append("\n\n**@${reply.author} respondeu** · ${Discussions.formatDate(reply.createdAt)}")
-            if (reply.pending) append(" · no seu rascunho")
-            append("\n\n")
-            append(reply.body.trim().ifEmpty { "_Sem texto._" })
+    /** Cada resposta, na ordem, dizendo a quem respondeu, quando e em que posição da conversa está. */
+    private fun replies(discussion: Discussion): List<CardReply> {
+        val total = discussion.replies.size
+        return discussion.comments.zipWithNext().mapIndexed { index, (previous, reply) ->
+            val action = if (reply.author == previous.author) "continuou" else "respondeu a @${previous.author}"
+            CardReply(
+                author = "@${reply.author}",
+                detail = listOfNotNull(
+                    action,
+                    Discussions.formatDate(reply.createdAt),
+                    "resposta ${index + 1} de $total",
+                    "no seu rascunho".takeIf { reply.pending },
+                ).joinToString(" · "),
+                text = body(reply),
+            )
         }
     }
+
+    private fun body(comment: DiscussionComment): String = comment.body.trim().ifEmpty { "_Sem texto._" }
 }

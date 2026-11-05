@@ -1,5 +1,8 @@
 package com.mio.irondome.interceptor
 
+import com.intellij.history.Label
+import com.intellij.history.LocalHistory
+import com.intellij.history.LocalHistoryException
 import com.intellij.notification.NotificationAction
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
@@ -11,13 +14,18 @@ import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ModalityState
+import com.intellij.openapi.progress.ProgressIndicator
+import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.DoNotAskOption
+import com.intellij.openapi.ui.MessageDialogBuilder
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.util.SystemInfo
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VfsUtil
 import com.intellij.util.messages.Topic
 import com.mio.irondome.base.IronDomeIcons
+import com.mio.irondome.base.rootDir
 import com.mio.irondome.base.rootPath
 import com.mio.irondome.radar.ReviewCommentService
 import java.nio.charset.StandardCharsets
@@ -27,6 +35,7 @@ import java.time.Duration
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * O que a IA fez: [answer] é a resposta final; [files] os arquivos que ela escreveu ou editou;
@@ -149,7 +158,9 @@ class AgentRunner(private val project: Project) {
             }
             else -> null
         }
+        if (task.write && terminal == null && !confirmWrite(task, provider)) return false
         FileDocumentManager.getInstance().saveAllDocuments()
+        val checkpoint = if (task.write) checkpoint(task) else null
         val current = AgentProgress(task, provider, inTerminal = terminal != null)
         progress = current
         // Um problema só no ícone não pode deixar a IA presa como trabalhando.
@@ -159,7 +170,7 @@ class AgentRunner(private val project: Project) {
             { execute(task, provider, launch, root, current) }
         } else {
             val answer = answerFile(task) ?: run {
-                finish(failure(task, provider, "O projeto não tem pasta no disco."), actions, unattended, onDone)
+                finish(failure(task, provider, "O projeto não tem pasta no disco."), actions, unattended, onDone, checkpoint)
                 return true
             }
             val relative = "${ReviewCommentService.REVIEW_DIR}/$DIR/$ANSWERS_DIR/${answer.fileName}"
@@ -182,14 +193,96 @@ class AgentRunner(private val project: Project) {
         }
         ApplicationManager.getApplication().executeOnPooledThread {
             val result = try {
+                checkpoint?.let { snapshot(it, task, root, current) }
                 work()
             } catch (e: Throwable) {
                 LOG.warn("A execução da IA falhou", e)
                 failure(task, provider, e.message ?: "A execução não terminou.")
             }
-            ApplicationManager.getApplication().invokeLater({ finish(result, actions, unattended, onDone) }, project.disposed)
+            ApplicationManager.getApplication().invokeLater({ finish(result, actions, unattended, onDone, checkpoint) }, project.disposed)
         }
         return true
+    }
+
+    /**
+     * Para onde Desfazer Alterações da IA volta o projeto: a foto do git em [GitSnapshot] e, sem git, o ponto do Local
+     * History da IDE, que só volta o que a IDE já tinha lido.
+     */
+    private class Checkpoint(val label: Label?) {
+        @Volatile
+        var git: String? = null
+    }
+
+    private fun checkpoint(task: AgentTask): Checkpoint =
+        Checkpoint(
+            runCatching { LocalHistory.getInstance().putSystemLabel(project, "Iron Dome IA: antes de ${task.title}") }
+                .onFailure { LOG.warn("O ponto do Local History antes da IA não pôde ser marcado", it) }
+                .getOrNull(),
+        )
+
+    /** A foto do git antes de a IA começar; fora da EDT, porque o git lê a pasta inteira. */
+    private fun snapshot(checkpoint: Checkpoint, task: AgentTask, root: String, state: AgentProgress) {
+        state.step = "Guardando o ponto de restauração"
+        checkpoint.git = runCatching { GitSnapshot.create(Path.of(root), task.title) }
+            .onFailure { LOG.warn("A foto do git antes da IA não pôde ser tirada", it) }
+            .getOrNull()
+    }
+
+    /**
+     * Volta os arquivos do projeto para [checkpoint], marcado antes de [task]. Os registros da IA em `iron-dome/ia/`
+     * continuam, para conferir depois o que ela fez.
+     */
+    private fun undo(checkpoint: Checkpoint, task: AgentTask) {
+        val root = project.rootDir() ?: return
+        val git = checkpoint.git
+        val label = checkpoint.label
+        if (git == null && label == null) return
+        val confirmed = MessageDialogBuilder.yesNo(
+            "Desfazer Alterações da IA",
+            "Volta os arquivos do projeto para como estavam antes de \"${task.title}\": o que a IA alterou ou apagou volta, e o que ela " +
+                "criou sai.\n\nO que você alterou no projeto depois disso também volta. Os registros da IA em " +
+                "${ReviewCommentService.REVIEW_DIR}/$DIR/ ficam.",
+        ).yesText("Desfazer").noText("Cancelar").icon(Messages.getWarningIcon()).ask(project)
+        if (!confirmed) return
+        FileDocumentManager.getInstance().saveAllDocuments()
+        val records = transcriptsDir()?.takeIf(Files::isDirectory)?.let { dir ->
+            Files.walk(dir).use { files -> files.filter(Files::isRegularFile).toList() }.associateWith(Files::readAllBytes)
+        }.orEmpty()
+        val keepRecords = {
+            records.forEach { (path, bytes) ->
+                if (!Files.isRegularFile(path)) {
+                    Files.createDirectories(path.parent)
+                    Files.write(path, bytes)
+                }
+            }
+            VfsUtil.markDirtyAndRefresh(false, true, true, root)
+            notify("Alterações da IA desfeitas", "Os arquivos voltaram para antes de \"${task.title}\".", NotificationType.INFORMATION)
+        }
+        val failed = { error: Throwable ->
+            LOG.warn("As alterações da IA não puderam ser desfeitas", error)
+            notify(
+                "Não deu para desfazer",
+                "${error.message ?: "Os arquivos não voltaram."} O ponto de restauração continua no git, em refs/iron-dome/antes-da-ia, " +
+                    "e no Local History do projeto, como \"Iron Dome IA: antes de ${task.title}\".",
+                NotificationType.WARNING,
+            )
+        }
+        if (git == null) {
+            try {
+                label!!.revert(project, root)
+                keepRecords()
+            } catch (e: LocalHistoryException) {
+                failed(e)
+            }
+            return
+        }
+        object : Task.Backgroundable(project, "Desfazendo as alterações da IA", false) {
+            override fun run(indicator: ProgressIndicator) = GitSnapshot.restore(Path.of(root.path), git)
+
+            override fun onSuccess() = keepRecords()
+
+            override fun onThrowable(error: Throwable) = failed(error)
+        }.queue()
     }
 
     /** O PR em revisão pela Patrulha, ou 0. Com ele, o checkout é o do PR: está sendo revisado, não alterado. */
@@ -212,11 +305,12 @@ class AgentRunner(private val project: Project) {
         actions: Array<out Pair<String, (AgentResult) -> Unit>>,
         unattended: Boolean,
         onDone: (AgentResult) -> Unit,
+        checkpoint: Checkpoint? = null,
     ) {
         progress = null
         runCatching { AgentActivity.finished(project) }.onFailure { LOG.warn("O ícone da IA trabalhando não pôde voltar", it) }
         refresh(result)
-        if (!unattended || !result.ok) report(result, actions)
+        if (!unattended || !result.ok) report(result, actions, checkpoint)
         project.messageBus.syncPublisher(RUNS).changed()
         onDone(result)
     }
@@ -225,6 +319,27 @@ class AgentRunner(private val project: Project) {
         AgentResult(task, provider, "", error, false, emptySet(), emptyList(), null, Duration.ZERO, null)
 
     /** Nulo se o usuário desistiu na pergunta de onde rodar. */
+    /** Na aba ninguém aprova cada passo da IA: antes de deixá-la alterar arquivos, diz o que ela pode fazer sozinha. */
+    private fun confirmWrite(task: AgentTask, provider: AgentProvider): Boolean {
+        if (!AgentSettings.confirmWrites) return true
+        return MessageDialogBuilder.yesNo(
+            "A IA Vai Alterar Arquivos",
+            "\"${task.title}\" roda na aba, em segundo plano, sem janela para aprovar cada passo: ${AgentCommand.writePermissions(provider)}.\n\n" +
+                "No terminal da IDE, a IA pede aprovação a cada passo: escolha onde ela roda no Arsenal.",
+        )
+            .yesText("Rodar")
+            .noText("Cancelar")
+            .icon(Messages.getWarningIcon())
+            .doNotAsk(object : DoNotAskOption.Adapter() {
+                override fun rememberChoice(isSelected: Boolean, exitCode: Int) {
+                    if (isSelected && exitCode == Messages.YES) AgentSettings.confirmWrites = false
+                }
+
+                override fun getDoNotShowMessage() = "Não perguntar de novo (dá para voltar no Arsenal)"
+            })
+            .ask(project)
+    }
+
     private fun chooseMode(task: AgentTask): AgentRunMode? {
         val mode = AgentSettings.runMode
         if (mode != AgentRunMode.ASK) return mode
@@ -291,8 +406,11 @@ class AgentRunner(private val project: Project) {
         val timeout = AgentSettings.timeoutMinutes
         val command = AgentCommand.build(
             provider, launch.executable, task, launch.workspace(root), AgentSettings.model, timeout, AgentCommand.splitArgs(AgentSettings.extraArgs),
+            sandbox = launch.sandboxAvailable,
         )
         val key = if (provider == AgentProvider.CURSOR) AgentSettings.cursorApiKey else null
+        val roots = listOf(root, launch.workspace(root)).distinct()
+        val blocked = AtomicReference<String?>()
 
         val text = StringBuilder()
         var answer: String? = null
@@ -304,7 +422,7 @@ class AgentRunner(private val project: Project) {
         var cancelled = false
         var error: String? = null
         try {
-            val process = launch.process(command, root, key).createProcess()
+            val process = launch.process(command, root, key, provider).createProcess()
             process.outputStream.close()
             val errors = Thread {
                 process.errorStream.bufferedReader(StandardCharsets.UTF_8).forEachLine { synchronized(stderr) { stderr.appendLine(it) } }
@@ -319,7 +437,10 @@ class AgentRunner(private val project: Project) {
                             state.detail = event.text.lines().lastOrNull { it.isNotBlank() }?.take(160).orEmpty()
                         }
                         is AgentEvent.Tool -> if (event.started) {
-                            val what = listOfNotNull(TOOL_LABELS[event.kind] ?: event.kind, event.path).joinToString(" ")
+                            AgentGuard.violation(event, roots)?.let { reason ->
+                                if (blocked.compareAndSet(null, reason)) kill(process)
+                            }
+                            val what = listOfNotNull(TOOL_LABELS[event.kind] ?: event.kind, event.path ?: event.command?.take(80)).joinToString(" ")
                             tools += what
                             state.advance(what)
                             if (event.kind in WRITE_TOOLS) event.path?.let(files::add)
@@ -336,17 +457,20 @@ class AgentRunner(private val project: Project) {
             while (!process.waitFor(200, TimeUnit.MILLISECONDS)) {
                 if (state.cancelled) {
                     cancelled = true
-                    process.destroyForcibly()
+                    kill(process)
                     break
                 }
                 if (System.nanoTime() > deadline) {
                     error = "Passou do limite de $timeout minutos: a execução foi interrompida."
-                    process.destroyForcibly()
+                    kill(process)
                     break
                 }
             }
             reader.join(2_000)
             errors.join(1_000)
+            blocked.get()?.let {
+                error = "Contenção: a IA foi parada ao tentar $it. Confira o que ela já tinha feito e, se precisar, use Desfazer Alterações da IA."
+            }
             if (!cancelled && error == null && process.exitValue() != 0) {
                 error = AgentVerifier.explain(
                     provider,
@@ -367,13 +491,19 @@ class AgentRunner(private val project: Project) {
         return AgentResult(task, provider, finalAnswer, error, cancelled, files, tools, model, duration, transcript)
     }
 
+    /** O CLI e tudo o que ele abriu: no Windows, o `agent.ps1` do Cursor roda o Node num processo filho. */
+    private fun kill(process: Process) {
+        process.descendants().forEach { it.destroyForcibly() }
+        process.destroyForcibly()
+    }
+
     /** Os arquivos que a IA mexeu aparecem atualizados no editor, e os `.md` de `iron-dome/` disparam as abas. */
     private fun refresh(result: AgentResult) {
         val base = project.rootPath()?.let { LocalFileSystem.getInstance().refreshAndFindFileByPath(it) } ?: return
         VfsUtil.markDirtyAndRefresh(true, true, true, base)
     }
 
-    private fun report(result: AgentResult, actions: Array<out Pair<String, (AgentResult) -> Unit>>) {
+    private fun report(result: AgentResult, actions: Array<out Pair<String, (AgentResult) -> Unit>>, checkpoint: Checkpoint?) {
         val title = when {
             result.cancelled -> "IA: ${result.task.title} cancelada"
             !result.ok -> "IA: ${result.task.title} falhou"
@@ -391,6 +521,9 @@ class AgentRunner(private val project: Project) {
             notification.addAction(NotificationAction.createSimple("Ver Resposta") { open(path) })
         }
         if (result.ok) actions.forEach { (label, action) -> notification.addAction(NotificationAction.createSimpleExpiring(label) { action(result) }) }
+        checkpoint?.takeIf { it.git != null || it.label != null }?.let { point ->
+            notification.addAction(NotificationAction.createSimpleExpiring("Desfazer Alterações da IA") { undo(point, result.task) })
+        }
         notification.notify(project)
     }
 

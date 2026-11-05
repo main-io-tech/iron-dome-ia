@@ -16,8 +16,8 @@ import com.mio.irondome.sentinela.ChangeDiff
 
 /**
  * Barra no canto superior direito do editor: "Inspecionar Diff" quando o arquivo tem alterações não
- * commitadas, e "Disparar Este Arquivo" e "Disparar Todos" enquanto há alvos não disparados. Cada
- * ação decide se aparece conforme o arquivo aberto.
+ * commitadas, "Disparar Este Arquivo" e "Disparar Todos" enquanto há alvos não disparados, e minimizar e ocultar
+ * os comentários do PR durante a revisão dele. Cada ação decide se aparece conforme o arquivo aberto.
  */
 class ReviewFloatingToolbarProvider : AbstractFloatingToolbarProvider(ACTION_GROUP) {
 
@@ -35,7 +35,7 @@ class ReviewFloatingToolbarProvider : AbstractFloatingToolbarProvider(ACTION_GRO
         val service = project.service<ReviewCommentService>()
         val update = {
             val changed = file != null && ChangeDiff.changeOf(project, file) != null
-            if (service.hasPendingChanges() || changed) component.scheduleShow() else component.scheduleHide()
+            if (service.hasPendingChanges() || changed || service.activePullRequest != 0) component.scheduleShow() else component.scheduleHide()
         }
         val connection = project.messageBus.connect(parentDisposable)
         connection.subscribe(ReviewCommentsListener.TOPIC, ReviewCommentsListener { update() })

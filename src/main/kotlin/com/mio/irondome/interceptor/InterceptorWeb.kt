@@ -190,9 +190,26 @@ class InterceptorWeb(project: Project) : WebTab(project) {
             WebUi.notice(
                 "info",
                 "🔐",
-                "Nas tarefas que alteram arquivos, como Disparar com IA, o Cursor roda com <code>--force</code>, o Claude Code com " +
-                    "<code>--permission-mode bypassPermissions</code> e o Antigravity com <code>--dangerously-skip-permissions</code>: sem janela, " +
-                    "não há quem aprove. Nas de leitura, como revisões e explicações, nenhum deles recebe permissão para escrever.",
+                "Nas tarefas que alteram arquivos rodando na aba, como Disparar com IA, não há janela para aprovar cada passo: o Cursor " +
+                    "roda com <code>--force</code> (edita e roda comandos sem perguntar), o Claude Code com <code>--permission-mode acceptEdits</code> " +
+                    "(edita sem perguntar; comandos de terminal só os liberados nas configurações dele ou com <code>--allowedTools</code> nos " +
+                    "argumentos extras) e o Antigravity com <code>--dangerously-skip-permissions</code>. " +
+                    (if (AgentSettings.confirmWrites) "Por isso o plugin pergunta antes de cada uma. " else "Você desligou a pergunta antes de cada uma. ") +
+                    "No terminal, a IA pede aprovação a cada passo. Nas de leitura, como revisões e explicações, nenhum deles recebe permissão para escrever.",
+            ),
+        )
+        if (!AgentSettings.confirmWrites) {
+            append("<div class=\"row-btns\">").append(WebUi.button("Voltar a perguntar antes de alterar arquivos", "confirmWrites", "ghost")).append("</div>")
+        }
+        append(
+            WebUi.notice(
+                "info",
+                "🧯",
+                "<b>Contenção da IA</b>, sempre ligada: antes de cada tarefa que altera arquivos, uma foto do projeto no git, sem mexer no " +
+                    "seu índice nem na branch (sem git, no Local History), e o aviso do fim traz <b>Desfazer Alterações da IA</b>; na aba, a IA roda sem <code>git push</code> e sem os tokens e senhas " +
+                    "do ambiente que o CLI não usa; o Claude Code recusa comandos destrutivos e mexer no <code>.git</code> e nas chaves do usuário; " +
+                    "no WSL, o Cursor roda no sandbox dele; e a IA é parada na hora se tentar apagar pastas, descartar alterações do git, " +
+                    "reescrever o histórico, rodar como administrador, formatar disco, baixar e executar scripts, ou escrever fora do projeto ou no <code>.git</code>.",
             ),
         )
         append("<div class=\"row-btns\" style=\"margin-top:12px\">")
@@ -363,6 +380,7 @@ class InterceptorWeb(project: Project) : WebTab(project) {
                 save(data.str("key"), test = data.str("arg") == "test")
             }
             "clearKey" -> ApplicationManager.getApplication().executeOnPooledThread { AgentSettings.cursorApiKey = null }
+            "confirmWrites" -> AgentSettings.confirmWrites = true
             "auto" -> autoSetup()
             "runmode" -> AgentRunMode.entries.firstOrNull { it.name == data.str("value") }?.let { AgentSettings.runMode = it }
             "terminal" -> {

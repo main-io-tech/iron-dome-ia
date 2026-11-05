@@ -155,11 +155,22 @@ class ReviewCommentService(private val project: Project) : PersistentStateCompon
 
     fun startPullRequestReview(number: Int) {
         state.activePullRequest = number
+        state.pullRequestDraftsHidden = false
+        refreshEditorsOf(state.comments.filter { it.pullRequest != 0 })
         notifyChanged()
     }
 
-    fun stopPullRequestReview() {
+    /**
+     * [stillOnPullRequest]: o checkout ainda é o do PR, e as posições do editor valem; falso quando a branch já
+     * foi trocada por fora, e os arquivos abertos já são de outro código.
+     */
+    fun stopPullRequestReview(stillOnPullRequest: Boolean = true) {
+        val drafts = state.comments.filter { it.pullRequest != 0 }
+        if (stillOnPullRequest) drafts.map { it.filePath }.distinct().forEach { path -> documentOf(path)?.let { syncFromMarkers(path, it) } }
+        // Fora da revisão o checkout é outro: as posições ficam as do PR, sem seguir os arquivos trocados.
+        drafts.forEach { markers.remove(it)?.dispose() }
         state.activePullRequest = 0
+        refreshEditorsOf(drafts)
         notifyChanged()
     }
 
@@ -294,6 +305,7 @@ class ReviewCommentService(private val project: Project) : PersistentStateCompon
         )
         state.comments += comment
         markers[comment] = createMarker(document, comment)
+        if (pullRequest != 0) setPullRequestDraftsHidden(false)
         refreshEditors(document)
         notifyChanged()
         return comment
@@ -314,6 +326,7 @@ class ReviewCommentService(private val project: Project) : PersistentStateCompon
             suggestion = suggestionFor(state.activePullRequest, suggestion, ""),
         )
         state.comments += comment
+        if (comment.pullRequest != 0) setPullRequestDraftsHidden(false)
         refreshEditorsOf(listOf(comment))
         notifyChanged()
         return comment
@@ -394,9 +407,32 @@ class ReviewCommentService(private val project: Project) : PersistentStateCompon
         state.comments.firstOrNull { it.reviewId == reviewId && it.id == id && it.pullRequest == 0 }
 
     fun toggleExpanded(comment: ReviewComment) {
-        if (!comment.resolved) return
-        comment.expanded = !comment.expanded
+        when {
+            comment.resolved -> comment.expanded = !comment.expanded
+            comment.pullRequest != 0 -> comment.minimized = !comment.minimized
+            else -> return
+        }
         refreshEditorsOf(listOf(comment))
+    }
+
+    /** Minimiza ou expande no editor todos os comentários ainda não enviados ao PR [number]. */
+    fun setPullRequestDraftsMinimized(number: Int, minimized: Boolean) {
+        val changed = state.comments.filter { it.pullRequest == number && !it.resolved && it.minimized != minimized }
+        changed.forEach { it.minimized = minimized }
+        refreshEditorsOf(changed)
+    }
+
+    fun hasExpandedPullRequestDrafts(number: Int): Boolean =
+        !state.pullRequestDraftsHidden && state.comments.any { it.pullRequest == number && !it.resolved && !it.minimized }
+
+    val pullRequestDraftsHidden: Boolean get() = state.pullRequestDraftsHidden
+
+    /** Tira do editor, ou traz de volta, os comentários ainda não enviados ao PR, sem apagá-los. */
+    fun setPullRequestDraftsHidden(hidden: Boolean) {
+        if (state.pullRequestDraftsHidden == hidden) return
+        state.pullRequestDraftsHidden = hidden
+        refreshEditorsOf(state.comments.filter { it.pullRequest != 0 })
+        notifyChanged()
     }
 
     /** Tira resolvidos do editor sem mexer no `.md`; continuam no estado para [show] trazê-los de volta. */
@@ -676,7 +712,11 @@ class ReviewCommentService(private val project: Project) : PersistentStateCompon
     private fun commentsFor(path: String): List<ReviewComment> =
         state.comments.filter { it.filePath == path }.sortedBy { it.startLine }
 
-    private fun visibleCommentsFor(path: String): List<ReviewComment> = commentsFor(path).filterNot { it.dismissed }
+    /** Os de PR só durante a revisão dele: fora dela, o checkout não é o do PR e as linhas não batem. */
+    private fun visibleCommentsFor(path: String): List<ReviewComment> =
+        commentsFor(path).filterNot {
+            it.dismissed || (it.pullRequest != 0 && (it.pullRequest != state.activePullRequest || state.pullRequestDraftsHidden))
+        }
 
     private fun markerFor(comment: ReviewComment, document: Document): RangeMarker {
         val existing = markers[comment]

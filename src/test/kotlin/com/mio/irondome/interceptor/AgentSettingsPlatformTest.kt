@@ -69,8 +69,15 @@ class AgentSettingsPlatformTest : BasePlatformTestCase() {
             assertTrue("Configuração automática" in html)
             assertTrue("Argumentos extras" in html)
             assertTrue("O que a IA libera" in html)
-            assertTrue("bypassPermissions" in html)
+            assertTrue("acceptEdits" in html && "bypassPermissions" !in html)
+            assertTrue("pergunta antes de cada uma" in html)
+            assertTrue("a contenção aparece no Arsenal", "Contenção da IA" in html && "Desfazer Alterações da IA" in html)
+
+            AgentSettings.confirmWrites = false
+            val off = tab.html()
+            assertTrue("dá para voltar a perguntar", "Voltar a perguntar antes de alterar arquivos" in off)
         } finally {
+            AgentSettings.confirmWrites = true
             com.intellij.openapi.util.Disposer.dispose(tab)
         }
     }

@@ -57,13 +57,17 @@ class ReviewCommentRenderer(
         editable -> listOf(EDIT_LABEL to Hit.EDIT)
         else -> emptyList()
     }
-    private val collapsed = resolved && !comment.expanded
+    /** Resolvidos e comentários de PR recolhem numa barra; os outros alvos ficam sempre abertos. */
+    private val collapsible = resolved || comment.pullRequest != 0
+    private val collapsed = if (resolved) !comment.expanded else collapsible && comment.minimized
     private val modeLabel: String? = if (comment.discuss && !resolved) DISCUSS_LABEL else null
     private val title = comment.id
     /** A gravidade do início do texto vira etiqueta no cabeçalho e sai do corpo. */
     private val severity: Severity? = CommentMarkdown.severity(comment.text)
     private val blocks: List<Block> = CommentMarkdown.parse(if (severity != null) CommentMarkdown.withoutSeverity(comment.text) else comment.text)
-    private var layout: Pair<Int, CommentBody>? = null
+    private val replies: List<CardReply> = card?.replies.orEmpty()
+    private val replyBlocks: List<List<Block>> = replies.map { CommentMarkdown.parse(it.text) }
+    private var layout: Layout? = null
     private val headerText =
         if (collapsed) CommentMarkdown.plain(comment.text, SUMMARY_MAX)
         else if (card != null) card.subtitle
@@ -90,7 +94,7 @@ class ReviewCommentRenderer(
     private val suggestion: List<String> =
         if (comment.pullRequest != 0 && comment.suggestion.isNotBlank()) comment.suggestion.trimEnd().lines() else emptyList()
     private val chevron: Icon? = when {
-        !resolved -> null
+        !collapsible -> null
         collapsed -> AllIcons.General.ArrowRight
         else -> AllIcons.General.ArrowDown
     }
@@ -116,11 +120,15 @@ class ReviewCommentRenderer(
         val codeLineHeight = body.codeLineHeight
     }
 
-    /** O corpo diagramado na largura que o editor dá, guardado enquanto essa largura não muda. */
-    private fun body(editor: Editor, fonts: Fonts): CommentBody {
+    private class Layout(val width: Int, val body: CommentBody, val replies: List<CommentBody>)
+
+    /** O corpo e as respostas diagramados na largura que o editor dá, guardados enquanto essa largura não muda. */
+    private fun layout(editor: Editor, fonts: Fonts): Layout {
         val width = wrapWidth(editor)
-        layout?.takeIf { it.first == width }?.let { return it.second }
-        return CommentBody(blocks, fonts.body, width).also { layout = width to it }
+        layout?.takeIf { it.width == width }?.let { return it }
+        val replyWidth = (width - replyIndent()).coerceAtLeast(JBUI.scale(160))
+        return Layout(width, CommentBody(blocks, fonts.body, width), replyBlocks.map { CommentBody(it, fonts.body, replyWidth) })
+            .also { layout = it }
     }
 
     /** Até onde o texto corre antes de quebrar: cabe na área visível, entre um mínimo legível e um máximo confortável. */
@@ -144,17 +152,27 @@ class ReviewCommentRenderer(
             (modeLabel?.let { gap() + badgeWidth(fonts, it) } ?: 0) +
             (originLabel?.let { gap() + badgeWidth(fonts, it) } ?: 0) +
             (if (buttons.isNotEmpty()) gap() + buttons.sumOf { gap() + buttonWidth(fonts, it.first) } else 0)
-        val text = if (collapsed) 0 else body(inlay.editor, fonts).naturalWidth
+        val layout = layout(inlay.editor, fonts)
+        val text = if (collapsed) 0 else layout.body.naturalWidth
         val code = suggestion.maxOfOrNull { fonts.codeMetrics.stringWidth(it.expandTabs()) }?.let { it + 2 * padding() } ?: 0
-        return indentPx + accentWidth() + 2 * padding() + maxOf(header, text, code, JBUI.scale(320))
+        val answers = if (collapsed) 0 else replies.indices.maxOfOrNull { index ->
+            val reply = replies[index]
+            val heading = fonts.titleMetrics.stringWidth(reply.author) + gap() + fonts.subtitleMetrics.stringWidth(reply.detail)
+            replyIndent() + maxOf(heading, layout.replies[index].naturalWidth)
+        } ?: 0
+        return indentPx + accentWidth() + 2 * padding() + maxOf(header, text, code, answers, JBUI.scale(320))
     }
 
     override fun calcHeightInPixels(inlay: Inlay<*>): Int {
         val fonts = Fonts(inlay.editor)
         if (collapsed) return 2 * margin() + 2 * verticalPadding() + fonts.headerHeight
+        val layout = layout(inlay.editor, fonts)
         return 2 * margin() + 2 * padding() + fonts.headerHeight + 2 * separatorGap() + 1 +
-            body(inlay.editor, fonts).height + suggestionHeight(fonts)
+            layout.body.height + suggestionHeight(fonts) + repliesHeight(fonts, layout)
     }
+
+    private fun repliesHeight(fonts: Fonts, layout: Layout): Int =
+        layout.replies.sumOf { replyGap() + fonts.bodyLineHeight + replyHeaderGap() + it.height }
 
     private fun suggestionHeight(fonts: Fonts): Int =
         if (suggestion.isEmpty()) 0
@@ -162,11 +180,11 @@ class ReviewCommentRenderer(
 
     /** [point] em coordenadas do `contentComponent` do editor, como [Inlay.getBounds]. */
     fun hitTest(inlay: Inlay<*>, point: Point): Hit {
-        if (buttons.isEmpty()) return Hit.NONE
+        if (buttons.isEmpty() && !collapsible) return Hit.NONE
         val bounds = inlay.bounds ?: return Hit.NONE
         val geometry = geometry(bounds, Fonts(inlay.editor))
         geometry.buttons.firstOrNull { it.first.contains(point) }?.let { return it.second.second }
-        return if (resolved && geometry.header.contains(point)) Hit.TOGGLE else Hit.NONE
+        return if (collapsible && geometry.header.contains(point)) Hit.TOGGLE else Hit.NONE
     }
 
     override fun paint(inlay: Inlay<*>, g: Graphics, targetRegion: Rectangle, textAttributes: TextAttributes) {
@@ -261,10 +279,16 @@ class ReviewCommentRenderer(
                 border = ReviewColors.cardBorder,
                 strikeout = removing,
             )
-            val body = body(editor, fonts)
+            val layout = layout(editor, fonts)
             val lineTop = separatorY + 1 + separatorGap()
-            body.paint(g2, left, lineTop, x + width - padding() - left, palette)
-            if (suggestion.isNotEmpty()) paintSuggestion(g2, fonts, editor, left, lineTop + body.height + separatorGap(), x + width - padding() - left)
+            val contentWidth = x + width - padding() - left
+            layout.body.paint(g2, left, lineTop, contentWidth, palette)
+            var bottom = lineTop + layout.body.height
+            if (suggestion.isNotEmpty()) {
+                paintSuggestion(g2, fonts, editor, left, bottom + separatorGap(), contentWidth)
+                bottom += suggestionHeight(fonts)
+            }
+            if (replies.isNotEmpty()) paintReplies(g2, fonts, layout, left, bottom, contentWidth, palette)
         } finally {
             g2.dispose()
         }
@@ -309,6 +333,47 @@ class ReviewCommentRenderer(
         for (line in suggestion) {
             g2.drawString(line.expandTabs(), left + padding(), baseline)
             baseline += fonts.codeLineHeight
+        }
+    }
+
+    /**
+     * As respostas uma abaixo da outra, recuadas sob o comentário, com uma linha que desce do comentário e
+     * entra em cada resposta, como numa conversa.
+     */
+    private fun paintReplies(g2: Graphics2D, fonts: Fonts, layout: Layout, left: Int, top: Int, width: Int, palette: BodyPalette) {
+        val threadX = left + JBUI.scale(6)
+        val replyLeft = left + replyIndent()
+        val dot = JBUI.scale(6)
+        val stroke = g2.stroke
+        var y = top
+        replies.forEachIndexed { index, reply ->
+            y += replyGap()
+            val center = y + fonts.bodyLineHeight / 2
+            g2.color = ReviewColors.threadLine
+            g2.stroke = BasicStroke(JBUI.scale(2).toFloat(), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
+            g2.drawLine(threadX, if (index == 0) top + JBUI.scale(2) else y - replyGap(), threadX, center)
+            g2.drawLine(threadX, center, replyLeft - gap(), center)
+            g2.stroke = stroke
+            g2.color = accent
+            g2.fillOval(replyLeft - gap() - dot / 2, center - dot / 2, dot, dot)
+
+            g2.font = fonts.title
+            g2.color = palette.foreground
+            g2.drawString(reply.author, replyLeft, baselineFor(center, fonts.titleMetrics))
+            g2.font = fonts.subtitle
+            g2.color = ReviewColors.mutedForeground
+            g2.drawString(reply.detail, replyLeft + fonts.titleMetrics.stringWidth(reply.author) + gap(), baselineFor(center, fonts.subtitleMetrics))
+
+            y += fonts.bodyLineHeight + replyHeaderGap()
+            val body = layout.replies[index]
+            if (index < replies.lastIndex) {
+                g2.color = ReviewColors.threadLine
+                g2.stroke = BasicStroke(JBUI.scale(2).toFloat(), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
+                g2.drawLine(threadX, center, threadX, y + body.height)
+                g2.stroke = stroke
+            }
+            body.paint(g2, replyLeft, y, width - replyIndent(), palette)
+            y += body.height
         }
     }
 
@@ -366,6 +431,12 @@ class ReviewCommentRenderer(
     private fun margin() = JBUI.scale(4)
 
     private fun codePadding() = JBUI.scale(6)
+
+    private fun replyIndent() = JBUI.scale(26)
+
+    private fun replyGap() = JBUI.scale(10)
+
+    private fun replyHeaderGap() = JBUI.scale(2)
 
     private companion object {
         const val HIDE_LABEL = "Ocultar"

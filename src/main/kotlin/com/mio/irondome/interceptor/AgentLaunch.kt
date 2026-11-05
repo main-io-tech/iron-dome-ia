@@ -32,14 +32,28 @@ class AgentLaunch private constructor(val executable: String, val distro: String
     /** Um caminho desta máquina como o CLI o enxerga: igual, ou `/mnt/c/...` no WSL. */
     fun workspace(path: String): String = wsl?.getWslPath(Path.of(path)) ?: path
 
-    /** O processo de [command] (que começa pelo [executable]) em [workDir], com a chave do Cursor no ambiente. */
-    fun process(command: List<String>, workDir: String, cursorApiKey: String?): GeneralCommandLine {
+    /** O sandbox do Cursor CLI só existe no macOS e no Linux: aqui, fora do Windows ou no WSL. */
+    val sandboxAvailable: Boolean get() = distro != null || !SystemInfo.isWindows
+
+    /**
+     * O processo de [command] (que começa pelo [executable]) em [workDir], com a chave do Cursor e a contenção de
+     * [AgentGuard] no ambiente: sem `git push` e, nesta máquina, sem os segredos que o CLI de [provider] não usa. No
+     * WSL o ambiente é o do shell de login da distribuição, e só a contenção do git atravessa.
+     */
+    fun process(command: List<String>, workDir: String, cursorApiKey: String?, provider: AgentProvider): GeneralCommandLine {
         val line = GeneralCommandLine(command)
             .withWorkDirectory(workDir)
             .withCharset(StandardCharsets.UTF_8)
             .withParentEnvironmentType(GeneralCommandLine.ParentEnvironmentType.CONSOLE)
+        val distribution = wsl
+        if (distribution == null) {
+            val contained = AgentGuard.environment(line.parentEnvironment, provider)
+            line.withParentEnvironmentType(GeneralCommandLine.ParentEnvironmentType.NONE).withEnvironment(contained)
+        } else {
+            line.withEnvironment(AgentGuard.gitEnvironment)
+        }
         cursorApiKey?.let { line.withEnvironment(CURSOR_API_KEY, it) }
-        val distribution = wsl ?: return line
+        if (distribution == null) return line
         val options = WSLCommandLineOptions()
             .setExecuteCommandInShell(true)
             .setExecuteCommandInLoginShell(true)

@@ -8,9 +8,13 @@ import com.intellij.notification.NotificationType
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.ActionUpdateThread
+import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.actionSystem.Separator
+import com.intellij.openapi.actionSystem.Toggleable
+import com.intellij.openapi.actionSystem.ex.ActionUtil
+import com.intellij.execution.runners.ExecutionUtil
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.service
 import com.intellij.openapi.fileEditor.FileDocumentManager
@@ -207,7 +211,7 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
                         item.checkedOut || context == null -> "Encerrar Revisão"
                         else -> "Atualizar ou Encerrar Revisão"
                     }
-                }) { toggleReview() },
+                }, selected = { selectedPr()?.active == true }) { toggleReview() },
             action("Ver Alterações", "Abre o diff dos arquivos do PR, no arquivo selecionado ou no primeiro; as setas passam pelos demais", AllIcons.Actions.Diff,
                 enabled = { selectedPr()?.pr != null && context != null }) {
                 val pr = selectedPr()?.pr
@@ -235,11 +239,15 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
                 AllIcons.Actions.Lightning,
                 enabled = {
                     selectedPr()?.takeIf { it.pr != null && context?.account != null }
-                        ?.let { autoReply.isOn(it.number) || AgentRunner.getInstance(project).available() } == true
+                        ?.let { autoReply.isOn(it.number) || (it.active && AgentRunner.getInstance(project).available()) } == true
                 },
                 text = { if (selectedPr()?.let { autoReply.isOn(it.number) } == true) "Desligar Respostas da IA" else "Ligar Respostas da IA" },
+                selected = { selectedPr()?.let { autoReply.isOn(it.number) } == true },
                 tooltipFor = {
-                    if (AgentRunner.getInstance(project).available()) {
+                    val item = selectedPr()
+                    if (item != null && !item.active && !autoReply.isOn(item.number)) {
+                        "Use Revisar Este PR para ligar as respostas da IA: elas valem durante a revisão do PR"
+                    } else if (AgentRunner.getInstance(project).available()) {
                         "A cada ${AutoReplyService.POLL_MINUTES} minutos, confere as conversas que você abriu no PR. Quando alguém responde, a IA avalia e " +
                             "responde em seu nome, até chegar a uma conclusão, quando resolve a conversa (no máximo ${AutoReply.MAX_ROUNDS} rodadas). " +
                             "Se precisar de uma decisão sua, ela não responde e avisa."
@@ -249,11 +257,19 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
                 },
             ) { toggleAutoReply() },
             action(
-                "Minhas Instruções para a IA",
-                "Como você avalia um PR: o que cobra, o que deixa passar e o tom. A IA segue na Revisão com IA e nas respostas automáticas",
+                "Minhas Instruções e Regras para a IA",
+                "Como você avalia um PR (o que cobra, o que deixa passar e o tom) e os arquivos .md de regras do projeto. " +
+                    "A IA segue na Revisão com IA e nas respostas automáticas",
                 AllIcons.General.User,
                 enabled = { true },
-                text = { if (ReviewerGuidelines.text.isBlank()) "Minhas Instruções para a IA…" else "Minhas Instruções para a IA (definidas)…" },
+                text = {
+                    val rules = ReviewRules.getInstance(project).paths.size
+                    val parts = listOfNotNull(
+                        "instruções".takeIf { ReviewerGuidelines.text.isNotBlank() },
+                        rules.takeIf { it > 0 }?.let { if (it == 1) "1 regra" else "$it regras" },
+                    )
+                    if (parts.isEmpty()) "Minhas Instruções e Regras para a IA…" else "Minhas Instruções e Regras para a IA (${parts.joinToString(" + ")})…"
+                },
             ) { editGuidelines() },
             action(
                 "Conferir Respostas Agora",
@@ -309,6 +325,7 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
                 AllIcons.Actions.Show,
                 enabled = { historyTarget() != null },
                 text = { if (historyTarget()?.second == true) "Ocultar no Editor" else "Mostrar no Editor" },
+                selected = { historyTarget()?.second == true },
                 tooltipFor = {
                     if (selectedPr()?.let { it.pr != null && !it.active } == true) {
                         "Os comentários do PR só aparecem no editor durante a revisão dele: use Revisar Este PR"
@@ -934,10 +951,11 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
         val runner = AgentRunner.getInstance(project)
         val feedback = ReviewFeedback.getInstance(project)
         val guidelines = ReviewerGuidelines.text
+        val rules = ReviewRules.getInstance(project)
         background("Preparando a revisão do PR #${pr.number} para a IA", {
             val files = patrulha.files(context, pr)
             val content = AiReview.instructions(
-                pr, files, feedback.promptHints(), ClassDossier.collect(project, files.files.map { it.path }), guidelines,
+                pr, files, feedback.promptHints(), ClassDossier.collect(project, files.files.map { it.path }), guidelines, rules.read(),
             )
             runner.writeInstructions(AiReview.fileName(pr.number), content)
         }) { instructions ->
@@ -957,10 +975,12 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
         val dialog = ReviewerGuidelinesDialog(project)
         if (!dialog.showAndGet()) return
         ReviewerGuidelines.text = dialog.text
+        ReviewRules.getInstance(project).paths = dialog.rules
+        val empty = dialog.text.isBlank() && dialog.rules.isEmpty()
         notify(
-            if (dialog.text.isBlank()) "Instruções para a IA removidas" else "Instruções para a IA salvas",
-            if (dialog.text.isBlank()) "A IA volta ao padrão na Revisão com IA e nas respostas automáticas."
-            else "A próxima Revisão com IA e as próximas respostas automáticas seguem a sua linha de avaliação.",
+            if (empty) "Instruções e regras para a IA removidas" else "Instruções e regras para a IA salvas",
+            if (empty) "A IA volta ao padrão na Revisão com IA e nas respostas automáticas."
+            else "A próxima Revisão com IA e as próximas respostas automáticas seguem a sua linha de avaliação e as regras vinculadas.",
             NotificationType.INFORMATION,
         )
     }
@@ -972,6 +992,7 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
             notify("Respostas da IA desligadas no PR #$number", "A IA para de responder às conversas deste PR.", NotificationType.INFORMATION)
             return
         }
+        if (selectedPr()?.active != true) return
         val confirmed = Messages.showYesNoDialog(
             project,
             "A IA vai acompanhar as conversas que você abriu no PR #$number e responder no GitHub em seu nome, sem perguntar antes, " +
@@ -1030,12 +1051,14 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
         patrulha.setReviewRef(ref)
         radar.startPullRequestReview(number)
         patrulha.setShownInEditor(number, true)
+        IdeEditorReview.suspend(project)
         syncQuietly(listOf(number))
     }
 
     private fun stopReview(number: Int) {
         radar.stopPullRequestReview()
         patrulha.setShownInEditor(number, false)
+        IdeEditorReview.restore(project)
     }
 
     private fun editSelected() {
@@ -1538,18 +1561,47 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
         text: () -> String = { description },
         /** A dica que muda com a seleção, no lugar de [tooltip]. */
         tooltipFor: (() -> String)? = null,
+        /** Nos botões de ligar e desligar: ligado, o botão fica pressionado, com o ponto verde no ícone; o texto fica sempre na barra. */
+        selected: (() -> Boolean)? = null,
         perform: () -> Unit,
-    ) = object : DumbAwareAction(description, tooltip, icon) {
-        override fun getActionUpdateThread() = ActionUpdateThread.EDT
-
-        override fun update(e: AnActionEvent) {
+    ): AnAction {
+        val update: (AnActionEvent) -> Unit = { e ->
             e.presentation.isEnabled = enabled()
             e.presentation.text = text()
             tooltipFor?.let { e.presentation.description = it() }
+            selected?.let {
+                val on = it()
+                Toggleable.setSelected(e.presentation, on)
+                e.presentation.icon = if (on) ExecutionUtil.getLiveIndicator(icon) else icon
+                e.presentation.putClientProperty(ActionUtil.SHOW_TEXT_IN_TOOLBAR, true)
+            }
         }
+        return if (selected == null) PanelAction(description, tooltip, icon, update, perform)
+        else ToggleablePanelAction(description, tooltip, icon, update, perform)
+    }
+
+    private open class PanelAction(
+        description: String,
+        tooltip: String,
+        icon: Icon,
+        private val onUpdate: (AnActionEvent) -> Unit,
+        private val perform: () -> Unit,
+    ) : DumbAwareAction(description, tooltip, icon) {
+        override fun getActionUpdateThread() = ActionUpdateThread.EDT
+
+        override fun update(e: AnActionEvent) = onUpdate(e)
 
         override fun actionPerformed(e: AnActionEvent) = perform()
     }
+
+    /** A barra só desenha pressionado o botão de uma ação [Toggleable]. */
+    private class ToggleablePanelAction(
+        description: String,
+        tooltip: String,
+        icon: Icon,
+        onUpdate: (AnActionEvent) -> Unit,
+        perform: () -> Unit,
+    ) : PanelAction(description, tooltip, icon, onUpdate, perform), Toggleable
 
     private class Renderer : RichTreeCellRenderer() {
 

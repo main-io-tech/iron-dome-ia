@@ -46,7 +46,7 @@ object AgentVerifier {
                 val command = AgentCommand.build(
                     provider, launch.executable, task, launch.workspace(workspace), model, 2, AgentCommand.splitArgs(AgentSettings.extraArgs),
                 )
-                ExecUtil.execAndGetOutput(launch.process(command, workspace, key), TIMEOUT_MS)
+                ExecUtil.execAndGetOutput(launch.process(command, workspace, key, provider), TIMEOUT_MS)
             }.fold(
                 onSuccess = { output ->
                     val events = output.stdoutLines.flatMap(AgentEvents::parseAll)

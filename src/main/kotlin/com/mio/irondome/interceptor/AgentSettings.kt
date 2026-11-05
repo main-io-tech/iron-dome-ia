@@ -33,6 +33,7 @@ object AgentSettings {
     private const val TERMINAL_VERIFIED_AT_KEY = "IronDome.Agent.TerminalVerifiedAt"
     private const val EXTRA_ARGS_KEY = "IronDome.Agent.ExtraArgs"
     private const val HAS_KEY_KEY = "IronDome.Agent.HasCursorKey"
+    private const val CONFIRM_WRITES_KEY = "IronDome.Agent.ConfirmWrites"
     private val cursorCredentials = CredentialAttributes(generateServiceName("Iron Dome IA", "Cursor API key"))
 
     const val DEFAULT_TIMEOUT_MINUTES = 20
@@ -84,6 +85,11 @@ object AgentSettings {
     var runMode: AgentRunMode
         get() = AgentRunMode.entries.firstOrNull { it.name == PropertiesComponent.getInstance().getValue(RUN_MODE_KEY) } ?: AgentRunMode.BACKGROUND
         set(value) = change { PropertiesComponent.getInstance().setValue(RUN_MODE_KEY, value.name, AgentRunMode.BACKGROUND.name) }
+
+    /** Perguntar antes de cada tarefa que altera arquivos na aba, onde a IA roda sem pedir aprovação a cada passo. */
+    var confirmWrites: Boolean
+        get() = PropertiesComponent.getInstance().getBoolean(CONFIRM_WRITES_KEY, true)
+        set(value) = change { PropertiesComponent.getInstance().setValue(CONFIRM_WRITES_KEY, value, true) }
 
     /** A configuração automática roda sozinha só na primeira vez; depois, só pelo botão. */
     var autoSetupTried: Boolean
