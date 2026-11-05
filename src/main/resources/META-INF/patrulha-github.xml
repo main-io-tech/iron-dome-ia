@@ -1,0 +1,46 @@
+<idea-plugin>
+    <depends>Git4Idea</depends>
+
+    <extensions defaultExtensionNs="com.mio.irondome">
+        <toolWindowTab implementation="com.mio.irondome.patrulha.PatrulhaTab"/>
+        <editorCardProvider implementation="com.mio.irondome.patrulha.PullRequestCards"/>
+        <editorCardProvider implementation="com.mio.irondome.patrulha.PullRequestDiscussionCards"/>
+    </extensions>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <editorFactoryListener implementation="com.mio.irondome.patrulha.ChangedLinesEditorListener"/>
+        <postStartupActivity implementation="com.mio.irondome.patrulha.AutoReplyStartup"/>
+    </extensions>
+
+    <actions>
+        <group id="IronDome.PullRequestComments">
+            <separator/>
+            <action id="IronDome.MinimizePullRequestComments"
+                    class="com.mio.irondome.patrulha.MinimizePullRequestCommentsAction"
+                    text="Minimizar Comentários do PR"
+                    description="Recolhe os comentários do PR em revisão no editor, ou expande todos quando já estão recolhidos"
+                    icon="AllIcons.Actions.Collapseall"/>
+            <action id="IronDome.TogglePullRequestComments"
+                    class="com.mio.irondome.patrulha.TogglePullRequestCommentsAction"
+                    text="Ocultar Comentários do PR"
+                    description="Tira do editor os comentários do PR em revisão, ou traz de volta"
+                    icon="AllIcons.Actions.Show"/>
+            <action id="IronDome.ShowHiddenPullRequestComments"
+                    class="com.mio.irondome.patrulha.ShowHiddenPullRequestCommentsAction"
+                    text="Mostrar Comentários Ocultados do PR"
+                    description="Volta a mostrar no editor os comentários do PR ocultados um a um"
+                    icon="AllIcons.Actions.ToggleVisibility"/>
+            <add-to-group group-id="IronDome.FloatingToolbar" anchor="last"/>
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+        </group>
+    </actions>
+
+    <projectListeners>
+        <listener class="com.mio.irondome.patrulha.ReviewBranchWatcher"
+                  topic="git4idea.repo.GitRepositoryChangeListener"/>
+        <listener class="com.mio.irondome.patrulha.ChangedLinesRefresher"
+                  topic="git4idea.repo.GitRepositoryChangeListener"/>
+        <listener class="com.mio.irondome.patrulha.ChangedLinesRefresher"
+                  topic="com.mio.irondome.radar.ReviewCommentsListener"/>
+    </projectListeners>
+</idea-plugin>

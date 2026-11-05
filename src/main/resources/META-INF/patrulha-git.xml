@@ -1,0 +1,2 @@
+<!-- Só torna as classes do Git visíveis ao plugin; a aba da Patrulha é registrada em patrulha-github.xml. -->
+<idea-plugin/>

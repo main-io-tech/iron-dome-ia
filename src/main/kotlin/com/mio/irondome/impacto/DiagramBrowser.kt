@@ -1,0 +1,336 @@
+package com.mio.irondome.impacto
+
+import com.intellij.ide.util.PropertiesComponent
+import com.intellij.openapi.Disposable
+import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.util.Disposer
+import com.intellij.openapi.vcs.FileStatus
+import com.intellij.ui.JBColor
+import com.intellij.ui.components.JBPanelWithEmptyText
+import com.intellij.ui.jcef.JBCefApp
+import com.intellij.ui.jcef.JBCefBrowser
+import com.intellij.ui.jcef.JBCefBrowserBase
+import com.intellij.ui.jcef.JBCefJSQuery
+import com.intellij.util.ui.JBUI
+import com.intellij.util.ui.NamedColorUtil
+import com.intellij.util.ui.UIUtil
+import java.awt.Color
+import javax.swing.JComponent
+
+/**
+ * Diagrama desenhado com AntV G6 no navegador embutido. Mensagens da página chegam em
+ * [onMessage] na EDT, no formato `acao:nomeQualificado`.
+ */
+class DiagramBrowser(parent: Disposable, private val onMessage: (String) -> Unit) {
+
+    private val browser: JBCefBrowser?
+    private val query: JBCefJSQuery?
+    val component: JComponent
+
+    init {
+        if (JBCefApp.isSupported()) {
+            val browser = JBCefBrowser()
+            Disposer.register(parent, browser)
+            val query = JBCefJSQuery.create(browser as JBCefBrowserBase)
+            Disposer.register(parent, query)
+            query.addHandler { message ->
+                if (message.startsWith(PREF_PREFIX)) savePref(message.removePrefix(PREF_PREFIX))
+                else ApplicationManager.getApplication().invokeLater { onMessage(message) }
+                null
+            }
+            this.browser = browser
+            this.query = query
+            component = browser.component
+        } else {
+            browser = null
+            query = null
+            component = JBPanelWithEmptyText().withEmptyText("O navegador embutido (JCEF) não está disponível nesta IDE")
+        }
+    }
+
+    /**
+     * [changes]: tipo de alteração não commitada por classe; [vcs] diz se o projeto usa controle de versão;
+     * [comments]: comentários pendentes por classe; [impact]: o que a IA apontou, se já analisou.
+     */
+    fun show(
+        graph: DependencyGraph,
+        changes: Map<String, FileChange>,
+        vcs: Boolean,
+        comments: Map<String, List<ImpactComment>> = emptyMap(),
+        impact: ImpactReport? = null,
+    ) {
+        val browser = browser ?: return
+        // O tema e as preferências são lidos na EDT; a montagem da página, com a biblioteca de 1,4 MB
+        // embutida, acontece fora dela, e só a carga volta para a EDT.
+        val theme = theme()
+        val bridge = query!!.inject("message")
+        val data = toJson(graph, changes, vcs, comments, impact)
+        val generation = ++loads
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val html = template
+                .replace("/*IRON_DOME_THEME_CSS*/", theme.entries.joinToString(" ") { (key, value) -> "--$key: $value;" })
+                .replace("/*IRON_DOME_THEME_JSON*/", Json.obj(theme))
+                .replace("/*IRON_DOME_BRIDGE*/", bridge)
+                .replace("/*IRON_DOME_DATA*/", Json.safeForScript(data))
+                .replace("/*IRON_DOME_G6*/", g6)
+            ApplicationManager.getApplication().invokeLater {
+                if (generation == loads && !browser.isDisposed) browser.loadHTML(html)
+            }
+        }
+    }
+
+    /** Só a última página pedida é carregada, quando duas análises terminam em sequência. */
+    private var loads = 0
+
+    fun updateComments(comments: Map<String, List<ImpactComment>>) {
+        val cef = browser?.cefBrowser ?: return
+        cef.executeJavaScript("window.ironDome && window.ironDome.setComments(${Json.safeForScript(commentsJson(comments))})", cef.url, 0)
+    }
+
+    /** Nulo apaga as marcas da análise anterior. */
+    fun updateImpact(impact: ImpactReport?) {
+        val cef = browser?.cefBrowser ?: return
+        cef.executeJavaScript("window.ironDome && window.ironDome.setImpact(${Json.safeForScript(impactJson(impact))})", cef.url, 0)
+    }
+
+    /** `analyzing` mostra na página que a IA está analisando o impacto. */
+    fun updateAnalyzing(analyzing: Boolean) {
+        val cef = browser?.cefBrowser ?: return
+        cef.executeJavaScript("window.ironDome && window.ironDome.setAnalyzing($analyzing)", cef.url, 0)
+    }
+
+    private fun commentsJson(comments: Map<String, List<ImpactComment>>): String =
+        Json.obj(
+            comments.mapValues { (_, list) ->
+                list.map { comment ->
+                    Json.raw(
+                        Json.obj(
+                            "id" to comment.id,
+                            "source" to comment.source.name,
+                            "sourceLabel" to comment.source.label,
+                            "where" to "${comment.path.substringAfterLast('/')}, ${comment.location}",
+                            "text" to comment.text,
+                            "sent" to comment.sent,
+                        ),
+                    )
+                }
+            },
+        )
+
+    private fun impactJson(impact: ImpactReport?): String = if (impact == null) "null" else Json.obj(
+        "summary" to impact.summary,
+        "items" to Json.raw(
+            Json.obj(
+                impact.impacts.associate { item ->
+                    item.qualifiedName to Json.raw(
+                        Json.obj(
+                            "level" to item.level.name,
+                            "levelLabel" to item.level.label,
+                            "reason" to item.reason,
+                            "sources" to item.sources,
+                        ),
+                    )
+                },
+            ),
+        ),
+        "order" to impact.impacts.map { it.qualifiedName },
+    )
+
+    /** Atualiza só as marcas de alteração, sem refazer o layout. */
+    fun updateChanges(changes: Map<String, FileChange>, vcs: Boolean) {
+        val cef = browser?.cefBrowser ?: return
+        val json = Json.safeForScript(changesJson(changes))
+        cef.executeJavaScript("window.ironDome && window.ironDome.setChanges($json, $vcs)", cef.url, 0)
+    }
+
+    private fun changesJson(changes: Map<String, FileChange>): String =
+        Json.obj(changes.mapValues { (_, change) -> Json.raw(Json.obj("change" to change.name, "label" to change.label)) })
+
+    fun showMessage(text: String) {
+        val theme = theme()
+        val accent = theme["accent"]
+        loads++
+        browser?.loadHTML(
+            """
+            <html><head><style>
+              body { margin: 0; height: 100vh; display: flex; flex-direction: column; gap: 18px; align-items: center;
+                justify-content: center; background: radial-gradient(circle, ${accent}14 0%, ${theme["bg"]} 60%), ${theme["bg"]};
+                color: ${theme["muted"]}; font: 13px "Segoe UI", -apple-system, sans-serif; text-align: center;
+                padding: 24px; box-sizing: border-box; }
+              .radar { position: relative; width: 150px; height: 150px; border-radius: 50%;
+                border: 1px solid ${accent}55; box-shadow: 0 0 40px ${accent}22 inset; }
+              .radar::before, .radar::after { content: ''; position: absolute; border-radius: 50%; border: 1px dashed ${accent}44; }
+              .radar::before { inset: 25px; } .radar::after { inset: 52px; }
+              /* Poucas voltas e para: animação sem fim mantém o navegador embutido repintando a aba o tempo todo. */
+              .sweep { position: absolute; inset: 0; border-radius: 50%; animation: spin 4s linear 4;
+                background: conic-gradient(from 0deg, transparent 0deg 280deg, ${accent}66 360deg); }
+              .core { position: absolute; left: 50%; top: 50%; width: 12px; height: 12px; margin: -6px; border-radius: 50%;
+                background: $accent; box-shadow: 0 0 12px $accent; }
+              .blip { position: absolute; width: 7px; height: 7px; border-radius: 50%; animation: blink 4s 4; opacity: .5; }
+              .text { max-width: 440px; line-height: 1.6; }
+              .title { color: ${theme["fg"]}; font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+              @keyframes spin { to { transform: rotate(360deg); } }
+              @keyframes blink { 0%, 100% { opacity: .15; } 50% { opacity: 1; } }
+              @media (prefers-reduced-motion: reduce) { .sweep, .blip { animation: none; } }
+            </style></head><body>
+              <div class="radar"><div class="sweep"></div><div class="core"></div>
+                <div class="blip" style="left: 104px; top: 34px; background: ${theme["highSolid"]}; animation-delay: .4s"></div>
+                <div class="blip" style="left: 30px; top: 92px; background: ${theme["mediumSolid"]}; animation-delay: 2.2s"></div>
+                <div class="blip" style="left: 96px; top: 112px; background: ${theme["lowSolid"]}; animation-delay: 3.1s"></div>
+              </div>
+              <div class="text"><div class="title">Raio de Impacto</div>${Json.escapeHtml(text)}</div>
+            </body></html>
+            """.trimIndent(),
+        )
+    }
+
+    fun select(qualifiedName: String) {
+        val cef = browser?.cefBrowser ?: return
+        cef.executeJavaScript("window.ironDome && window.ironDome.select(${Json.string(qualifiedName)})", cef.url, 0)
+    }
+
+    private fun toJson(
+        graph: DependencyGraph,
+        changes: Map<String, FileChange>,
+        vcs: Boolean,
+        comments: Map<String, List<ImpactComment>>,
+        impact: ImpactReport?,
+    ): String = Json.obj(
+        "focus" to graph.focus,
+        "truncated" to graph.truncated,
+        "cycles" to graph.cycleCount,
+        "vcs" to vcs,
+        "scale" to Json.raw(Json.obj("medium" to ChangeRisk.MEDIUM_FROM, "high" to ChangeRisk.HIGH_FROM)),
+        "changes" to Json.raw(changesJson(changes)),
+        "comments" to Json.raw(commentsJson(comments)),
+        "impact" to Json.raw(impactJson(impact)),
+        "prefs" to Json.raw(Json.obj(PANELS.associateWith { PropertiesComponent.getInstance().getBoolean(prefKey(it)) })),
+        "nodes" to graph.nodes.map { node ->
+            Json.raw(
+                Json.obj(
+                    "id" to node.qualifiedName,
+                    "name" to node.name,
+                    "pkg" to node.packageName,
+                    "kind" to node.kind.label,
+                    "afferent" to node.afferent,
+                    "efferent" to node.efferent,
+                    "level" to node.level,
+                    "cycle" to node.inCycle,
+                    "risk" to node.risk.name,
+                    "riskLabel" to node.risk.label,
+                    "riskReason" to MetricGuide.riskReason(node),
+                    "coverage" to node.tests.coverage.name,
+                    "coverageLabel" to node.tests.coverage.label,
+                    "tests" to node.tests.testClasses,
+                    "attention" to node.needsAttention,
+                    "advice" to MetricGuide.advice(node),
+                    "changeAdvice" to MetricGuide.changeAdvice(node),
+                ),
+            )
+        },
+        "edges" to graph.edges.map { edge ->
+            Json.raw(Json.obj("source" to edge.from, "target" to edge.to, "kind" to edge.kind.name, "cycle" to edge.inCycle))
+        },
+        "help" to MetricGuide.topics.map { topic ->
+            Json.raw(Json.obj("id" to topic.id, "title" to topic.title, "text" to topic.text))
+        },
+    )
+
+    private fun theme(): Map<String, String> {
+        val dark = !JBColor.isBright()
+        return linkedMapOf(
+            "bg" to hex(UIUtil.getPanelBackground()),
+            "panel" to hex(JBColor.namedColor("ToolWindow.background", UIUtil.getPanelBackground())),
+            "fg" to hex(UIUtil.getLabelForeground()),
+            "muted" to hex(NamedColorUtil.getInactiveTextColor()),
+            "border" to hex(JBColor.border()),
+            "accent" to hex(JBUI.CurrentTheme.Focus.focusColor()),
+            "edge" to if (dark) "#8b949e" else "#6e7781",
+            "cycle" to if (dark) "#f85149" else "#cf222e",
+            "cycleBg" to if (dark) "#4a1a1e" else "#ffebe9",
+            "match" to if (dark) "#d2a8ff" else "#8250df",
+            "low" to if (dark) "#2e6b3f" else "#a7e3b5",
+            "medium" to if (dark) "#7a6420" else "#f5db8b",
+            "high" to if (dark) "#7d2e2e" else "#f4a7a3",
+            "lowEnd" to if (dark) "#1c4529" else "#7fd194",
+            "mediumEnd" to if (dark) "#52420f" else "#efc75a",
+            "highEnd" to if (dark) "#561d1d" else "#ee8a83",
+            "lowSolid" to if (dark) "#3fb950" else "#1a7f37",
+            "mediumSolid" to if (dark) "#d29922" else "#9a6700",
+            "highSolid" to if (dark) "#f85149" else "#cf222e",
+            "nodeText" to if (dark) "#e6edf3" else "#1f2328",
+            "changed" to hex(FileStatus.MODIFIED.color ?: JBColor.BLUE),
+            "comment" to if (dark) "#58a6ff" else "#0969da",
+            "patrulha" to if (dark) "#a371f7" else "#8250df",
+            "impact" to if (dark) "#f778ba" else "#bf3989",
+            "impactBg" to if (dark) "#3d1d33" else "#ffeff7",
+        )
+    }
+
+    private fun hex(color: Color) = "#%02x%02x%02x".format(color.red, color.green, color.blue)
+
+    /** `painel:1` minimiza o painel da página, `painel:0` mostra. */
+    private fun savePref(pref: String) {
+        val panel = pref.substringBefore(':').takeIf { it in PANELS } ?: return
+        PropertiesComponent.getInstance().setValue(prefKey(panel), pref.substringAfter(':') == "1")
+    }
+
+    private companion object {
+        const val PREF_PREFIX = "pref:"
+        /** Painéis da página que o usuário pode minimizar: a legenda e os detalhes da classe. */
+        val PANELS = listOf("legend", "info")
+
+        fun prefKey(panel: String) = "irondome.diagram.collapsed.$panel"
+
+        val template: String by lazy { resource("/diagram/diagram.html") }
+        val g6: String by lazy { resource("/diagram/g6.min.js") }
+
+        fun resource(path: String): String =
+            DiagramBrowser::class.java.getResourceAsStream(path)!!.use { it.readBytes().toString(Charsets.UTF_8) }
+    }
+}
+
+/** JSON mínimo para mandar o grafo à página, sem depender de biblioteca. */
+internal object Json {
+
+    class Raw(val json: String)
+
+    fun raw(json: String) = Raw(json)
+
+    fun obj(vararg entries: Pair<String, Any?>): String = obj(entries.toMap())
+
+    fun obj(entries: Map<String, Any?>): String =
+        entries.entries.joinToString(",", "{", "}") { (key, value) -> "${string(key)}:${value(value)}" }
+
+    fun string(text: String): String = buildString {
+        append('"')
+        for (char in text) {
+            when {
+                char == '"' -> append("\\\"")
+                char == '\\' -> append("\\\\")
+                char == '\n' -> append("\\n")
+                char == '\r' -> append("\\r")
+                char == '\t' -> append("\\t")
+                char < ' ' || char == '\u2028' || char == '\u2029' -> append("\\u%04x".format(char.code))
+                else -> append(char)
+            }
+        }
+        append('"')
+    }
+
+    /** Impede que um `</script>` dentro dos dados feche o bloco de script da página. */
+    fun safeForScript(json: String): String = json.replace("</", "<\\/")
+
+    fun escapeHtml(text: String): String =
+        text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;")
+
+    private fun value(value: Any?): String = when (value) {
+        null -> "null"
+        is Raw -> value.json
+        is String -> string(value)
+        is Boolean, is Int, is Long -> value.toString()
+        is Double -> if (value.isFinite()) "%.4f".format(java.util.Locale.ROOT, value) else "null"
+        is Collection<*> -> value.joinToString(",", "[", "]") { value(it) }
+        else -> string(value.toString())
+    }
+}

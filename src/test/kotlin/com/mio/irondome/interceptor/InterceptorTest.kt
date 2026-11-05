@@ -1,0 +1,345 @@
+package com.mio.irondome.interceptor
+
+import com.intellij.execution.configurations.GeneralCommandLine
+import com.intellij.execution.util.ExecUtil
+import com.intellij.openapi.util.SystemInfo
+import com.mio.irondome.caixapreta.BugAnalysis
+import com.mio.irondome.escudo.FailureExplanation
+import com.mio.irondome.escudo.TestKind
+import com.mio.irondome.escudo.TestNode
+import com.mio.irondome.escudo.TestOutcome
+import com.mio.irondome.patrulha.AiReview
+import com.mio.irondome.patrulha.ChangedFile
+import com.mio.irondome.patrulha.PullRequest
+import com.mio.irondome.patrulha.PullRequestFiles
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
+import org.junit.Test
+import java.nio.charset.StandardCharsets
+import java.nio.file.Files
+import java.time.Duration
+import java.time.LocalDateTime
+
+class InterceptorTest {
+
+    private val readOnly = AgentTask("Revisão", "Revise o PR\nseguindo \"as\" instruções & responda", write = false)
+
+    @Test
+    fun cursorRunsHeadlessInTheWorkspaceAndOnlyWritesWhenAllowed() {
+        val read = AgentCommand.build(AgentProvider.CURSOR, "agent", readOnly, "C:/proj", "gpt-5", 20)
+        val write = AgentCommand.build(AgentProvider.CURSOR, "agent", readOnly.copy(write = true), "C:/proj", null, 20)
+
+        assertEquals(listOf("agent", "-p", "--output-format", "stream-json", "--trust", "--workspace", "C:/proj"), read.take(7))
+        assertTrue("só leitura usa o modo ask", read.containsAll(listOf("--mode", "ask")))
+        assertFalse("--force" in read)
+        assertEquals(listOf("--model", "gpt-5"), read.subList(read.indexOf("--model"), read.indexOf("--model") + 2))
+        assertTrue("--force" in write)
+        assertFalse("--model" in write)
+        assertFalse("o sandbox só existe no macOS e no Linux", "--sandbox" in write)
+        val sandboxed = AgentCommand.build(AgentProvider.CURSOR, "agent", readOnly.copy(write = true), "/mnt/c/proj", null, 20, sandbox = true)
+        assertEquals("enabled", sandboxed[sandboxed.indexOf("--sandbox") + 1])
+        assertFalse("só leitura já roda no modo ask", "--sandbox" in AgentCommand.build(AgentProvider.CURSOR, "agent", readOnly, "/mnt/c/proj", null, 20, sandbox = true))
+        assertEquals("o prompt vai em uma linha, sem acentos nem os caracteres do cmd.exe", "Revise o PR seguindo as instrucoes responda", read.last())
+    }
+
+    @Test
+    fun claudeCodeOnlyGetsPermissionToEditInTasksThatChangeFiles() {
+        val read = AgentCommand.build(AgentProvider.CLAUDE, "claude", readOnly, "C:/proj", "sonnet", 20, listOf("--approve-mcps"))
+        val write = AgentCommand.build(AgentProvider.CLAUDE, "claude", readOnly.copy(write = true), "C:/proj", null, 20)
+
+        assertEquals(
+            "a lista de bloqueio vem antes de outra opção, para não engolir o prompt",
+            listOf("claude", "-p", "--disallowedTools", AgentGuard.claudeDisallowedTools, "--output-format", "stream-json", "--verbose"),
+            read.take(7),
+        )
+        assertEquals(AgentGuard.claudeDisallowedTools, write[write.indexOf("--disallowedTools") + 1])
+        assertFalse("--permission-mode" in read)
+        assertEquals(listOf("--model", "sonnet", "--approve-mcps", "Revise o PR seguindo as instrucoes responda"), read.takeLast(4))
+        assertTrue("só editar, sem liberar os comandos", write.containsAll(listOf("--permission-mode", "acceptEdits")))
+        assertFalse("bypassPermissions" in write)
+        assertEquals(
+            "o teste não libera nada",
+            "& 'claude' '-p' 'Teste'",
+            AgentCommand.terminal(AgentProvider.CLAUDE, "claude", "Teste", null, 20, ShellKind.POWERSHELL, interactive = false),
+        )
+        assertEquals(
+            "& 'agent' '-p' '--trust' '--output-format' 'text' 'Teste'",
+            AgentCommand.terminal(AgentProvider.CURSOR, "agent", "Teste", null, 20, ShellKind.POWERSHELL, interactive = false),
+        )
+    }
+
+    @Test
+    fun extraArgsSplitOnSpacesAndKeepQuotedGroups() {
+        assertEquals(listOf("--approve-mcps", "--allowedTools", "Read Grep"), AgentCommand.splitArgs("--approve-mcps --allowedTools \"Read Grep\""))
+        assertEquals(emptyList<String>(), AgentCommand.splitArgs("  "))
+        assertTrue("--x" in AgentCommand.build(AgentProvider.CURSOR, "agent", readOnly, "C:/proj", null, 20, listOf("--x")))
+    }
+
+    @Test
+    fun claudeMessagesBringTextAndToolsTogether() {
+        val message = """{"type":"assistant","message":{"content":[{"type":"text","text":"Vou corrigir"},""" +
+            """{"type":"tool_use","name":"Edit","input":{"file_path":"src/Frete.kt"}},{"type":"tool_use","name":"Bash","input":{"command":"gradle test"}}]}}"""
+
+        assertEquals(
+            listOf(AgentEvent.Text("Vou corrigir"), AgentEvent.Tool(true, "edit", "src/Frete.kt"), AgentEvent.Tool(true, "shell", null, "gradle test")),
+            AgentEvents.parseAll(message),
+        )
+        assertEquals(
+            "o comando do Cursor vem para o vigia",
+            AgentEvent.Tool(true, "shell", null, "git push"),
+            AgentEvents.parse("""{"type":"tool_call","subtype":"started","tool_call":{"shellToolCall":{"args":{"command":"git push"}}}}"""),
+        )
+        assertEquals(
+            AgentEvent.Tool(true, "read", "a.kt"),
+            AgentEvents.parse("""{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"a.kt"}}]}}"""),
+        )
+        assertNull("eventos de sistema que não são o início ficam de fora", AgentEvents.parse("""{"type":"system","subtype":"hook_response"}"""))
+        assertEquals(
+            AgentEvent.Result("limite", true),
+            AgentEvents.parse("""{"type":"result","subtype":"error_max_turns","is_error":false,"result":"limite"}"""),
+        )
+    }
+
+    @Test
+    fun whoChangesCodeIgnoresPullRequestCommentsAndReviewsOnlyRead() {
+        val write = AgentCommand.guarded(readOnly.copy(prompt = "Corrija", write = true))
+        val read = AgentCommand.guarded(readOnly.copy(prompt = "Revise"))
+
+        assertEquals("Corrija ${AgentCommand.PULL_REQUEST_RULE} ${AgentGuard.RULE}", write)
+        assertTrue("iron-dome/pull-requests/" in write)
+        assertTrue("quem altera arquivos sabe o que não pode", "git push" in write)
+        assertEquals("Revise ${AgentCommand.READ_ONLY_RULE}", read)
+    }
+
+    @Test
+    fun theTerminalCommandIsQuotedForEachShell() {
+        val prompt = "Revise o PR de O'Brien"
+        val exe = "C:/Program Files/Cursor/agent.cmd"
+
+        assertEquals(
+            "& 'C:/Program Files/Cursor/agent.cmd' '--model' 'gpt-5' 'Revise o PR de O''Brien'",
+            AgentCommand.terminal(AgentProvider.CURSOR, exe, prompt, "gpt-5", 20, ShellKind.POWERSHELL),
+        )
+        assertEquals(
+            "\"C:/Program Files/Cursor/agent.cmd\" \"Revise o PR de O'Brien\"",
+            AgentCommand.terminal(AgentProvider.CURSOR, exe, prompt, null, 20, ShellKind.CMD),
+        )
+        assertEquals(
+            "'agy' '-p' 'Revise o PR de O'\\''Brien' '--print-timeout' '15m'",
+            AgentCommand.terminal(AgentProvider.ANTIGRAVITY, "agy", prompt, null, 15, ShellKind.POSIX),
+        )
+    }
+
+    @Test
+    fun inWslTheTerminalRunsTheCommandInTheLoginShellOfTheDistribution() {
+        val inner = AgentCommand.terminal(AgentProvider.CURSOR, "agent", "Revise o PR", null, 20, ShellKind.POSIX)
+
+        assertEquals("'agent' 'Revise o PR'", inner)
+        assertEquals(
+            "& 'wsl.exe' '-d' 'Ubuntu' '--cd' '/mnt/c/proj' '--' 'bash' '-lic' '''agent'' ''Revise o PR'''",
+            AgentCommand.wrapWsl("Ubuntu", "/mnt/c/proj", inner, ShellKind.POWERSHELL),
+        )
+        assertEquals(
+            "\"wsl.exe\" \"-d\" \"Ubuntu\" \"--cd\" \"/mnt/c/proj\" \"--\" \"bash\" \"-lic\" \"'agent' 'Revise o PR'\"",
+            AgentCommand.wrapWsl("Ubuntu", "/mnt/c/proj", inner, ShellKind.CMD),
+        )
+    }
+
+    @Test
+    fun theShellComesFromTheTerminalSettings() {
+        assertEquals(ShellKind.POWERSHELL, ShellKind.of("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", windows = true))
+        assertEquals(ShellKind.POWERSHELL, ShellKind.of("pwsh", windows = false))
+        assertEquals(ShellKind.CMD, ShellKind.of("cmd.exe", windows = true))
+        assertEquals(ShellKind.POWERSHELL, ShellKind.of(null, windows = true))
+        assertEquals(ShellKind.POSIX, ShellKind.of("/bin/zsh", windows = false))
+        assertEquals(ShellKind.POSIX, ShellKind.of("C:\\Program Files\\Git\\bin\\bash.exe", windows = true))
+    }
+
+    @Test
+    fun antigravityUsesItsOwnFlagsAndATimeout() {
+        val command = AgentCommand.build(AgentProvider.ANTIGRAVITY, "agy", readOnly, "C:/proj", "gemini-3-pro", 15)
+
+        assertEquals(listOf("agy", "-p", "Revise o PR seguindo as instrucoes responda", "--output-format", "stream-json", "--print-timeout", "15m"), command.take(7))
+        assertTrue(command.containsAll(listOf("--model", "gemini-3-pro")))
+        assertFalse("só leitura não aprova nada sozinho", "--dangerously-skip-permissions" in command)
+        assertTrue(
+            "sem janela, quem altera arquivos precisa das permissões aprovadas, como o --force do Cursor",
+            "--dangerously-skip-permissions" in AgentCommand.build(AgentProvider.ANTIGRAVITY, "agy", readOnly.copy(write = true), "C:/proj", null, 15),
+        )
+    }
+
+    /** Linhas do stream-json do Antigravity CLI, da documentação do modo headless. */
+    @Test
+    fun antigravityStreamEventsBecomeProgressFilesAndTheFinalAnswer() {
+        val init = """{"event":"init","conversation_id":"c3b6","init":{"cwd":"/home/user/project","tools":["run_command"],"permission_mode":"request-review","model":"gemini-3.8-flash-medium"}}"""
+        val input = """{"event":"step_update","step_update":{"conversation_id":"c3b6","step_index":0,"state":"DONE","step_type":"user_input"}}"""
+        val text = """{"event":"step_update","step_update":{"conversation_id":"c3b6","step_index":3,"state":"ACTIVE","step_type":"agent_response","text_delta":"Git rebase reescreve"}}"""
+        val tool = """{"event":"step_update","step_update":{"conversation_id":"edb1","step_index":4,"state":"DONE","step_type":"tool","tool_name":"write_to_file",""" +
+            """"duration_seconds":0.07,"tool_info":{"name":"write_to_file","parameters":{"TargetFile":"src/Frete.kt","CodeContent":"val frete = 10"},"output":"ok"}}}"""
+        val toolRunning = """{"event":"step_update","step_update":{"step_index":4,"state":"ACTIVE","step_type":"tool","tool_name":"write_to_file"}}"""
+        val result = """{"event":"result","result":{"conversation_id":"c3b6","status":"SUCCESS","response":"OK\n","duration_seconds":6.88,"num_turns":1}}"""
+        val failure = """{"conversation_id":"","status":"ERROR","response":"","error":"invalid model selection","duration_seconds":0}"""
+
+        assertEquals(AgentEvent.Init("gemini-3.8-flash-medium"), AgentEvents.parse(init))
+        assertNull(AgentEvents.parse(input))
+        assertEquals(AgentEvent.Text("Git rebase reescreve"), AgentEvents.parse(text))
+        assertEquals(AgentEvent.Tool(true, "write", "src/Frete.kt"), AgentEvents.parse(tool))
+        assertNull("a ferramenta conta uma vez, quando termina", AgentEvents.parse(toolRunning))
+        assertEquals(AgentEvent.Result("OK\n", false), AgentEvents.parse(result))
+        assertEquals(AgentEvent.Result("invalid model selection", true), AgentEvents.parse("""{"event":"result","result":$failure}"""))
+    }
+
+    @Test
+    fun aMissingLoginExplainsHowToSignIn() {
+        val antigravity = AgentVerifier.explain(AgentProvider.ANTIGRAVITY, "Error: authentication required")
+        assertTrue(antigravity, antigravity.contains("rode agy uma vez no terminal e entre com a conta Google"))
+        assertTrue(AgentVerifier.explain(AgentProvider.CURSOR, "Not logged in").contains("agent login"))
+        assertEquals("model not found", AgentVerifier.explain(AgentProvider.ANTIGRAVITY, "model not found"))
+    }
+
+    @Test
+    fun streamEventsBecomeProgressFilesAndTheFinalAnswer() {
+        assertEquals(AgentEvent.Init("Claude 4 Sonnet"), AgentEvents.parse("""{"type":"system","subtype":"init","model":"Claude 4 Sonnet"}"""))
+        assertEquals(
+            AgentEvent.Text("Vou ler o arquivo"),
+            AgentEvents.parse("""{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Vou ler o arquivo"}]}}"""),
+        )
+        assertEquals(
+            AgentEvent.Tool(true, "write", "src/Frete.kt"),
+            AgentEvents.parse("""{"type":"tool_call","subtype":"started","tool_call":{"writeToolCall":{"args":{"path":"src/Frete.kt"}}}}"""),
+        )
+        assertEquals(AgentEvent.Result("Pronto", false), AgentEvents.parse("""{"type":"result","subtype":"success","is_error":false,"result":"Pronto"}"""))
+        assertEquals(AgentEvent.Result("falhou", true), AgentEvents.parse("""{"type":"result","is_error":true,"result":"falhou"}"""))
+        assertEquals(AgentEvent.Other("texto solto"), AgentEvents.parse("texto solto"))
+        assertNull(AgentEvents.parse("   "))
+        assertNull("o eco do pedido não interessa", AgentEvents.parse("""{"type":"user","message":{}}"""))
+    }
+
+    /** Linhas copiadas de uma execução real do Cursor CLI 2026.10.22 no Windows. */
+    @Test
+    fun realCursorOutputWithThinkingAndExtraToolFields() {
+        val read = """{"type":"tool_call","subtype":"started","call_id":"toolu_01","tool_call":{"readToolCall":{"args":{"path":"C:\\Temp\\Frete.kt"}},""" +
+            """"hookAdditionalContexts":[],"toolCallId":"toolu_01","startedAtMs":"1793749753735"},"session_id":"s","timestamp_ms":1793749780602}"""
+        val glob = """{"type":"tool_call","subtype":"started","tool_call":{"hookAdditionalContexts":[],"globToolCall":{"args":{"globPattern":"**/Frete.kt"}}}}"""
+
+        assertEquals(AgentEvent.Tool(true, "read", "C:\\Temp\\Frete.kt"), AgentEvents.parse(read))
+        assertEquals(AgentEvent.Tool(true, "glob", null), AgentEvents.parse(glob))
+        assertNull("o raciocínio do modelo não entra no registro", AgentEvents.parse("""{"type":"thinking","subtype":"delta","text":"I should"}"""))
+    }
+
+    /** No Windows, o CLI do Cursor é um `agent.cmd`: o prompt precisa chegar inteiro passando pelo cmd.exe. */
+    @Test
+    fun aCmdShimReceivesThePromptIntactOnWindows() {
+        assumeTrue(SystemInfo.isWindows)
+        val dir = Files.createTempDirectory("irondome agente")
+        val shim = dir.resolve("agent.cmd")
+        Files.writeString(shim, "@echo off\r\n>\"%~dp0args.txt\" echo %*\r\necho {\"type\":\"result\",\"is_error\":false,\"result\":\"ok\"}\r\n")
+        val task = AgentTask("Teste", "Execute a ordem em iron-dome/ordem-interceptacao-3.md: corrija a função de frete (peso)", write = true)
+
+        val command = AgentCommand.build(AgentProvider.CURSOR, shim.toString(), task, dir.toString(), null, 5)
+        val output = ExecUtil.execAndGetOutput(GeneralCommandLine(command).withWorkDirectory(dir.toFile()).withCharset(StandardCharsets.UTF_8), 30_000)
+
+        assertEquals(0, output.exitCode)
+        assertEquals(AgentEvent.Result("ok", false), output.stdoutLines.mapNotNull(AgentEvents::parse).single())
+        val received = Files.readString(dir.resolve("args.txt"), StandardCharsets.ISO_8859_1)
+        assertTrue(received, received.contains("--force"))
+        assertTrue("sem acento, o prompt chega igual", received.contains("iron-dome/ordem-interceptacao-3.md: corrija a funcao de frete (peso)"))
+        assertTrue("o diretório com espaço chega como um argumento só", received.contains("\"$dir\""))
+    }
+
+    @Test
+    fun theJsonIsFoundInsideTheAnswer() {
+        assertEquals(2, AgentEvents.extractJson("Achei isto:\n```json\n[{\"a\":1},{\"a\":2}]\n```\nFim.")!!.asJsonArray.size())
+        assertEquals(1, AgentEvents.extractJson("Resposta: [{\"a\":1}] e pronto")!!.asJsonArray.size())
+        assertNull(AgentEvents.extractJson("nada de JSON aqui"))
+    }
+
+    @Test
+    fun aiReviewCommentsAreReadAndInvalidOnesSkipped() {
+        val answer = """
+            ```json
+            [
+              {"path": "./src/Frete.kt", "startLine": 10, "endLine": 12, "comment": "Divisão por zero quando o peso é 0.", "suggestion": "if (peso == 0) return 0\n"},
+              {"path": "src/Pedido.kt", "line": 4, "comment": "Nome confuso."},
+              {"path": "src/Sem.kt", "startLine": 3, "comment": ""},
+              {"startLine": 3, "comment": "sem caminho"},
+              {"path": "src/Zero.kt", "startLine": 0, "comment": "linha inválida"}
+            ]
+            ```
+        """.trimIndent()
+
+        val comments = AiReview.parse(answer)
+
+        assertEquals(listOf("src/Frete.kt", "src/Pedido.kt"), comments.map { it.path })
+        assertEquals(10..12, comments[0].startLine..comments[0].endLine)
+        assertEquals("if (peso == 0) return 0", comments[0].suggestion)
+        assertEquals("só line vira uma linha", 4..4, comments[1].startLine..comments[1].endLine)
+        assertTrue(AiReview.parse("[]").isEmpty())
+    }
+
+    @Test
+    fun aiReviewInstructionsCarryTheRulesAndTheDiffs() {
+        val pr = PullRequest(12, "Frete por peso", "ana", "frete", "abc1234567", "main", "u", "", false)
+        val files = PullRequestFiles("abc", "base", listOf(ChangedFile("src/Frete.kt", "modified", "@@ -1 +1 @@\n-a\n+b", 1, 1)))
+
+        val text = AiReview.instructions(pr, files)
+
+        assertTrue(text.contains("**Não altere nenhum arquivo.**"))
+        assertTrue(text.contains("No máximo ${AiReview.MAX_COMMENTS} comentários"))
+        assertTrue("os comentários são escritos para um júnior", text.contains("Quem vai ler é ${AiReview.JUNIOR}."))
+        assertTrue(text.contains("**Bug:**") && text.contains("**Como corrigir:**"))
+        val example = AiReview.parse(text.substringAfter("contendo uma lista").substringBefore("Se não houver"))
+        assertTrue("o exemplo do JSON é válido e já está no tom pedido", example.single().comment.startsWith("**Bug:**"))
+        assertTrue(example.single().comment.contains("\n\n"))
+        assertTrue(text.contains("### `src/Frete.kt` · Alterado · +1 −1"))
+        assertTrue(text.contains("```diff\n@@ -1 +1 @@\n-a\n+b\n```"))
+    }
+
+    @Test
+    fun failureInstructionsListTheFailuresWithMessageAndStack() {
+        val failure = TestNode(
+            TestKind.TEST, "frete", "calcula o frete por peso", "calculaPorPeso", "java:test://loja.FreteTest/calculaPorPeso", 12,
+            "expected: <10> but was: <0>", "org.opentest4j.AssertionFailedError: expected\n\tat loja.FreteTest.calculaPorPeso(FreteTest.kt:20)",
+            emptyList(), TestOutcome.FAILED,
+        )
+
+        val text = FailureExplanation.instructions(listOf(failure))
+
+        assertTrue(text.contains("## calcula o frete por peso"))
+        assertTrue(text.contains("- **Teste:** `loja.FreteTest#calculaPorPeso`"))
+        assertTrue(text.contains("expected: <10> but was: <0>"))
+        assertTrue(text.contains("at loja.FreteTest.calculaPorPeso(FreteTest.kt:20)"))
+        assertTrue(text.contains("**Não altere nenhum arquivo.**"))
+    }
+
+    @Test
+    fun bugAnalysisGoesToTheEndOfTheReportAndReplacesTheOldOne() {
+        val now = LocalDateTime.of(2026, 11, 3, 21, 0)
+        val first = BugAnalysis.append("# Bug: algo\n\ntexto\n", "Cursor", "Causa: X", now)
+        val second = BugAnalysis.append(first, "Cursor", "Causa: Y", now)
+
+        assertTrue(first.endsWith("${BugAnalysis.SECTION}\n\n_Feita pelo Cursor em 03/11/2026 21:00; confira antes de seguir._\n\nCausa: X\n"))
+        assertTrue(second.contains("Causa: Y"))
+        assertFalse("a análise anterior sai", second.contains("Causa: X"))
+        assertTrue(second.startsWith("# Bug: algo\n\ntexto\n\n${BugAnalysis.SECTION}"))
+    }
+
+    @Test
+    fun transcriptRecordsWhatTheAiDid() {
+        val result = AgentResult(
+            AgentTask("Disparar", "Execute a ordem", write = true), AgentProvider.CURSOR, "Corrigi 2 alvos.", null, false,
+            setOf("src/Frete.kt"), listOf("Lendo src/Frete.kt", "Editando src/Frete.kt"), "Claude", Duration.ofSeconds(42), null,
+        )
+
+        val text = AgentTranscript.render(result, listOf("agent", "-p", "--force", "Execute a ordem"), "", LocalDateTime.of(2026, 11, 3, 21, 0))
+
+        assertTrue(text.startsWith("# IA: Disparar\n"))
+        assertTrue(text.contains("- **CLI:** Cursor · modelo Claude"))
+        assertTrue(text.contains("- **Situação:** concluída"))
+        assertTrue(text.contains("## Arquivos alterados\n\n- `src/Frete.kt`"))
+        assertTrue(text.contains("## Resposta\n\nCorrigi 2 alvos."))
+    }
+}

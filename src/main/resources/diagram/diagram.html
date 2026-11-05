@@ -1,0 +1,1152 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<style>
+  :root { /*IRON_DOME_THEME_CSS*/ }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--fg);
+    font: 12px "Segoe UI", "Inter", -apple-system, sans-serif; }
+  body::before { content: ''; position: absolute; inset: 0; pointer-events: none;
+    background-image: radial-gradient(color-mix(in srgb, var(--fg) 10%, transparent) 1px, transparent 1.3px);
+    background-size: 22px 22px; }
+  #rings, #graph { position: absolute; inset: 0; }
+  #rings { width: 100%; height: 100%; pointer-events: none; opacity: 0; transition: opacity .7s ease; }
+  #graph { opacity: 0; transition: opacity .35s ease; }
+  #graph.ready { opacity: 1; }
+  #radar { position: absolute; left: 0; top: 0; width: 0; height: 0; pointer-events: none; opacity: 0; transition: opacity .7s ease; }
+  #rings.ready, #radar.ready { opacity: 1; }
+  /* A varredura e os pulsos rodam por um tempo e param: animação contínua numa área grande custa caro ao
+     navegador embutido, que repinta a aba inteira a cada quadro. Reorganizar os anéis liga de novo. */
+  #sweep { position: absolute; border-radius: 50%; animation: spin 9s linear 2; transition: opacity 1.2s ease; }
+  .pulse { position: absolute; border-radius: 50%; border: 2px solid var(--accent); animation: ping 3s cubic-bezier(.2, .6, .3, 1) 5; opacity: 0; }
+  .pulse.late { animation-delay: 1.5s; }
+  #radar.calm #sweep { opacity: 0; animation: none; }
+  #radar.calm .pulse { animation: none; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes ping { 0% { transform: scale(.6); opacity: .8; } 100% { transform: scale(1.6); opacity: 0; } }
+  @keyframes rise { from { opacity: 0; transform: translateY(6px); } }
+  @keyframes grow { from { width: 0; } }
+  @keyframes needle { from { transform: rotate(0deg); } }
+  @keyframes fade { from { opacity: 0; } }
+
+  .panel { position: absolute; z-index: 5; background: var(--panel); background: color-mix(in srgb, var(--panel) 88%, transparent);
+    backdrop-filter: blur(10px) saturate(1.2); border: 1px solid var(--border); border-radius: 12px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, .18), 0 1px 3px rgba(0, 0, 0, .12); }
+  .ic { flex: none; vertical-align: -2px; }
+  button { display: inline-flex; align-items: center; gap: 5px; background: color-mix(in srgb, var(--fg) 5%, transparent);
+    color: var(--fg); border: 1px solid var(--border); border-radius: 7px; padding: 4px 9px; font: inherit; cursor: pointer;
+    transition: background .15s, border-color .15s, color .15s, transform .1s; }
+  button:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+  button:active { transform: translateY(1px); }
+  button:disabled { opacity: .45; cursor: default; transform: none; }
+  button:disabled:hover { border-color: var(--border); background: color-mix(in srgb, var(--fg) 5%, transparent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.primary:hover { background: color-mix(in srgb, var(--accent) 85%, #fff); }
+  button.pressed { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 15%, transparent); }
+  #highlightChanges.pressed { border-color: var(--changed); color: var(--changed); background: color-mix(in srgb, var(--changed) 15%, transparent); }
+
+  #toolbar { top: 10px; left: 10px; max-width: calc(100% - 20px); padding: 8px 10px; display: flex; flex-direction: column; gap: 8px; }
+  .tb-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .search { display: flex; align-items: center; gap: 6px; padding: 3px 8px; border: 1px solid var(--border); border-radius: 7px;
+    background: var(--bg); color: var(--muted); transition: border-color .15s, box-shadow .15s; }
+  .search:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
+  .search input { border: 0; outline: 0; background: transparent; color: var(--fg); font: inherit; width: 150px; }
+  #matches { font-size: 11px; min-width: 0; }
+  .chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px; font-size: 11px;
+    background: color-mix(in srgb, var(--fg) 6%, transparent); color: var(--muted); }
+  .chip b { color: var(--fg); font-weight: 600; }
+  .chip.cycle { color: var(--cycle); background: var(--cycleBg); }
+  .chip.cycle b, .chip.changed b, .chip.warn b { color: inherit; }
+  .chip.changed { color: var(--changed); background: color-mix(in srgb, var(--changed) 14%, transparent); }
+  .chip.warn { color: var(--highSolid); background: color-mix(in srgb, var(--highSolid) 13%, transparent); }
+  .dist { display: flex; flex-direction: column; gap: 4px; }
+  .riskbar { display: flex; gap: 2px; height: 7px; border-radius: 99px; overflow: hidden; min-width: 260px;
+    background: color-mix(in srgb, var(--fg) 8%, transparent); }
+  .riskbar .seg { cursor: pointer; transition: opacity .2s, flex-grow .5s ease; }
+  .riskbar.filtering .seg:not(.active) { opacity: .25; }
+  .risk-keys { display: flex; gap: 4px; flex-wrap: wrap; font-size: 11px; color: var(--muted); }
+  .risk-key { display: inline-flex; align-items: center; gap: 5px; padding: 1px 7px; border-radius: 6px; cursor: pointer;
+    border: 1px solid transparent; transition: background .15s, border-color .15s; }
+  .risk-key:hover { background: color-mix(in srgb, var(--fg) 7%, transparent); }
+  .risk-key.active { border-color: currentColor; color: var(--fg); }
+  .risk-key b { color: var(--fg); }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .dot.LOW, .seg.LOW { background: var(--lowSolid); }
+  .dot.MEDIUM, .seg.MEDIUM { background: var(--mediumSolid); }
+  .dot.HIGH, .seg.HIGH { background: var(--highSolid); }
+
+  #zoom { right: 10px; bottom: 10px; display: flex; gap: 2px; padding: 4px; }
+  #zoom button { width: 30px; height: 30px; justify-content: center; padding: 0; border-color: transparent; background: transparent; color: var(--muted); }
+  #zoom button:hover { color: var(--fg); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+  #zoom button.pressed { color: var(--accent); background: color-mix(in srgb, var(--accent) 15%, transparent); }
+  #zoom .sep { width: 1px; margin: 4px 2px; background: var(--border); }
+  #minimap { right: 10px; bottom: 56px; width: 214px; height: 144px; padding: 6px; display: none; overflow: hidden; }
+  body.with-minimap #minimap { display: block; animation: rise .2s ease-out; }
+  #minimapBox { width: 200px; height: 130px; border-radius: 8px; overflow: hidden; }
+
+  #info { top: 10px; right: 10px; width: 350px; max-height: calc(100% - 66px); overflow: auto; padding: 12px; display: none; animation: rise .22s ease-out; }
+  body.with-minimap #info { max-height: calc(100% - 216px); }
+  #info::-webkit-scrollbar, #help::-webkit-scrollbar, #legend::-webkit-scrollbar { width: 8px; }
+  #info::-webkit-scrollbar-thumb, #help::-webkit-scrollbar-thumb, #legend::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--fg) 18%, transparent); border-radius: 8px; }
+  .panel-head { display: flex; align-items: center; gap: 8px; }
+  .panel-head .title { flex: 1; font-weight: 600; color: var(--fg); display: flex; align-items: center; gap: 6px; }
+  .icon-button { width: 22px; height: 22px; padding: 0; justify-content: center; color: var(--muted); flex: none; border-color: transparent; background: transparent; }
+  .collapsed > .body { display: none; }
+  .hero { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; }
+  .hero h2 { margin: 0; font-size: 15px; word-break: break-all; line-height: 1.25; }
+  .hero .focus-tag { display: inline-flex; align-items: center; gap: 3px; font-size: 10px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .05em; color: var(--accent); }
+  .pkg { display: flex; align-items: flex-start; gap: 6px; color: var(--muted); margin: 8px 0 6px; word-break: break-all; }
+  .tags { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+  .tag { display: inline-flex; align-items: center; gap: 4px; border-radius: 99px; padding: 1px 8px; font-size: 11px;
+    background: color-mix(in srgb, var(--fg) 6%, transparent); border: 1px solid var(--border); }
+  .tag.cycle { background: var(--cycleBg); color: var(--cycle); border-color: transparent; }
+  .tag.changed { color: var(--changed); border-color: color-mix(in srgb, var(--changed) 50%, transparent); }
+  .tag.attention { color: var(--highSolid); border-color: color-mix(in srgb, var(--highSolid) 50%, transparent); }
+  .risk-card { position: relative; display: flex; align-items: center; gap: 8px; margin-top: 10px; padding: 8px 10px; border-radius: 10px;
+    background: linear-gradient(135deg, color-mix(in srgb, var(--risk) 18%, transparent), transparent 75%);
+    border: 1px solid color-mix(in srgb, var(--risk) 40%, var(--border)); }
+  .risk-card .gauge { flex: none; display: flex; flex-direction: column; align-items: center; }
+  .risk-card .gauge-value { margin-top: 2px; text-align: center; line-height: 1; }
+  .risk-card .gauge-value b { font-size: 18px; }
+  .risk-card .gauge-value span { display: block; font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+  .risk-card .needle { transform-box: view-box; animation: needle .9s cubic-bezier(.3, 1.4, .5, 1); }
+  .risk-card .risk-text { flex: 1; min-width: 0; }
+  .risk-card .risk-title { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .risk-card .risk-level { font-size: 17px; font-weight: 700; color: var(--risk); margin: 2px 0; }
+  .risk-card .note { color: var(--muted); line-height: 1.4; }
+  .why { width: 18px; height: 18px; padding: 0; justify-content: center; border-radius: 50%; font-size: 10px; font-weight: 700; color: var(--muted); flex: none; }
+  .risk-card .why { position: absolute; top: 6px; right: 6px; }
+  .metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+  .metric { position: relative; padding: 9px 10px; border-radius: 10px; background: color-mix(in srgb, var(--fg) 4%, transparent); border: 1px solid var(--border); }
+  .metric .m-top { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 11px; }
+  .metric .m-icon { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 6px; color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 16%, transparent); }
+  .metric.out .m-icon { color: var(--match); background: color-mix(in srgb, var(--match) 16%, transparent); }
+  .metric b { display: block; font-size: 22px; margin-top: 4px; line-height: 1.1; }
+  .metric small { color: var(--muted); font-size: 10.5px; }
+  .metric .why { position: absolute; top: 6px; right: 6px; }
+  .meter { height: 4px; border-radius: 99px; background: color-mix(in srgb, var(--fg) 8%, transparent); overflow: hidden; margin-top: 7px; }
+  .meter i { display: block; height: 100%; border-radius: inherit; animation: grow .8s ease-out;
+    background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 55%, transparent), var(--accent)); }
+  .metric.out .meter i { background: linear-gradient(90deg, color-mix(in srgb, var(--match) 55%, transparent), var(--match)); }
+  .section { margin-top: 12px; }
+  .section-title { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; font-size: 10.5px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+  .section-title .count { margin-left: auto; padding: 0 7px; border-radius: 99px; background: color-mix(in srgb, var(--fg) 8%, transparent); }
+  .card { padding: 9px 10px; border-radius: 10px; border: 1px solid var(--border); background: color-mix(in srgb, var(--fg) 3%, transparent); }
+  .status-card { display: flex; gap: 10px; align-items: center; }
+  .status-card .status-text { flex: 1; min-width: 0; }
+  .status-card .status-label { font-weight: 600; }
+  .status-card .note { color: var(--muted); margin-top: 2px; line-height: 1.4; }
+  .chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 7px; }
+  .tchip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 99px; border: 1px solid var(--border);
+    cursor: pointer; font-size: 11px; transition: border-color .15s, background .15s; }
+  .tchip:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  .status-card button { margin-top: 7px; }
+  .advice { display: flex; gap: 8px; margin-top: 12px; padding: 10px; border-radius: 10px; line-height: 1.45;
+    border-left: 3px solid var(--risk); background: color-mix(in srgb, var(--risk) 10%, transparent); }
+  .advice .ic { color: var(--risk); margin-top: 2px; }
+  .explain { display: none; margin-top: 8px; padding: 9px 10px; border-radius: 10px; line-height: 1.45; animation: rise .18s ease-out;
+    background: color-mix(in srgb, var(--accent) 9%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border)); }
+  .explain b { display: block; margin-bottom: 3px; }
+  ul.nlist { margin: 0; padding: 0; list-style: none; }
+  ul.nlist li { display: flex; align-items: center; gap: 7px; padding: 4px 6px; border-radius: 7px; cursor: pointer; transition: background .12s; }
+  ul.nlist li:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  ul.nlist li .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  ul.nlist li.empty { color: var(--muted); cursor: default; }
+  ul.nlist li.empty:hover { background: none; }
+  ul.nlist .warn { color: var(--highSolid); }
+  .actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
+
+  .badge { display: inline-flex; align-items: center; gap: 5px; border-radius: 99px; padding: 1px 9px; font-weight: 600; font-size: 11px; }
+  .badge.LOW, .badge.GOOD { color: var(--lowSolid); background: color-mix(in srgb, var(--lowSolid) 16%, transparent); }
+  .badge.MEDIUM, .badge.PARTIAL { color: var(--mediumSolid); background: color-mix(in srgb, var(--mediumSolid) 16%, transparent); }
+  .badge.HIGH, .badge.NONE { color: var(--highSolid); background: color-mix(in srgb, var(--highSolid) 16%, transparent); }
+  .badge.TEST_CLASS, .badge.clean { color: var(--muted); background: color-mix(in srgb, var(--fg) 7%, transparent); font-weight: normal; }
+  .badge.changed { color: var(--changed); background: color-mix(in srgb, var(--changed) 14%, transparent); }
+  .badge.comment { color: var(--comment); background: color-mix(in srgb, var(--comment) 14%, transparent); }
+  .badge.impact { color: var(--impact); background: var(--impactBg); }
+
+  #highlightImpact.pressed { border-color: var(--impact); color: var(--impact); background: color-mix(in srgb, var(--impact) 15%, transparent); }
+  .chip.comment { color: var(--comment); background: color-mix(in srgb, var(--comment) 14%, transparent); }
+  .chip.impact { color: var(--impact); background: var(--impactBg); }
+  .chip.comment b, .chip.impact b { color: inherit; }
+  .tag.comment { color: var(--comment); border-color: color-mix(in srgb, var(--comment) 50%, transparent); }
+  .tag.impact { color: var(--impact); border-color: color-mix(in srgb, var(--impact) 50%, transparent); background: var(--impactBg); }
+  #aiRow { display: none; flex-direction: column; align-items: stretch; gap: 6px; max-width: 560px; padding: 8px 10px; border-radius: 10px;
+    border: 1px solid color-mix(in srgb, var(--impact) 45%, var(--border)); background: linear-gradient(135deg, var(--impactBg), transparent 80%);
+    animation: rise .22s ease-out; }
+  #aiRow.show { display: flex; }
+  #aiRow .ai-head { display: flex; align-items: center; gap: 6px; font-weight: 600; color: var(--impact); }
+  #aiRow .ai-head .spacer { flex: 1; }
+  #aiRow .ai-summary { line-height: 1.45; color: var(--fg); max-height: 76px; overflow: auto; }
+  #aiRow .ai-list { display: flex; flex-wrap: wrap; gap: 4px; }
+  .ichip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: 99px; font-size: 11px; cursor: pointer;
+    border: 1px solid color-mix(in srgb, var(--impact) 40%, var(--border)); transition: background .15s; }
+  .ichip:hover { background: color-mix(in srgb, var(--impact) 16%, transparent); }
+  .ilevel { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--impact); flex: none; }
+  .ilevel.MEDIUM { opacity: .65; } .ilevel.LOW { opacity: .35; }
+  .scanning { display: inline-block; width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--impact); border-right-color: transparent;
+    animation: spin .8s linear infinite; }
+  .impact-card { margin-top: 10px; padding: 9px 10px; border-radius: 10px; line-height: 1.45;
+    border: 1px solid color-mix(in srgb, var(--impact) 45%, var(--border)); background: linear-gradient(135deg, var(--impactBg), transparent 85%); }
+  .impact-card .impact-title { display: flex; align-items: center; gap: 6px; font-weight: 700; color: var(--impact); margin-bottom: 3px; }
+  .impact-card .sources { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+  .impact-card .src { padding: 0 7px; border-radius: 99px; font-size: 10.5px; background: color-mix(in srgb, var(--fg) 8%, transparent); }
+  ul.clist { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 5px; }
+  ul.clist li { padding: 6px 8px; border-radius: 8px; border-left: 3px solid var(--comment); background: color-mix(in srgb, var(--comment) 8%, transparent); line-height: 1.4; }
+  ul.clist li.PATRULHA { border-left-color: var(--patrulha); background: color-mix(in srgb, var(--patrulha) 8%, transparent); }
+  ul.clist li.ESCUDO { border-left-color: var(--lowSolid); background: color-mix(in srgb, var(--lowSolid) 8%, transparent); }
+  ul.clist .c-head { display: flex; gap: 6px; align-items: center; font-size: 10.5px; color: var(--muted); margin-bottom: 2px; }
+  ul.clist .c-head b { color: var(--fg); }
+  ul.clist .c-text { white-space: pre-wrap; word-break: break-word; max-height: 90px; overflow: auto; }
+  .swatch-impact { width: 16px; height: 10px; border-radius: 4px; flex: none; border: 1.5px solid var(--impact); box-shadow: 0 0 6px 2px var(--impact); }
+
+  #legend { left: 10px; bottom: 10px; padding: 8px 10px; width: 290px; max-height: calc(100% - 150px); overflow: auto; }
+  #legend.collapsed { width: auto; padding: 5px 6px 5px 10px; }
+  .lg-section { margin-top: 8px; }
+  .lg-title { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: 4px; }
+  .lg-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; }
+  .lg-item { display: flex; align-items: center; gap: 6px; font-size: 11px; }
+  .lg-item.wide { grid-column: span 2; }
+  .swatch-node { width: 20px; height: 12px; border-radius: 4px; border: 1.5px solid; flex: none; }
+  .swatch-edge { width: 26px; height: 0; border-top: 2px solid var(--edge); flex: none; position: relative; }
+  .swatch-orbit { width: 14px; height: 14px; border-radius: 50%; border: 1.5px dashed var(--muted); flex: none; }
+  .swatch-glow { width: 14px; height: 10px; border-radius: 3px; background: var(--high); box-shadow: 0 0 6px 2px var(--highSolid); flex: none; }
+  .swatch-badge { padding: 0 5px; border-radius: 6px; font-size: 9px; font-weight: 600; color: #fff; flex: none; line-height: 14px; }
+  .swatch-bubble { width: 18px; height: 12px; border-radius: 7px; flex: none; border: 1.2px solid var(--accent);
+    background: color-mix(in srgb, var(--accent) 15%, transparent); }
+
+  #helpBackdrop { position: absolute; inset: 0; z-index: 20; display: none; align-items: center; justify-content: center;
+    background: rgba(0, 0, 0, .35); backdrop-filter: blur(2px); }
+  #helpBackdrop.show { display: flex; animation: fade .18s ease-out; }
+  #help { position: relative; background: var(--panel); width: min(580px, calc(100% - 40px)); max-height: calc(100% - 40px); overflow: auto; padding: 16px 18px; animation: rise .22s ease-out; }
+  #help .panel-head .title { font-size: 15px; }
+  #help .intro { color: var(--muted); margin: 4px 0 6px; }
+  .topic { display: flex; gap: 12px; padding: 11px 0; border-top: 1px solid var(--border); line-height: 1.5; }
+  .topic .t-icon { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 9px; flex: none;
+    color: var(--accent); background: color-mix(in srgb, var(--accent) 15%, transparent); }
+  .topic h3 { margin: 0 0 2px; font-size: 12.5px; }
+  .topic p { margin: 0; color: color-mix(in srgb, var(--fg) 85%, var(--muted)); }
+
+  #tip { position: absolute; z-index: 15; pointer-events: none; padding: 9px 11px; min-width: 200px; max-width: 280px; opacity: 0;
+    transform: translate(-50%, calc(-100% - 6px)); transition: opacity .12s; }
+  #tip.below { transform: translate(-50%, 6px); }
+  #tip.show { opacity: 1; }
+  .tip-head { display: flex; align-items: center; gap: 7px; font-weight: 600; word-break: break-all; }
+  .tip-grid { display: flex; gap: 12px; margin: 7px 0 6px; color: var(--muted); }
+  .tip-grid span { display: inline-flex; align-items: center; gap: 4px; }
+  .tip-grid b { color: var(--fg); }
+  .tip-row { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+  .tip-hint { margin-top: 7px; font-size: 10.5px; color: var(--muted); }
+
+  @media (prefers-reduced-motion: reduce) {
+    #sweep, .pulse, .needle, .meter i, .panel, #helpBackdrop { animation: none !important; }
+    #sweep, .pulse { display: none; }
+  }
+</style>
+</head>
+<body>
+<canvas id="rings"></canvas>
+<div id="radar"><div id="sweep"></div><div class="pulse"></div><div class="pulse late"></div></div>
+<div id="graph"></div>
+<div id="toolbar" class="panel">
+  <div class="tb-row">
+    <label class="search"><span data-icon="search"></span><input id="search" placeholder="Buscar classe  ( / )"><span id="matches"></span></label>
+    <button id="highlightChanges"><span data-icon="git"></span>Destacar alteradas</button>
+    <button id="highlightImpact"><span data-icon="spark"></span>Destacar impacto</button>
+    <button id="packages" title="Envolve as classes do mesmo pacote numa bolha colorida"><span data-icon="bubbles"></span>Pacotes</button>
+    <button id="helpButton" title="Explica o que cada número, cor e ícone significa"><span data-icon="book"></span>Manual de campo</button>
+  </div>
+  <div class="tb-row" id="chips"></div>
+  <div id="aiRow"></div>
+  <div class="dist">
+    <div class="riskbar" id="riskbar" title="Clique numa cor para destacar só as classes com esse risco"></div>
+    <div class="risk-keys" id="riskKeys"></div>
+  </div>
+</div>
+<div id="minimap" class="panel"><div id="minimapBox"></div></div>
+<div id="zoom" class="panel">
+  <button id="zoomIn" title="Aproximar"><span data-icon="plus"></span></button>
+  <button id="zoomOut" title="Afastar"><span data-icon="minus"></span></button>
+  <div class="sep"></div>
+  <button id="fit" title="Enquadrar o diagrama"><span data-icon="frame"></span></button>
+  <button id="centerFocus" title="Centralizar na classe analisada"><span data-icon="target"></span></button>
+  <button id="relayout" title="Reorganizar os anéis"><span data-icon="radar"></span></button>
+  <button id="minimapToggle" title="Mostrar o minimapa"><span data-icon="map"></span></button>
+</div>
+<div id="info" class="panel"></div>
+<div id="legend" class="panel"></div>
+<div id="tip" class="panel"></div>
+<div id="helpBackdrop"><div id="help" class="panel"></div></div>
+<script>/*IRON_DOME_G6*/</script>
+<script>
+  const THEME = /*IRON_DOME_THEME_JSON*/;
+  const DATA = /*IRON_DOME_DATA*/;
+  function ironDomeSend(message) { /*IRON_DOME_BRIDGE*/ }
+
+  const FONT = '"Segoe UI", "Inter", -apple-system, sans-serif';
+  const REDUCED_MOTION = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const DARK = (() => { const v = parseInt(THEME.bg.slice(1, 7), 16); return ((v >> 16) * 299 + ((v >> 8) & 255) * 587 + (v & 255) * 114) / 1000 < 128; })();
+  const byId = new Map(DATA.nodes.map(n => [n.id, n]));
+  const help = new Map(DATA.help.map(t => [t.id, t]));
+  const maxLevel = Math.max(0, ...DATA.nodes.map(n => n.level));
+  const maxAfferent = Math.max(1, ...DATA.nodes.map(n => n.afferent));
+  const maxEfferent = Math.max(1, ...DATA.nodes.map(n => n.efferent));
+
+  const RISK_KEYS = ['LOW', 'MEDIUM', 'HIGH'];
+  const RISK = {
+    LOW: { fill: [THEME.low, THEME.lowEnd], solid: THEME.lowSolid, name: 'baixo' },
+    MEDIUM: { fill: [THEME.medium, THEME.mediumEnd], solid: THEME.mediumSolid, name: 'médio' },
+    HIGH: { fill: [THEME.high, THEME.highEnd], solid: THEME.highSolid, name: 'alto' },
+  };
+  const KINDS = {
+    classe: { letter: 'C', color: '#3b82f6', name: 'Classe' },
+    abstrata: { letter: 'A', color: '#0e9fb5', name: 'Abstrata' },
+    interface: { letter: 'I', color: '#16a34a', name: 'Interface' },
+    enum: { letter: 'E', color: '#9b5de5', name: 'Enum' },
+    'anotação': { letter: '@', color: '#d97706', name: 'Anotação' },
+  };
+  const COVERAGE = {
+    GOOD: { color: THEME.lowSolid, name: 'Bem coberta' },
+    PARTIAL: { color: THEME.mediumSolid, name: 'Parcial' },
+    NONE: { color: THEME.highSolid, name: 'Sem testes' },
+    TEST_CLASS: { color: '#7d8590', name: 'Classe de teste' },
+  };
+  const PACKAGE_COLORS = ['#3b82f6', '#a855f7', '#14b8a6', '#f97316', '#ec4899', '#84cc16', '#06b6d4', '#eab308'];
+
+  const ICONS = {
+    search: '<circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/>',
+    frame: '<path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4"/>',
+    target: '<circle cx="8" cy="8" r="5.5"/><circle cx="8" cy="8" r="1.8"/><path d="M8 .8v3M8 12.2v3M.8 8h3M12.2 8h3"/>',
+    radar: '<circle cx="8" cy="8" r="6.5"/><circle cx="8" cy="8" r="3.5"/><path d="M8 8l4.6-4.6"/>',
+    plus: '<path d="M8 3v10M3 8h10"/>',
+    minus: '<path d="M3 8h10"/>',
+    git: '<circle cx="8" cy="8" r="2.6"/><path d="M1 8h4.4M10.6 8H15"/>',
+    book: '<path d="M2 3c2.2-.8 4.1-.6 6 .7 1.9-1.3 3.8-1.5 6-.7v10c-2.2-.8-4.1-.6-6 .7-1.9-1.3-3.8-1.5-6-.7z"/><path d="M8 3.7v10"/>',
+    arrowIn: '<path d="M1.5 8h7.5M6 5l3 3-3 3"/><path d="M11 2.5h2.5v11H11"/>',
+    arrowOut: '<path d="M6.5 8h7.5M11 5l3 3-3 3"/><path d="M5 2.5H2.5v11H5"/>',
+    shield: '<path d="M8 1.5 13 3.5v4c0 3.2-2.1 5.6-5 6.8-2.9-1.2-5-3.6-5-6.8v-4z"/>',
+    flask: '<path d="M6 1.5h4M6.8 1.5v4.2L3 12.6c-.5.9.2 1.9 1.2 1.9h7.6c1 0 1.7-1 1.2-1.9L9.2 5.7V1.5"/><path d="M4.6 10h6.8"/>',
+    bulb: '<path d="M6 12.5h4M6.5 14.5h3"/><path d="M8 1.5a4.5 4.5 0 0 0-2.6 8.2c.4.3.6.8.6 1.3v.5h4V11c0-.5.2-1 .6-1.3A4.5 4.5 0 0 0 8 1.5z"/>',
+    folder: '<path d="M1.5 4v8.5a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1v-6.5a1 1 0 0 0-1-1H8L6.5 3h-4a1 1 0 0 0-1 1z"/>',
+    code: '<path d="M5.5 4 2 8l3.5 4M10.5 4 14 8l-3.5 4"/>',
+    cycle: '<path d="M13 5.5A5.5 5.5 0 0 0 3.2 4.6M3 10.5a5.5 5.5 0 0 0 9.8.9"/><path d="M3 2v3h3M13 14v-3h-3"/>',
+    warn: '<path d="M8 1.8 15 14H1z"/><path d="M8 6v3.5M8 11.6v.2"/>',
+    close: '<path d="M4 4l8 8M12 4l-8 8"/>',
+    cube: '<path d="M8 1.5 14 4.8v6.4L8 14.5 2 11.2V4.8z"/><path d="M2 4.8 8 8l6-3.2M8 8v6.5"/>',
+    link: '<path d="M6.5 9.5l3-3"/><path d="M7 4.5l1.3-1.3a3 3 0 0 1 4.2 4.2L11.5 8.7M9 11.5l-1.3 1.3a3 3 0 0 1-4.2-4.2L4.5 7.3"/>',
+    list: '<path d="M6 4h8M6 8h8M6 12h8M2.5 4h.1M2.5 8h.1M2.5 12h.1"/>',
+    gauge: '<path d="M2 11.5a6 6 0 0 1 12 0"/><path d="M8 11.5l3-4"/>',
+    eye: '<path d="M1 8s2.5-4.5 7-4.5S15 8 15 8s-2.5 4.5-7 4.5S1 8 1 8z"/><circle cx="8" cy="8" r="2"/>',
+    map: '<path d="M1.5 3.5 5.5 2l5 1.5 4-1.5v10.5l-4 1.5-5-1.5-4 1.5z"/><path d="M5.5 2v10.5M10.5 3.5V14"/>',
+    bubbles: '<circle cx="5.5" cy="6" r="4"/><circle cx="11" cy="10.5" r="3.5"/>',
+    spark: '<path d="M6 1.5 7.2 5 10.5 6.2 7.2 7.4 6 11 4.8 7.4 1.5 6.2 4.8 5z"/><path d="M12 9l.6 1.6 1.6.6-1.6.6L12 13.4l-.6-1.6-1.6-.6 1.6-.6z"/>',
+    comment: '<path d="M2 3.5a1.5 1.5 0 0 1 1.5-1.5h9A1.5 1.5 0 0 1 14 3.5v6a1.5 1.5 0 0 1-1.5 1.5H7l-3 3v-3h-.5A1.5 1.5 0 0 1 2 9.5z"/>',
+  };
+  const HELP_ICONS = { diagram: 'radar', afferent: 'arrowIn', efferent: 'arrowOut', risk: 'gauge', tests: 'shield', changes: 'git', cycle: 'cycle' };
+
+  function icon(name, size = 14) {
+    return `<svg class="ic" viewBox="0 0 16 16" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.5" ` +
+      `stroke-linecap="round" stroke-linejoin="round">${ICONS[name]}</svg>`;
+  }
+  function kindBody(kind) {
+    const k = KINDS[kind] || KINDS.classe;
+    return `<circle cx="9" cy="9" r="8.4" fill="${k.color}"/>` +
+      `<ellipse cx="9" cy="5.8" rx="6" ry="3.4" fill="#fff" fill-opacity=".18"/>` +
+      (kind === 'abstrata' ? '<circle cx="9" cy="9" r="7.6" fill="none" stroke="#fff" stroke-opacity=".55" stroke-width=".8" stroke-dasharray="2 1.5"/>' : '') +
+      `<text x="9" y="12.7" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="10.5" font-weight="700" fill="#fff">${k.letter}</text>`;
+  }
+  function shieldBody(coverage) {
+    const c = (COVERAGE[coverage] || COVERAGE.NONE).color;
+    if (coverage === 'TEST_CLASS') {
+      return `<circle cx="8" cy="8" r="7.4" fill="${c}"/>` +
+        '<path d="M6.4 3.6h3.2M7 3.6v3L4.7 10.9c-.3.6.1 1.3.8 1.3h5c.7 0 1.1-.7.8-1.3L9 6.6v-3" fill="none" stroke="#fff" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>';
+    }
+    const shield = `<path d="M8 .8 14.2 3.2v4.4c0 3.6-2.5 6.4-6.2 7.6C4.3 14 1.8 11.2 1.8 7.6V3.2z" fill="${c}" stroke="#fff" stroke-opacity=".75" stroke-width=".9"/>`;
+    const marks = {
+      GOOD: '<path d="M5.2 8 7.2 10 10.9 6" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>',
+      PARTIAL: '<path d="M8 2.4 12.8 4.2v3.4c0 2.8-1.9 5-4.8 6z" fill="#fff" fill-opacity=".6"/>',
+      NONE: '<path d="M5.8 5.6 10.2 10M10.2 5.6 5.8 10" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round"/>',
+    };
+    return shield + (marks[coverage] || '');
+  }
+  function svg(width, height, viewBox, body) {
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="${viewBox}">${body}</svg>`;
+  }
+  function kindBadge(kind, size = 16) { return svg(size, size, '0 0 18 18', kindBody(kind)).replace('<svg', '<svg class="ic"'); }
+  function shieldBadge(coverage, size = 14) { return svg(size, size, '0 0 16 16', shieldBody(coverage)).replace('<svg', '<svg class="ic"'); }
+  function dataUri(markup) { return 'data:image/svg+xml;utf8,' + encodeURIComponent('<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE svg>' + markup); }
+  function rgba(hex, alpha) {
+    const value = parseInt(hex.replace('#', '').substring(0, 6), 16);
+    return `rgba(${(value >> 16) & 255},${(value >> 8) & 255},${value & 255},${alpha})`;
+  }
+  function escapeHtml(text) {
+    return String(text).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+  function simpleName(id) { return id.substring(id.lastIndexOf('.') + 1); }
+  document.querySelectorAll('[data-icon]').forEach(el => { el.outerHTML = icon(el.dataset.icon); });
+
+  /** Cada nó é uma pílula com o ícone do tipo à esquerda e o escudo dos testes à direita, desenhados num SVG do tamanho dele. */
+  const measure = document.createElement('canvas').getContext('2d');
+  function nodeData(n) {
+    const focus = n.id === DATA.focus;
+    measure.font = `${focus ? 700 : 600} ${focus ? 12.5 : 11}px ${FONT}`;
+    const kindSize = focus ? 22 : 18, shieldSize = focus ? 18 : 15, h = focus ? 40 : 30;
+    const left = 9 + kindSize + 7, right = 7 + shieldSize + 9;
+    const w = Math.ceil(measure.measureText(n.name).width) + left + right;
+    const image = svg(w, h, `0 0 ${w} ${h}`,
+      `<g transform="translate(9 ${(h - kindSize) / 2}) scale(${kindSize / 18})">${kindBody(n.kind)}</g>` +
+      `<g transform="translate(${w - 9 - shieldSize} ${(h - shieldSize) / 2}) scale(${shieldSize / 16})">${shieldBody(n.coverage)}</g>`);
+    return { ...n, focus, w, h, mx: (left - right) / 2, image: dataUri(image) };
+  }
+  const nodeInfo = new Map(DATA.nodes.map(n => [n.id, nodeData(n)]));
+
+  /**
+   * Radar: a classe analisada no centro e um anel por passo de dependência. Em cada anel as classes ficam
+   * no ângulo médio dos vizinhos do anel de dentro, o que reduz o cruzamento das setas.
+   */
+  function radarLayout() {
+    const neighbors = new Map(DATA.nodes.map(n => [n.id, []]));
+    DATA.edges.forEach(e => { neighbors.get(e.source)?.push(e.target); neighbors.get(e.target)?.push(e.source); });
+    const levels = new Map();
+    DATA.nodes.forEach(n => levels.set(n.level, [...(levels.get(n.level) || []), n]));
+    const positions = new Map(), ringList = [];
+    let radius = 0;
+    [...levels.keys()].sort((a, b) => a - b).forEach(level => {
+      const nodes = levels.get(level);
+      if (level === 0) { nodes.forEach(n => positions.set(n.id, { x: 0, y: 0, angle: null })); return; }
+      const span = nodes.reduce((sum, n) => sum + nodeInfo.get(n.id).w + 44, 0);
+      radius = Math.max(radius + (level === 1 ? 200 : 175), span / (2 * Math.PI));
+      const preferred = nodes.map(n => {
+        const placed = neighbors.get(n.id).map(id => positions.get(id)).filter(p => p && p.angle !== null);
+        if (!placed.length) return { n, angle: null };
+        return { n, angle: Math.atan2(placed.reduce((s, p) => s + Math.sin(p.angle), 0), placed.reduce((s, p) => s + Math.cos(p.angle), 0)) };
+      });
+      const known = preferred.filter(p => p.angle !== null).sort((a, b) => a.angle - b.angle);
+      const ordered = [...known, ...preferred.filter(p => p.angle === null).sort((a, b) => a.n.name.localeCompare(b.n.name))];
+      const step = Math.PI * 2 / ordered.length;
+      let offset = -Math.PI / 2;
+      if (known.length) {
+        offset = Math.atan2(known.reduce((s, p, i) => s + Math.sin(p.angle - i * step), 0), known.reduce((s, p, i) => s + Math.cos(p.angle - i * step), 0));
+      }
+      ordered.forEach((p, i) => {
+        const angle = offset + i * step;
+        positions.set(p.n.id, { x: Math.cos(angle) * radius, y: Math.sin(angle) * radius, angle });
+      });
+      const bottom = Math.PI / 2, gaps = ordered.length === 1 ? [offset + Math.PI] : ordered.map((_, i) => offset + (i + .5) * step);
+      const labelAngle = gaps.reduce((best, a) => angularDistance(a, bottom) < angularDistance(best, bottom) ? a : best, gaps[0]);
+      const counts = { LOW: 0, MEDIUM: 0, HIGH: 0 };
+      nodes.forEach(n => counts[n.risk]++);
+      ringList.push({ level, radius, labelAngle, count: nodes.length, color: RISK[RISK_KEYS.filter(k => counts[k]).pop()].solid });
+    });
+    return { positions, rings: ringList };
+  }
+  function angularDistance(a, b) { const d = Math.abs(a - b) % (Math.PI * 2); return d > Math.PI ? Math.PI * 2 - d : d; }
+  const layout = radarLayout();
+  const rings = layout.rings;
+  let center = { x: 0, y: 0 };
+
+  let changes = DATA.changes, vcs = DATA.vcs, highlighting = false, riskFilter = null, infoId = null, selectedId = null;
+  let matchIds = new Set();
+  /** Comentários pendentes por classe e o impacto que a IA apontou (nulo antes da análise). */
+  let comments = DATA.comments || {}, impact = DATA.impact || null, analyzing = false, impactHighlight = false;
+  const IMPACT = {
+    HIGH: { width: 22, opacity: .55, name: 'alto' },
+    MEDIUM: { width: 16, opacity: .4, name: 'médio' },
+    LOW: { width: 11, opacity: .26, name: 'baixo' },
+  };
+  const impactOf = id => impact && impact.items[id] || null;
+  /** Classes com comentário ou alteração: de onde o impacto parte. */
+  const isSource = id => !!(comments[id] && comments[id].length) || !!changes[id];
+  /** Ligação no caminho do impacto: entre uma classe afetada e outra afetada ou de origem. */
+  const impactEdge = e => !!impact && ((impactOf(e.source) && (impactOf(e.target) || isSource(e.target))) ||
+    (impactOf(e.target) && (impactOf(e.source) || isSource(e.source))));
+  function nodeMarks(id) {
+    const list = comments[id] || [];
+    return { changeLabel: changes[id]?.label || null, commentCount: list.length,
+      commentPatrulha: list.length > 0 && list.every(c => c.source === 'PATRULHA'), impact: impactOf(id)?.level || null };
+  }
+
+  const nodeStyle = key => d => nodeInfo.get(d.id)[key];
+  const riskOf = d => RISK[nodeInfo.get(d.id).risk];
+  const edgeColor = d => d.data.impact ? THEME.impact : d.data.cycle ? THEME.cycle : THEME.edge;
+  const edgeActiveColor = d => d.data.cycle ? THEME.cycle : THEME.accent;
+  const graph = new G6.Graph({
+    container: 'graph',
+    autoResize: true,
+    background: 'transparent',
+    theme: DARK ? 'dark' : 'light',
+    padding: 70,
+    zoomRange: [0.15, 3.5],
+    animation: false,
+    data: {
+      nodes: DATA.nodes.map(n => ({ id: n.id, data: nodeMarks(n.id), style: { x: layout.positions.get(n.id).x, y: layout.positions.get(n.id).y } })),
+      edges: DATA.edges.map((e, i) => ({ id: 'e' + i, source: e.source, target: e.target,
+        data: { cycle: e.cycle, kind: e.kind, mutual: DATA.edges.some(o => o.source === e.target && o.target === e.source), impact: impactEdge(e) } })),
+    },
+    node: {
+      type: 'rect',
+      style: {
+        size: d => [nodeInfo.get(d.id).w, nodeInfo.get(d.id).h],
+        radius: d => nodeInfo.get(d.id).focus ? 12 : 9,
+        fill: d => `linear-gradient(180deg, ${riskOf(d).fill[0]} 0%, ${riskOf(d).fill[1]} 100%)`,
+        fillOpacity: 1,
+        stroke: d => nodeInfo.get(d.id).focus ? THEME.accent : d.data.impact ? THEME.impact : riskOf(d).solid,
+        strokeOpacity: 1,
+        lineWidth: d => nodeInfo.get(d.id).focus ? 3 : d.data.impact ? 2.4 : 1.5,
+        shadowColor: DARK ? 'rgba(0,0,0,0.45)' : 'rgba(31,35,40,0.18)',
+        shadowBlur: 12,
+        shadowOffsetY: 4,
+        halo: d => !!d.data.impact || nodeInfo.get(d.id).focus || nodeInfo.get(d.id).risk === 'HIGH',
+        haloStroke: d => d.data.impact ? THEME.impact : nodeInfo.get(d.id).focus ? THEME.accent : THEME.highSolid,
+        haloLineWidth: d => d.data.impact ? IMPACT[d.data.impact].width : nodeInfo.get(d.id).focus ? 16 : 10,
+        haloStrokeOpacity: d => d.data.impact ? IMPACT[d.data.impact].opacity : nodeInfo.get(d.id).focus ? .3 : .2,
+        iconSrc: nodeStyle('image'),
+        iconWidth: nodeStyle('w'),
+        iconHeight: nodeStyle('h'),
+        iconOpacity: 1,
+        labelText: nodeStyle('name'),
+        labelPlacement: 'center',
+        labelOffsetX: nodeStyle('mx'),
+        labelOffsetY: 0,
+        labelFontFamily: FONT,
+        labelFontSize: d => nodeInfo.get(d.id).focus ? 12.5 : 11,
+        labelFontWeight: d => nodeInfo.get(d.id).focus ? 700 : 600,
+        labelFontStyle: d => ['abstrata', 'interface'].includes(nodeInfo.get(d.id).kind) ? 'italic' : 'normal',
+        labelFill: THEME.nodeText,
+        labelFillOpacity: 1,
+        badge: true,
+        badges: d => [
+          nodeInfo.get(d.id).attention && { text: '⚠ sem testes', placement: 'top', offsetY: -7, backgroundFill: THEME.highSolid },
+          d.data.changeLabel && { text: '● ' + d.data.changeLabel.toLowerCase(), placement: 'bottom', offsetY: 7, backgroundFill: THEME.changed },
+          d.data.commentCount && { text: '✎ ' + d.data.commentCount, placement: 'right-top', offsetX: 4, offsetY: -4,
+            backgroundFill: d.data.commentPatrulha ? THEME.patrulha : THEME.comment },
+          d.data.impact && { text: '✦ ' + IMPACT[d.data.impact].name, placement: 'left-top', offsetX: -4, offsetY: -4, backgroundFill: THEME.impact },
+        ].filter(Boolean),
+        badgeFill: '#fff',
+        badgeFontFamily: FONT,
+        badgeFontSize: 9,
+        badgeFontWeight: 600,
+        badgePadding: [1, 6],
+        badgeBackgroundRadius: 6,
+        cursor: 'pointer',
+        zIndex: d => nodeInfo.get(d.id).focus ? 5 : 2,
+      },
+      state: {
+        active: { halo: true, haloStroke: THEME.accent, haloLineWidth: 14, haloStrokeOpacity: .28 },
+        selected: { halo: true, haloStroke: THEME.accent, haloLineWidth: 20, haloStrokeOpacity: .4, stroke: THEME.accent, lineWidth: 3 },
+        match: { halo: true, haloStroke: THEME.match, haloLineWidth: 20, haloStrokeOpacity: .45, stroke: THEME.match, lineWidth: 3 },
+        inactive: { opacity: .13, halo: false, shadowBlur: 0 },
+        dimmed: { opacity: .13, halo: false, shadowBlur: 0 },
+      },
+    },
+    edge: {
+      type: d => d.data.mutual ? 'quadratic' : 'line',
+      style: {
+        curveOffset: 34,
+        stroke: edgeColor,
+        strokeOpacity: d => d.data.cycle || d.data.impact ? .95 : .7,
+        lineWidth: d => d.data.impact ? 2.6 : d.data.cycle ? 2.2 : 1.4,
+        halo: d => !!d.data.impact,
+        haloStroke: THEME.impact,
+        haloStrokeOpacity: .16,
+        haloLineWidth: 8,
+        lineDash: d => d.data.kind === 'INHERITANCE' ? [6, 4] : 0,
+        endArrow: true,
+        endArrowType: d => d.data.kind === 'INHERITANCE' ? 'triangle' : 'vee',
+        endArrowSize: d => d.data.kind === 'INHERITANCE' ? 11 : 9,
+        endArrowFill: d => d.data.kind === 'INHERITANCE' ? THEME.bg : edgeColor(d),
+        endArrowStroke: edgeColor,
+        endArrowLineWidth: 1.3,
+        increasedLineWidthForHitTesting: 6,
+      },
+      state: {
+        active: {
+          stroke: edgeActiveColor, strokeOpacity: 1, lineWidth: 2.6, halo: true, haloStroke: edgeActiveColor, haloStrokeOpacity: .18,
+          haloLineWidth: 9, endArrowStroke: edgeActiveColor, endArrowFill: d => d.data.kind === 'INHERITANCE' ? THEME.bg : edgeActiveColor(d), zIndex: 3,
+        },
+        inactive: { strokeOpacity: .05, endArrowFillOpacity: .05, endArrowStrokeOpacity: .05 },
+        dimmed: { strokeOpacity: .05, endArrowFillOpacity: .05, endArrowStrokeOpacity: .05 },
+      },
+    },
+    behaviors: [
+      'drag-canvas',
+      { type: 'zoom-canvas', sensitivity: 1.2 },
+      'drag-element',
+      { type: 'hover-activate', key: 'hover', degree: 1, state: 'active', inactiveState: 'inactive', animation: false,
+        enable: e => e.targetType === 'node' },
+    ],
+  });
+
+  /** Anéis desenhados atrás do grafo; acompanham o viewport a cada quadro enquanto ele anima. */
+  const ringsCanvas = document.getElementById('rings'), ringsCtx = ringsCanvas.getContext('2d');
+  const radar = document.getElementById('radar'), sweep = document.getElementById('sweep');
+  let rendered = false;
+  function roundRect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+  }
+  function drawRings() {
+    const dpr = window.devicePixelRatio || 1, width = ringsCanvas.clientWidth, height = ringsCanvas.clientHeight;
+    if (ringsCanvas.width !== Math.round(width * dpr) || ringsCanvas.height !== Math.round(height * dpr)) {
+      ringsCanvas.width = Math.round(width * dpr); ringsCanvas.height = Math.round(height * dpr);
+    }
+    const ctx = ringsCtx;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+    if (!rendered || !byId.has(DATA.focus)) return;
+    const zoom = graph.getZoom();
+    const [cx, cy0] = graph.getViewportByCanvas([center.x, center.y]);
+    const focusRisk = RISK[byId.get(DATA.focus).risk];
+    const outer = (rings.length ? rings[rings.length - 1].radius + 70 : 110) * zoom;
+
+    const glow = ctx.createRadialGradient(cx, cy0, 0, cx, cy0, outer);
+    glow.addColorStop(0, rgba(focusRisk.solid, .2));
+    glow.addColorStop(.55, rgba(focusRisk.solid, .06));
+    glow.addColorStop(1, rgba(focusRisk.solid, 0));
+    ctx.fillStyle = glow;
+    ctx.beginPath(); ctx.arc(cx, cy0, outer, 0, Math.PI * 2); ctx.fill();
+
+    ctx.strokeStyle = rgba(THEME.muted, .22); ctx.lineWidth = 1; ctx.setLineDash([2, 6]);
+    ctx.beginPath();
+    ctx.moveTo(cx - outer, cy0); ctx.lineTo(cx + outer, cy0); ctx.moveTo(cx, cy0 - outer); ctx.lineTo(cx, cy0 + outer);
+    ctx.stroke();
+
+    rings.forEach((ring, i) => {
+      const r = ring.radius * zoom;
+      if (i % 2 === 0) {
+        const inner = i === 0 ? 0 : rings[i - 1].radius * zoom;
+        ctx.setLineDash([]);
+        ctx.fillStyle = rgba(THEME.fg, .025);
+        ctx.beginPath(); ctx.arc(cx, cy0, r + 26 * zoom, 0, Math.PI * 2); ctx.arc(cx, cy0, Math.max(0, inner + 26 * zoom), 0, Math.PI * 2, true); ctx.fill();
+      }
+      ctx.setLineDash([6, 6]); ctx.lineWidth = 1.3; ctx.strokeStyle = rgba(ring.color, .55);
+      ctx.beginPath(); ctx.arc(cx, cy0, r, 0, Math.PI * 2); ctx.stroke();
+    });
+
+    if (rings.length) {
+      const r = outer - 40 * zoom;
+      ctx.setLineDash([]); ctx.strokeStyle = rgba(THEME.muted, .35);
+      for (let degree = 0; degree < 360; degree += 5) {
+        const angle = degree * Math.PI / 180, length = (degree % 30 === 0 ? 9 : 4) * Math.min(1, zoom + .2);
+        ctx.lineWidth = degree % 30 === 0 ? 1.4 : 1;
+        ctx.beginPath();
+        ctx.moveTo(cx + Math.cos(angle) * r, cy0 + Math.sin(angle) * r);
+        ctx.lineTo(cx + Math.cos(angle) * (r + length), cy0 + Math.sin(angle) * (r + length));
+        ctx.stroke();
+      }
+      ctx.lineWidth = 1; ctx.strokeStyle = rgba(THEME.muted, .3);
+      ctx.beginPath(); ctx.arc(cx, cy0, r, 0, Math.PI * 2); ctx.stroke();
+    }
+
+    if (zoom > .35) rings.forEach(ring => {
+      const r = ring.radius * zoom;
+      const x = cx + Math.cos(ring.labelAngle) * r, y = cy0 + Math.sin(ring.labelAngle) * r;
+      const text = `${ring.level}º anel · ${ring.count} ${ring.count === 1 ? 'classe' : 'classes'}`;
+      ctx.font = `600 10.5px ${FONT}`;
+      const w = ctx.measureText(text).width + 26, h = 19;
+      ctx.setLineDash([]);
+      roundRect(ctx, x - w / 2, y - h / 2, w, h, 9.5);
+      ctx.fillStyle = THEME.panel; ctx.fill();
+      ctx.lineWidth = 1; ctx.strokeStyle = rgba(ring.color, .7); ctx.stroke();
+      ctx.fillStyle = ring.color;
+      ctx.beginPath(); ctx.arc(x - w / 2 + 10, y, 3.5, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = THEME.fg; ctx.textBaseline = 'middle';
+      ctx.fillText(text, x - w / 2 + 18, y + .5);
+    });
+
+    radar.style.transform = `translate(${cx}px, ${cy0}px)`;
+    const sweepSize = (rings.length ? rings[rings.length - 1].radius + 40 : 90) * zoom * 2;
+    Object.assign(sweep.style, { width: sweepSize + 'px', height: sweepSize + 'px', left: -sweepSize / 2 + 'px', top: -sweepSize / 2 + 'px',
+      background: `conic-gradient(from 0deg, transparent 0deg 285deg, ${rgba(focusRisk.solid, .2)} 360deg)` });
+    const focus = nodeInfo.get(DATA.focus);
+    const pulseSize = Math.max(40, focus.w * zoom * 1.1);
+    radar.querySelectorAll('.pulse').forEach(pulse => Object.assign(pulse.style, {
+      width: pulseSize + 'px', height: pulseSize + 'px', left: -pulseSize / 2 + 'px', top: -pulseSize / 2 + 'px' }));
+  }
+  let animations = 0, syncFrame = 0, syncUntil = 0;
+  function followViewport(ms = 900) {
+    syncUntil = Math.max(syncUntil, performance.now() + ms);
+    if (syncFrame) return;
+    const step = () => {
+      drawRings();
+      syncFrame = animations > 0 || performance.now() < syncUntil ? requestAnimationFrame(step) : 0;
+    };
+    syncFrame = requestAnimationFrame(step);
+  }
+  graph.on('beforeanimate', () => { animations++; followViewport(); });
+  graph.on('afteranimate', () => { animations = Math.max(0, animations - 1); drawRings(); });
+  graph.on('aftertransform', () => { drawRings(); hideTip(); });
+  graph.on('node:drag', e => {
+    hideTip();
+    if (e.target.id !== DATA.focus) return;
+    const [x, y] = graph.getElementPosition(DATA.focus);
+    center = { x, y };
+    drawRings();
+  });
+  window.addEventListener('resize', () => followViewport(300));
+
+  /** Os elementos guardam os estados do hover (active/inactive) e os nossos; aqui só mexemos nos nossos. */
+  const OWN_STATES = ['selected', 'match', 'dimmed'];
+  function applyStates() {
+    const isDimmed = id => (highlighting && !changes[id]) || (riskFilter && byId.get(id).risk !== riskFilter) ||
+      (impactHighlight && !impactOf(id) && !isSource(id));
+    const states = {};
+    DATA.nodes.forEach(n => {
+      const own = [n.id === selectedId && 'selected', matchIds.has(n.id) && 'match', isDimmed(n.id) && 'dimmed'].filter(Boolean);
+      states[n.id] = [...graph.getElementState(n.id).filter(s => !OWN_STATES.includes(s)), ...own];
+    });
+    DATA.edges.forEach((e, i) => {
+      const own = (isDimmed(e.source) && isDimmed(e.target)) || (impactHighlight && !impactEdge(e)) ? ['dimmed'] : [];
+      states['e' + i] = [...graph.getElementState('e' + i).filter(s => !OWN_STATES.includes(s)), ...own];
+    });
+    graph.setElementState(states, false);
+  }
+
+  document.getElementById('fit').addEventListener('click', () => graph.fitView({ when: 'always', direction: 'both' }, { duration: 400, easing: 'ease-out' }));
+  document.getElementById('zoomIn').addEventListener('click', () => graph.zoomBy(1.25, { duration: 200 }));
+  document.getElementById('zoomOut').addEventListener('click', () => graph.zoomBy(.8, { duration: 200 }));
+  document.getElementById('centerFocus').addEventListener('click', () => { if (byId.has(DATA.focus)) graph.focusElement(DATA.focus, { duration: 400, easing: 'ease-out' }); });
+  document.getElementById('relayout').addEventListener('click', () => enter());
+
+  const minimapToggle = document.getElementById('minimapToggle');
+  minimapToggle.addEventListener('click', () => {
+    const on = !document.body.classList.contains('with-minimap');
+    document.body.classList.toggle('with-minimap', on);
+    minimapToggle.classList.toggle('pressed', on);
+    minimapToggle.title = on ? 'Esconder o minimapa' : 'Mostrar o minimapa';
+    graph.setPlugins(plugins => [...plugins.filter(p => p.key !== 'minimap'), ...(on ? [{
+      type: 'minimap', key: 'minimap', container: document.getElementById('minimapBox'), size: [200, 130], padding: 8, delay: 80,
+      containerStyle: { border: 'none', background: 'transparent' },
+      maskStyle: { border: `1.5px solid ${THEME.accent}`, background: rgba(THEME.accent, .12), borderRadius: '4px' },
+    }] : [])]);
+    graph.render();
+  });
+
+  /** Bolhas por pacote: só pacotes com duas ou mais classes no diagrama, os maiores primeiro. */
+  const packagesButton = document.getElementById('packages');
+  const packageGroups = (() => {
+    const groups = new Map();
+    DATA.nodes.forEach(n => groups.set(n.pkg || '(padrão)', [...(groups.get(n.pkg || '(padrão)') || []), n.id]));
+    return [...groups.entries()].filter(([, ids]) => ids.length > 1).sort((a, b) => b[1].length - a[1].length).slice(0, PACKAGE_COLORS.length);
+  })();
+  let showPackages = false;
+  packagesButton.disabled = !packageGroups.length;
+  if (!packageGroups.length) packagesButton.title = 'Nenhum pacote tem duas ou mais classes no diagrama';
+  packagesButton.addEventListener('click', () => {
+    showPackages = !showPackages;
+    packagesButton.classList.toggle('pressed', showPackages);
+    graph.setPlugins(plugins => [...plugins.filter(p => !String(p.key || '').startsWith('pkg-')), ...(showPackages ? packageGroups.map(([pkg, ids], i) => ({
+      type: 'bubble-sets', key: 'pkg-' + i, members: ids,
+      fill: PACKAGE_COLORS[i], fillOpacity: .09, stroke: PACKAGE_COLORS[i], strokeOpacity: .55, lineWidth: 1.2,
+      label: true, labelText: pkg.substring(pkg.lastIndexOf('.') + 1), labelPlacement: 'bottom', labelCloseToPath: true, labelAutoRotate: false,
+      labelFill: '#fff', labelFontSize: 10.5, labelFontWeight: 600, labelFontFamily: FONT,
+      labelBackground: true, labelBackgroundFill: PACKAGE_COLORS[i], labelBackgroundRadius: 6, labelPadding: [1, 7],
+    })) : [])]);
+    graph.render();
+  });
+
+  const search = document.getElementById('search'), matches = document.getElementById('matches');
+  search.addEventListener('input', () => {
+    const text = search.value.trim().toLowerCase();
+    matchIds = new Set(text ? DATA.nodes.filter(n => n.name.toLowerCase().includes(text)).map(n => n.id) : []);
+    matches.textContent = text ? (matchIds.size ? `${matchIds.size}` : 'nenhuma') : '';
+    applyStates();
+  });
+  search.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { const first = [...matchIds][0]; if (first) select(first); }
+    if (e.key === 'Escape') { search.value = ''; search.dispatchEvent(new Event('input')); search.blur(); }
+  });
+  document.addEventListener('keydown', e => {
+    if (e.key === '/' && document.activeElement !== search) { e.preventDefault(); search.focus(); }
+    if (e.key === 'Escape') closeHelp();
+  });
+
+  const highlightButton = document.getElementById('highlightChanges');
+  function changedCount() { return DATA.nodes.filter(n => changes[n.id]).length; }
+  function chip(iconName, value, text, cls = '', title = '') {
+    return `<span class="chip ${cls}" title="${escapeHtml(title)}">${icon(iconName, 12)}<b>${value}</b>${text}</span>`;
+  }
+  function renderSummary() {
+    const changed = changedCount(), attention = DATA.nodes.filter(n => n.attention).length;
+    document.getElementById('chips').innerHTML =
+      chip('cube', DATA.nodes.length, DATA.nodes.length === 1 ? 'classe' : 'classes', '', 'Classes no diagrama') +
+      chip('link', DATA.edges.length, DATA.edges.length === 1 ? 'ligação' : 'ligações', '', 'Dependências entre as classes do diagrama') +
+      chip('radar', maxLevel, maxLevel === 1 ? 'anel' : 'anéis', '', 'Passos de dependência a partir da classe analisada') +
+      (DATA.cycles ? chip('cycle', DATA.cycles, DATA.cycles === 1 ? 'ciclo' : 'ciclos', 'cycle', 'Ciclos de dependência: as setas ficam vermelhas') : '') +
+      (attention ? chip('warn', attention, 'sem escudo', 'warn', 'Classes com risco médio ou alto e nenhum teste') : '') +
+      (changed ? chip('git', changed, changed === 1 ? 'alterada' : 'alteradas', 'changed', 'Classes com alterações não commitadas') : '') +
+      (commented() ? chip('comment', commented(), commented() === 1 ? 'com comentário' : 'com comentários', 'comment',
+        'Classes com comentários pendentes do Radar, do Escudo ou da Patrulha') : '') +
+      (impact && impact.order.length ? chip('spark', impact.order.length, impact.order.length === 1 ? 'impactada' : 'impactadas', 'impact',
+        'Classes que a IA apontou como afetadas pelos comentários e alterações') : '') +
+      (DATA.truncated ? chip('warn', '', 'limite de classes atingido', 'warn', 'Parte dos vizinhos ficou de fora do diagrama') : '');
+  }
+  function renderDistribution() {
+    const counts = { LOW: 0, MEDIUM: 0, HIGH: 0 };
+    DATA.nodes.forEach(n => counts[n.risk]++);
+    const bar = document.getElementById('riskbar');
+    bar.classList.toggle('filtering', !!riskFilter);
+    bar.innerHTML = RISK_KEYS.filter(key => counts[key]).map(key =>
+      `<div class="seg ${key} ${riskFilter === key ? 'active' : ''}" data-risk="${key}" style="flex-grow: ${counts[key]}" ` +
+      `title="${counts[key]} com risco ${RISK[key].name}"></div>`).join('');
+    document.getElementById('riskKeys').innerHTML = '<span style="padding: 1px 2px">Risco ao alterar:</span>' + RISK_KEYS.map(key =>
+      `<span class="risk-key ${riskFilter === key ? 'active' : ''}" data-risk="${key}" style="color: ${RISK[key].solid}" ` +
+      `title="Destacar as classes com risco ${RISK[key].name}"><span class="dot ${key}"></span><b>${counts[key]}</b>${RISK[key].name}</span>`).join('');
+    document.querySelectorAll('#riskbar [data-risk], #riskKeys [data-risk]').forEach(el => el.addEventListener('click', () => {
+      riskFilter = riskFilter === el.dataset.risk ? null : el.dataset.risk;
+      renderDistribution(); applyStates();
+    }));
+  }
+  function applyChanges() {
+    const changed = changedCount();
+    if (!changed) highlighting = false;
+    highlightButton.disabled = !changed;
+    highlightButton.classList.toggle('pressed', highlighting);
+    highlightButton.title = changed
+      ? 'Apaga as demais classes para destacar as que têm alterações não commitadas'
+      : (vcs ? 'Nenhuma classe do diagrama tem alterações não commitadas' : 'O projeto não usa controle de versão');
+    renderSummary();
+    if (infoId && document.getElementById('info').style.display === 'block') showInfo(infoId);
+  }
+  highlightButton.addEventListener('click', () => { highlighting = !highlighting; highlightButton.classList.toggle('pressed', highlighting); applyStates(); });
+
+  function commented() { return DATA.nodes.filter(n => comments[n.id] && comments[n.id].length).length; }
+  const impactButton = document.getElementById('highlightImpact'), aiRow = document.getElementById('aiRow');
+  /** O resultado da IA no topo: o resumo e as classes afetadas, da mais para a menos afetada. */
+  function renderImpact() {
+    const count = impact ? impact.order.length : 0;
+    if (!count) impactHighlight = false;
+    impactButton.style.display = impact ? '' : 'none';
+    impactButton.disabled = !count;
+    impactButton.classList.toggle('pressed', impactHighlight);
+    impactButton.title = count ? 'Apaga as demais classes para destacar as afetadas e as de onde o impacto parte' : 'A IA não apontou classes afetadas';
+    aiRow.classList.toggle('show', !!impact || analyzing);
+    if (analyzing) {
+      aiRow.innerHTML = `<div class="ai-head"><span class="scanning"></span>A IA está analisando o impacto dos comentários e das alterações…</div>`;
+      return;
+    }
+    if (!impact) { aiRow.innerHTML = ''; return; }
+    const counts = { HIGH: 0, MEDIUM: 0, LOW: 0 };
+    impact.order.forEach(id => counts[impact.items[id].level]++);
+    aiRow.innerHTML = `
+      <div class="ai-head">${icon('spark', 13)}Impacto apontado pela IA<span class="spacer"></span>
+        ${['HIGH', 'MEDIUM', 'LOW'].filter(k => counts[k]).map(k => `<span class="badge impact"><span class="ilevel ${k}"></span>${counts[k]} ${IMPACT[k].name}</span>`).join('')}
+        <button class="icon-button" id="clearImpact" title="Apagar as marcas da análise">${icon('close', 11)}</button></div>
+      ${impact.summary ? `<div class="ai-summary">${escapeHtml(impact.summary)}</div>` : ''}
+      <div class="ai-list">${count ? impact.order.filter(id => byId.has(id)).map(id => `<span class="ichip" data-id="${escapeHtml(id)}" ` +
+        `title="${escapeHtml(impact.items[id].reason)}"><span class="ilevel ${impact.items[id].level}"></span>${escapeHtml(byId.get(id).name)}</span>`).join('')
+        : '<span style="color: var(--muted)">Nenhuma classe do diagrama afetada.</span>'}</div>`;
+    aiRow.querySelectorAll('.ichip[data-id]').forEach(el => el.addEventListener('click', () => { select(el.dataset.id); ironDomeSend('select:' + el.dataset.id); }));
+    aiRow.querySelector('#clearImpact').addEventListener('click', () => { setImpact(null); ironDomeSend('clearImpact:'); });
+  }
+  impactButton.addEventListener('click', () => { impactHighlight = !impactHighlight; impactButton.classList.toggle('pressed', impactHighlight); applyStates(); });
+  /** Comentários e impacto mudam os dados dos nós e das ligações: redesenha sem refazer o layout. */
+  function redrawMarks() {
+    graph.updateNodeData(DATA.nodes.map(n => ({ id: n.id, data: nodeMarks(n.id) })));
+    graph.updateEdgeData(DATA.edges.map((e, i) => ({ id: 'e' + i, data: { impact: impactEdge(e) } })));
+    graph.draw({ animation: false }).then(applyStates);
+    renderSummary();
+    renderImpact();
+    if (infoId && document.getElementById('info').style.display === 'block') showInfo(infoId);
+  }
+  function setComments(next) { comments = next || {}; redrawMarks(); }
+  function setImpact(next) { impact = next; analyzing = false; redrawMarks(); }
+  function setAnalyzing(on) { analyzing = on; renderImpact(); }
+
+  /** Painéis minimizados ficam só com o título; a escolha é lembrada pela IDE. */
+  const prefs = { legend: !!DATA.prefs.legend, info: !!DATA.prefs.info };
+  function renderCollapsed(panel, buttonId, collapsed, what) {
+    panel.classList.toggle('collapsed', collapsed);
+    const button = panel.querySelector('#' + buttonId);
+    button.innerHTML = icon(collapsed ? 'plus' : 'minus', 12);
+    button.title = collapsed ? `Mostrar ${what}` : `Minimizar ${what}`;
+  }
+  function togglePref(key, panel, buttonId, what) {
+    prefs[key] = !prefs[key];
+    renderCollapsed(panel, buttonId, prefs[key], what);
+    ironDomeSend(`pref:${key}:${prefs[key] ? 1 : 0}`);
+  }
+
+  const legendPanel = document.getElementById('legend');
+  function legendItem(swatch, text, wide = false) { return `<div class="lg-item ${wide ? 'wide' : ''}">${swatch}<span>${text}</span></div>`; }
+  legendPanel.innerHTML = `
+    <div class="panel-head"><span class="title">${icon('list')}Legenda</span><button class="icon-button" id="collapseLegend"></button></div>
+    <div class="body">
+      <div class="lg-section"><div class="lg-title">Raio de impacto (cor da classe)</div><div class="lg-grid">
+        ${RISK_KEYS.map(key => legendItem(`<span class="swatch-node" style="background: linear-gradient(${RISK[key].fill.join(', ')}); border-color: ${RISK[key].solid}"></span>`, 'Risco ' + RISK[key].name)).join('')}
+        ${legendItem('<span class="swatch-glow"></span>', 'brilho: risco alto')}
+      </div></div>
+      <div class="lg-section"><div class="lg-title">Escudo de testes (à direita)</div><div class="lg-grid">
+        ${Object.keys(COVERAGE).map(key => legendItem(shieldBadge(key, 15), COVERAGE[key].name)).join('')}
+      </div></div>
+      <div class="lg-section"><div class="lg-title">Tipo (à esquerda)</div><div class="lg-grid">
+        ${Object.keys(KINDS).map(key => legendItem(kindBadge(key, 16), KINDS[key].name)).join('')}
+      </div></div>
+      <div class="lg-section"><div class="lg-title">Ligações</div><div class="lg-grid">
+        ${legendItem('<span class="swatch-edge"></span>', 'usa')}
+        ${legendItem('<span class="swatch-edge" style="border-top-style: dashed"></span>', 'herda / implementa')}
+        ${legendItem('<span class="swatch-edge" style="border-color: var(--cycle)"></span>', 'ciclo')}
+      </div></div>
+      <div class="lg-section"><div class="lg-title">Marcas</div><div class="lg-grid">
+        ${legendItem(`<span class="swatch-badge" style="background: var(--highSolid)">⚠</span>`, 'risco médio ou alto sem testes', true)}
+        ${legendItem(`<span class="swatch-badge" style="background: var(--changed)">●</span>`, 'alterada, sem commit')}
+        ${legendItem(`<span class="swatch-badge" style="background: var(--comment)">✎</span>`, 'Radar ou Escudo')}
+        ${legendItem(`<span class="swatch-badge" style="background: var(--patrulha)">✎</span>`, 'pedidos da Patrulha')}
+        ${legendItem('<span class="swatch-impact"></span>', 'brilho rosa: impacto apontado pela IA', true)}
+        ${legendItem('<span class="swatch-orbit"></span>', 'anel: 1 passo a mais')}
+        ${legendItem('<span class="swatch-bubble"></span>', 'bolha: mesmo pacote', true)}
+      </div></div>
+    </div>`;
+  renderCollapsed(legendPanel, 'collapseLegend', prefs.legend, 'a legenda');
+  document.getElementById('collapseLegend').addEventListener('click', () => togglePref('legend', legendPanel, 'collapseLegend', 'a legenda'));
+
+  const helpBackdrop = document.getElementById('helpBackdrop');
+  document.getElementById('help').innerHTML = `
+    <div class="panel-head"><span class="title">${icon('book', 16)}Manual de campo</span>
+      <button class="icon-button" id="closeHelp" title="Fechar">${icon('close', 12)}</button></div>
+    <div class="intro">O que cada número, cor, ícone e anel do Raio de Impacto quer dizer.</div>
+    ${DATA.help.map(t => `<div class="topic"><div class="t-icon">${icon(HELP_ICONS[t.id] || 'bulb', 17)}</div>` +
+      `<div><h3>${escapeHtml(t.title)}</h3><p>${escapeHtml(t.text)}</p></div></div>`).join('')}`;
+  function closeHelp() { helpBackdrop.classList.remove('show'); }
+  document.getElementById('helpButton').addEventListener('click', () => helpBackdrop.classList.toggle('show'));
+  document.getElementById('closeHelp').addEventListener('click', closeHelp);
+  helpBackdrop.addEventListener('click', e => { if (e.target === helpBackdrop) closeHelp(); });
+
+  const tip = document.getElementById('tip');
+  function showTip(id) {
+    const n = byId.get(id), change = changes[id];
+    tip.innerHTML = `
+      <div class="tip-head">${kindBadge(n.kind, 16)}<span>${escapeHtml(n.name)}</span></div>
+      <div class="tip-grid"><span>${icon('arrowIn', 12)}<b>${n.afferent}</b> dependem</span><span>${icon('arrowOut', 12)}<b>${n.efferent}</b> usa</span></div>
+      <div class="tip-row"><span class="badge ${n.risk}"><span class="dot ${n.risk}"></span>Risco ${escapeHtml(n.riskLabel.toLowerCase())}</span>
+        <span class="badge ${n.coverage}">${shieldBadge(n.coverage, 12)}${escapeHtml(n.coverageLabel)}</span>
+        ${change ? `<span class="badge changed">${icon('git', 11)}${escapeHtml(change.label)}</span>` : ''}
+        ${comments[id]?.length ? `<span class="badge comment">${icon('comment', 11)}${comments[id].length} ${comments[id].length === 1 ? 'comentário' : 'comentários'}</span>` : ''}
+        ${impactOf(id) ? `<span class="badge impact">${icon('spark', 11)}Impacto ${IMPACT[impactOf(id).level].name}</span>` : ''}</div>
+      ${impactOf(id)?.reason ? `<div class="tip-hint" style="color: var(--fg)">${escapeHtml(impactOf(id).reason)}</div>` : ''}
+      <div class="tip-hint">Clique para detalhes · dois cliques abre o código</div>`;
+    const [x, y] = graph.getViewportByCanvas(graph.getElementPosition(id));
+    const half = nodeInfo.get(id).h / 2 * graph.getZoom() + 8;
+    const below = y - half < 150;
+    tip.classList.toggle('below', below);
+    tip.style.left = Math.min(Math.max(x, 110), window.innerWidth - 110) + 'px';
+    tip.style.top = (below ? y + half : y - half) + 'px';
+    tip.classList.add('show');
+  }
+  function hideTip() { tip.classList.remove('show'); }
+
+  graph.on('node:pointerenter', e => showTip(e.target.id));
+  graph.on('node:pointerleave', hideTip);
+  graph.on('node:click', e => { hideTip(); select(e.target.id, false); ironDomeSend('select:' + e.target.id); });
+  graph.on('node:dblclick', e => ironDomeSend('open:' + e.target.id));
+  graph.on('canvas:click', () => { document.getElementById('info').style.display = 'none'; selectedId = null; applyStates(); });
+
+  function why(topic) { return `<button class="why" data-topic="${topic}" title="O que é isso?">?</button>`; }
+  function nodeList(ids) {
+    if (!ids.length) return '<li class="empty">nenhuma</li>';
+    return ids.map(id => byId.get(id)).sort((a, b) => RISK_KEYS.indexOf(b.risk) - RISK_KEYS.indexOf(a.risk) || a.name.localeCompare(b.name))
+      .map(n => `<li data-id="${escapeHtml(n.id)}" title="${escapeHtml(n.id)}">${kindBadge(n.kind, 15)}<span class="name">${escapeHtml(n.name)}</span>` +
+        `${n.attention ? `<span class="warn" title="Risco médio ou alto e sem testes">${icon('warn', 12)}</span>` : ''}` +
+        `${changes[n.id] ? `<span style="color: var(--changed)" title="Alterada, sem commit">${icon('git', 12)}</span>` : ''}` +
+        `${shieldBadge(n.coverage, 13)}<span class="dot ${n.risk}" title="Risco ${RISK[n.risk].name}"></span></li>`).join('');
+  }
+  function gauge(n) {
+    const max = Math.max(DATA.scale.high * 1.5, n.afferent), cx = 60, cy0 = 56, r = 46;
+    const angleOf = value => 180 - Math.min(value, max) / max * 180;
+    const point = (angle, radius) => [cx + radius * Math.cos(angle * Math.PI / 180), cy0 - radius * Math.sin(angle * Math.PI / 180)];
+    const arc = (from, to, color, width = 9) => {
+      const [x1, y1] = point(angleOf(from), r), [x2, y2] = point(angleOf(to), r);
+      return `<path d="M${x1.toFixed(2)} ${y1.toFixed(2)} A${r} ${r} 0 0 1 ${x2.toFixed(2)} ${y2.toFixed(2)}" stroke="${color}" stroke-width="${width}" fill="none"/>`;
+    };
+    const ticks = [DATA.scale.medium, DATA.scale.high].map(value => {
+      const [x1, y1] = point(angleOf(value), r - 7), [x2, y2] = point(angleOf(value), r + 7);
+      return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${THEME.panel}" stroke-width="2"/>`;
+    }).join('');
+    const angle = angleOf(n.afferent), [nx, ny] = point(180, r - 13);
+    return `<svg width="120" height="64" viewBox="0 0 120 64">
+      ${arc(0, max, rgba(THEME.fg, .08), 13)}
+      ${arc(0, DATA.scale.medium, THEME.lowSolid)}${arc(DATA.scale.medium, DATA.scale.high, THEME.mediumSolid)}${arc(DATA.scale.high, max, THEME.highSolid)}
+      ${ticks}
+      <g class="needle" style="transform-origin: ${cx}px ${cy0}px; transform: rotate(${180 - angle}deg)">
+        <line x1="${cx}" y1="${cy0}" x2="${nx}" y2="${ny}" stroke="${THEME.fg}" stroke-width="2.6" stroke-linecap="round"/>
+      </g>
+      <circle cx="${cx}" cy="${cy0}" r="5" fill="${THEME.fg}"/><circle cx="${cx}" cy="${cy0}" r="2" fill="${THEME.panel}"/>
+    </svg>`;
+  }
+  function changeCard(n) {
+    const change = changes[n.id];
+    if (!vcs) return `<div class="card status-card">${icon('git', 22)}<div class="status-text"><div class="status-label">Sem controle de versão</div>` +
+      '<div class="note">O projeto não usa controle de versão, então não há alterações para mostrar.</div></div></div>';
+    if (!change) return `<div class="card status-card"><span style="color: var(--muted)">${icon('git', 22)}</span><div class="status-text">` +
+      `<div class="status-label">Nenhuma alteração</div><div class="note">Igual ao último commit.</div></div>${why('changes')}</div>`;
+    return `<div class="card status-card" style="border-color: color-mix(in srgb, var(--changed) 50%, var(--border))">` +
+      `<span style="color: var(--changed)">${icon('git', 22)}</span><div class="status-text">` +
+      `<div class="status-label" style="color: var(--changed)">${escapeHtml(change.label)}, sem commit</div>` +
+      `<div class="note">${escapeHtml(n.changeAdvice)}</div><button id="diff">${icon('eye', 13)}Ver alterações</button></div>${why('changes')}</div>`;
+  }
+  function impactCard(id) {
+    const item = impactOf(id);
+    if (!item) return '';
+    return `<div class="impact-card"><div class="impact-title">${icon('spark', 14)}Impacto ${IMPACT[item.level].name}, segundo a IA</div>` +
+      `<div>${escapeHtml(item.reason || 'A IA não explicou o motivo.')}</div>` +
+      (item.sources.length ? `<div class="sources"><span style="color: var(--muted)">Por causa de:</span>` +
+        item.sources.map(s => `<span class="src">${escapeHtml(s)}</span>`).join('') + '</div>' : '') + '</div>';
+  }
+  function commentsSection(id) {
+    const list = comments[id] || [];
+    if (!list.length) return '';
+    return `<div class="section"><div class="section-title">${icon('comment', 12)}Comentários pendentes<span class="count">${list.length}</span></div>` +
+      `<ul class="clist">${list.map(c => `<li class="${c.source}"><div class="c-head"><b>${escapeHtml(c.id)}</b>${escapeHtml(c.sourceLabel)}` +
+        `${c.sent ? ' · enviado ao PR' : ''} · ${escapeHtml(c.where)}</div><div class="c-text">${escapeHtml(c.text)}</div></li>`).join('')}</ul></div>`;
+  }
+  function testsCard(n) {
+    const note = n.coverage === 'TEST_CLASS' ? 'Esta classe é um teste: ela protege outras classes.'
+      : n.tests.length ? `${n.tests.length} ${n.tests.length === 1 ? 'classe de teste a usa' : 'classes de teste a usam'}. Clique para abrir.`
+      : 'Nenhuma classe de teste usa esta classe diretamente.';
+    return `<div class="card status-card" style="align-items: flex-start">${shieldBadge(n.coverage, 30)}<div class="status-text">` +
+      `<div class="status-label" style="color: ${COVERAGE[n.coverage].color}">${escapeHtml(n.coverageLabel)}</div><div class="note">${note}</div>` +
+      (n.tests.length ? `<div class="chips">${n.tests.map(t => `<span class="tchip" data-id="${escapeHtml(t)}" title="${escapeHtml(t)}">${icon('flask', 11)}${escapeHtml(simpleName(t))}</span>`).join('')}</div>` : '') +
+      `</div>${why('tests')}</div>`;
+  }
+  function showInfo(id) {
+    infoId = id;
+    const n = byId.get(id), risk = RISK[n.risk];
+    const uses = DATA.edges.filter(e => e.source === id).map(e => e.target).filter((v, i, a) => a.indexOf(v) === i);
+    const usedBy = DATA.edges.filter(e => e.target === id).map(e => e.source).filter((v, i, a) => a.indexOf(v) === i);
+    const info = document.getElementById('info');
+    info.style.setProperty('--risk', risk.solid);
+    info.innerHTML = `
+      <div class="panel-head">
+        <div class="hero">${kindBadge(n.kind, 32)}<div style="min-width: 0">
+          ${id === DATA.focus ? `<div class="focus-tag">${icon('target', 11)}Classe analisada</div>` : ''}
+          <h2>${escapeHtml(n.name)}</h2></div></div>
+        <button class="icon-button" id="collapseInfo"></button>
+        <button class="icon-button" id="closeInfo" title="Fechar os detalhes (clique numa classe para abrir de novo)">${icon('close', 12)}</button>
+      </div>
+      <div class="body">
+      <div class="pkg">${icon('folder', 13)}<span>${escapeHtml(n.pkg || '(pacote padrão)')}</span></div>
+      <div class="tags">
+        <span class="tag">${escapeHtml(KINDS[n.kind]?.name || n.kind)}</span>
+        <span class="tag">${icon('radar', 11)}${n.level === 0 ? 'centro do radar' : `${n.level}º anel`}</span>
+        ${n.cycle ? `<span class="tag cycle">${icon('cycle', 11)}em ciclo</span>${why('cycle')}` : ''}
+        ${n.attention ? `<span class="tag attention">${icon('warn', 11)}sem escudo</span>` : ''}
+        ${changes[n.id] ? `<span class="tag changed">${icon('git', 11)}alterada</span>` : ''}
+        ${comments[n.id]?.length ? `<span class="tag comment">${icon('comment', 11)}${comments[n.id].length} ${comments[n.id].length === 1 ? 'comentário' : 'comentários'}</span>` : ''}
+        ${impactOf(n.id) ? `<span class="tag impact">${icon('spark', 11)}impacto ${IMPACT[impactOf(n.id).level].name}</span>` : ''}
+      </div>
+      ${impactCard(n.id)}
+      <div class="risk-card">
+        <div class="gauge">${gauge(n)}<div class="gauge-value"><b>${n.afferent}</b><span>dependentes</span></div></div>
+        <div class="risk-text">
+          <div class="risk-title">${icon('gauge', 12)}Risco ao alterar</div>
+          <div class="risk-level">${escapeHtml(n.riskLabel)}</div>
+          <div class="note">${escapeHtml(n.riskReason)}</div>
+        </div>
+        ${why('risk')}
+      </div>
+      <div class="metrics">
+        <div class="metric">${why('afferent')}<div class="m-top"><span class="m-icon">${icon('arrowIn', 13)}</span>Aferentes</div>
+          <b>${n.afferent}</b><small>classes dependem dela</small>
+          <div class="meter"><i style="width: ${Math.round(n.afferent / maxAfferent * 100)}%"></i></div></div>
+        <div class="metric out">${why('efferent')}<div class="m-top"><span class="m-icon">${icon('arrowOut', 13)}</span>Eferentes</div>
+          <b>${n.efferent}</b><small>classes de que ela depende</small>
+          <div class="meter"><i style="width: ${Math.round(n.efferent / maxEfferent * 100)}%"></i></div></div>
+      </div>
+      <div class="section"><div class="section-title">${icon('shield', 12)}Escudo de testes</div>${testsCard(n)}</div>
+      <div class="section"><div class="section-title">${icon('git', 12)}Alterações</div>${changeCard(n)}</div>
+      ${commentsSection(n.id)}
+      <div class="explain" id="explain"></div>
+      <div class="advice">${icon('bulb', 16)}<div><b>O que fazer:</b> ${escapeHtml(n.advice)}</div></div>
+      <div class="section"><div class="section-title">${icon('arrowOut', 12)}Depende de, no diagrama<span class="count">${uses.length}</span></div>
+        <ul class="nlist">${nodeList(uses)}</ul></div>
+      <div class="section"><div class="section-title">${icon('arrowIn', 12)}Dependem dela, no diagrama<span class="count">${usedBy.length}</span></div>
+        <ul class="nlist">${nodeList(usedBy)}</ul></div>
+      <div class="actions">
+        <button id="open" class="primary">${icon('code', 13)}Abrir no editor</button>
+        ${id === DATA.focus ? '' : `<button id="refocus">${icon('target', 13)}Analisar a partir daqui</button>`}
+      </div>
+      </div>`;
+    info.style.display = 'block';
+    renderCollapsed(info, 'collapseInfo', prefs.info, 'os detalhes');
+    info.querySelector('#collapseInfo').addEventListener('click', () => togglePref('info', info, 'collapseInfo', 'os detalhes'));
+    info.querySelector('#closeInfo').addEventListener('click', () => { info.style.display = 'none'; });
+    info.querySelectorAll('ul.nlist li[data-id]').forEach(li => li.addEventListener('click', () => select(li.dataset.id)));
+    info.querySelectorAll('.tchip[data-id]').forEach(el => el.addEventListener('click', () => ironDomeSend('open:' + el.dataset.id)));
+    info.querySelectorAll('.why').forEach(button => button.addEventListener('click', () => explain(button.dataset.topic)));
+    info.querySelector('#open').addEventListener('click', () => ironDomeSend('open:' + id));
+    info.querySelector('#diff')?.addEventListener('click', () => ironDomeSend('diff:' + id));
+    info.querySelector('#refocus')?.addEventListener('click', () => ironDomeSend('focus:' + id));
+  }
+  function explain(topicId) {
+    const box = document.getElementById('explain'), topic = help.get(topicId);
+    if (!topic) return;
+    const open = box.style.display === 'block' && box.dataset.topic === topicId;
+    box.dataset.topic = topicId;
+    box.innerHTML = `<b>${icon(HELP_ICONS[topicId] || 'bulb', 13)} ${escapeHtml(topic.title)}</b>${escapeHtml(topic.text)}`;
+    box.style.display = open ? 'none' : 'block';
+    if (!open) box.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+
+  function select(id, recenter = true) {
+    if (!byId.has(id)) return;
+    selectedId = id;
+    applyStates();
+    if (recenter) graph.focusElement(id, { duration: 400, easing: 'ease-out' });
+    showInfo(id);
+  }
+  function setChanges(next, nextVcs) {
+    changes = next; vcs = nextVcs;
+    graph.updateNodeData(DATA.nodes.map(n => ({ id: n.id, data: nodeMarks(n.id) })));
+    graph.updateEdgeData(DATA.edges.map((e, i) => ({ id: 'e' + i, data: { impact: impactEdge(e) } })));
+    graph.draw({ animation: false }).then(applyStates);
+    applyChanges();
+  }
+  window.ironDome = { select, setChanges, setComments, setImpact, setAnalyzing };
+
+  /** A varredura termina as voltas e some; os pulsos param sozinhos. Reorganizar liga tudo de novo. */
+  sweep.addEventListener('animationend', () => radar.classList.add('calm'));
+  function restartRadar() {
+    radar.classList.remove('calm');
+    [sweep, ...radar.querySelectorAll('.pulse')].forEach(el => {
+      el.style.animation = 'none';
+      void el.offsetWidth;
+      el.style.animation = '';
+    });
+  }
+
+  /** Entrada: as classes saem do centro do radar e se espalham até os anéis. Se a animação não terminar, elas vão direto para o lugar. */
+  async function enter() {
+    const final = Object.fromEntries([...layout.positions].map(([id, p]) => [id, [p.x, p.y]]));
+    center = { x: 0, y: 0 };
+    restartRadar();
+    if (REDUCED_MOTION) { await graph.translateElementTo(final, false); drawRings(); return; }
+    await graph.translateElementTo(Object.fromEntries(Object.keys(final).map(id => [id, [0, 0]])), false);
+    followViewport(900);
+    const finished = await Promise.race([graph.translateElementTo(final, true).then(() => true), new Promise(done => setTimeout(() => done(false), 1500))]);
+    if (!finished) await graph.translateElementTo(final, false);
+    drawRings();
+  }
+
+  (async () => {
+    await graph.render();
+    if (!REDUCED_MOTION) graph.setOptions({ animation: { duration: 650, easing: 'ease-out' } });
+    await graph.fitView({ when: 'always', direction: 'both' }, false);
+    rendered = true;
+    drawRings();
+    document.getElementById('graph').classList.add('ready');
+    document.getElementById('rings').classList.add('ready');
+    radar.classList.add('ready');
+    applyChanges();
+    renderImpact();
+    renderDistribution();
+    if (byId.has(DATA.focus)) select(DATA.focus, false);
+    await enter();
+  })();
+</script>
+</body>
+</html>

@@ -1,59 +1,228 @@
 <idea-plugin>
-    <id>com.mio.review</id>
-    <name>mio-review-ia</name>
-    <vendor>mio</vendor>
+    <id>com.mio.irondome</id>
+    <name>Iron Dome IA</name>
+    <vendor>Mio</vendor>
 
     <description><![CDATA[
-    Adicione comentários de revisão no arquivo aberto, como num pull request: passe o mouse na margem
-    e clique no <b>+</b>, ou dê duplo clique no número da linha.
-    Ao salvar, o plugin gera <code>mio-review/mio-review-&lt;id&gt;.md</code> com as correções
-    pedidas, pronto para uma IA ler e aplicar os ajustes.
+    <p>An air defense system for your code: mark the bugs like in a pull request review and let an AI
+    assistant intercept them. Inline comments are exported to a Markdown file that any AI tool can read,
+    apply and mark as resolved.</p>
+    <p><b>Nenhum bug passa pelo domo.</b> Revise o código como num pull request e deixe a IA
+    interceptar as correções.</p>
+    <p>Marque qualquer linha ou trecho como alvo direto no editor. Ao salvar, o Iron Dome IA envia as
+    ordens de interceptação em <code>iron-dome/ordem-interceptacao-&lt;id&gt;.md</code>, com cada comentário e
+    o código citado, prontas para qualquer assistente de IA ler, aplicar e marcar como resolvidas.</p>
+    <h3>Mecanismos de defesa</h3>
+    <ul>
+      <li><b>📡 Radar:</b> marque os alvos com o <b>+</b> da margem, duplo clique no número da linha
+        ou <kbd>Ctrl+Alt+Shift+M</kbd>. Os comentários acompanham o código quando linhas entram ou
+        saem, e o ciclo é completo: pendentes, resolvidos pela IA (em verde), editáveis e removíveis
+        com desfazer. Pelo botão direito, marque também um arquivo ou pacote inteiro como alvo.</li>
+      <li><b>🎯 Centro de Comando:</b> cada comentário vira uma ordem com dois modos, <i>Aplicar
+        direto</i> ou <i>Discutir antes de alterar</i>, em que a IA explica os motivos do código atual e o
+        impacto de manter, alterar ou remover, traz até 5 opções com prévia da alteração e discute com você
+        até a decisão final. Funciona com Cursor, Claude Code ou qualquer outro assistente.</li>
+      <li><b>🤝 Sem fogo amigo:</b> a IA é instruída a perguntar antes de aplicar comentários que se
+        contradizem ou se cruzam.</li>
+      <li><b>💥 Raio de Impacto:</b> para classes Java e Kotlin, quantas classes dependem de cada uma
+        (aferentes), de quantas ela depende (eferentes), o risco de alterá-la e os testes que formam o
+        seu escudo, com ciclos e alterações não commitadas destacados.</li>
+      <li><b>👁️ Sentinela:</b> vigia o perímetro dos arquivos não commitados, agrupados por pacote,
+        com o diff de cada um a um clique.</li>
+      <li><b>🛡️ Escudo:</b> executa todos os testes JUnit do projeto e mostra o que passou ou falhou, com
+        as classes agrupadas pela chave do <code>@DisplayName("[Chave] Descrição")</code>, o aviso das classes
+        fora dessa convenção e o motivo e a pilha de cada falha.</li>
+      <li><b>🛰️ Patrulha:</b> revise os pull requests abertos no GitHub comentando o código no modo revisão do PR, envie
+        os pedidos de alteração como revisão e confira depois, no código e nas conversas do PR, se
+        cada um foi atendido.</li>
+      <li><b>🧠 Inteligência da IA:</b> o risco do Raio de Impacto usa o histórico do git, a IA recebe o dossiê de
+        cada classe e aprende com o que o time aceita e descarta, e dois comentários no mesmo trecho viram um aviso
+        com a síntese pela IA.</li>
+    </ul>
     ]]></description>
 
+    <change-notes><![CDATA[
+    <h3>0.1.0</h3>
+    <ul>
+      <li>Primeira versão: comentários inline, modos de aplicação, edição, remoção e exportação da
+        revisão em Markdown.</li>
+      <li>Instruções para a IA detectar contradições e cruzamentos entre comentários antes de alterar
+        os arquivos.</li>
+      <li>Novo nome, Iron Dome IA, com o código organizado em mecanismos de defesa: Radar, Centro de
+        Comando, Raio de Impacto e Sentinela.</li>
+      <li>Comentários de arquivo ou pacote inteiro, pelo botão direito na árvore do projeto, na aba do
+        editor ou na aba Sentinela.</li>
+      <li>Abas Radar, Sentinela e Raio de Impacto com ícones coloridos, e ações e status com nomes do
+        tema: Marcar Alvo, Disparar, Na mira, Interceptado.</li>
+      <li>Aba Escudo: executa os testes JUnit e agrupa o resultado pela chave do <code>@DisplayName</code> das
+        classes, avisando as que estão fora da convenção.</li>
+      <li>Radar, Sentinela e Escudo com cabeçalho de resumo, indicadores e barra de proporção por status, e
+        etiquetas coloridas nas árvores.</li>
+      <li>Sentinela agrupada por raiz de código e pacote, só pacote ou tipo de alteração, com busca e filtros.</li>
+      <li>Caixa-Preta: Reportar Bug gera um .md com o ponto do plugin onde o bug aconteceu, print e gravação
+        em GIF da IDE e os erros do log, e envia ao Linear.</li>
+      <li>Verificar Compatibilidade: ao abrir o projeto, avisa os mecanismos que não vão funcionar nesta IDE e por
+        quê, e mostra os erros recentes do plugin no log. Uma aba que não abre mostra o erro no lugar dela, sem
+        derrubar as outras abas nem o botão de bug.</li>
+      <li>Interceptados podem ser ocultados e mostrados de novo no editor, pelo cartão, pela aba Radar ou pelas
+        ações Ocultar e Mostrar Alvos Interceptados, inclusive os de revisões encerradas.</li>
+      <li>Patrulha: revisa os pull requests abertos no GitHub no modo revisão do PR, envia os comentários como revisão com
+        a conta do IntelliJ e guarda os pedidos em iron-dome/pull-requests para verificar no código e nas
+        conversas do PR se foram atendidos.</li>
+      <li>Inteligência da IA: risco com histórico do git, dossiê das classes, aprendizado com o feedback do time e
+        aviso de comentários no mesmo trecho com síntese pela IA, em Settings > Tools > Iron Dome IA > Inteligência da IA.</li>
+    </ul>
+    ]]></change-notes>
+
     <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.modules.vcs</depends>
+    <!-- mio-review-ia, o nome antigo: registra os mesmos componentes (AiReviewComments) e não pode rodar junto -->
+    <incompatible-with>com.mio.review</incompatible-with>
+    <depends optional="true" config-file="raio-de-impacto-java.xml">com.intellij.java</depends>
+    <!-- Da 2026.2 em diante o navegador embutido (JCEF) do diagrama vem neste plugin; antes, da plataforma. -->
+    <depends optional="true" config-file="raio-de-impacto-jcef.xml">com.intellij.modules.jcef</depends>
+    <depends optional="true" config-file="escudo-junit.xml">JUnit</depends>
+    <depends optional="true" config-file="patrulha-git.xml">Git4Idea</depends>
+    <depends optional="true" config-file="patrulha-github.xml">org.jetbrains.plugins.github</depends>
+    <depends optional="true" config-file="interceptador-terminal.xml">org.jetbrains.plugins.terminal</depends>
+
+    <extensionPoints>
+        <extensionPoint name="toolWindowTab"
+                        interface="com.mio.irondome.base.ReviewToolWindowTab"
+                        dynamic="true"/>
+        <extensionPoint name="editorCardProvider"
+                        interface="com.mio.irondome.radar.EditorCardProvider"
+                        dynamic="true"/>
+        <extensionPoint name="agentTerminal"
+                        interface="com.mio.irondome.interceptor.AgentTerminal"
+                        dynamic="true"/>
+    </extensionPoints>
 
     <extensions defaultExtensionNs="com.intellij">
-        <editorFactoryListener implementation="com.mio.review.listeners.ReviewEditorFactoryListener"/>
-        <editorFactoryMouseListener implementation="com.mio.review.listeners.ReviewMouseListener"/>
-        <editorFactoryMouseMotionListener implementation="com.mio.review.listeners.ReviewMouseMotionListener"/>
-        <editorFloatingToolbarProvider implementation="com.mio.review.ui.ReviewFloatingToolbarProvider"/>
-        <notificationGroup id="mio-review-ia" displayType="BALLOON"/>
+        <editorFactoryListener implementation="com.mio.irondome.radar.ReviewEditorFactoryListener"/>
+        <editorFactoryMouseListener implementation="com.mio.irondome.radar.ReviewMouseListener"/>
+        <editorFactoryMouseMotionListener implementation="com.mio.irondome.radar.ReviewMouseMotionListener"/>
+        <editorFloatingToolbarProvider implementation="com.mio.irondome.base.ReviewFloatingToolbarProvider"/>
+        <projectViewNodeDecorator implementation="com.mio.irondome.radar.TargetDecorator"/>
+        <notificationGroup id="Iron Dome IA" displayType="BALLOON"/>
+        <notificationGroup id="Iron Dome IA: Gravação" displayType="STICKY_BALLOON"/>
+        <postStartupActivity implementation="com.mio.irondome.caixapreta.CompatibilityStartup"/>
+        <postStartupActivity implementation="com.mio.irondome.defesa.DefenseStartup"/>
+        <errorHandler implementation="com.mio.irondome.caixapreta.IronDomeErrorSubmitter"/>
+        <applicationConfigurable parentId="tools"
+                                 instance="com.mio.irondome.caixapreta.LinearConfigurable"
+                                 id="com.mio.irondome.settings"
+                                 displayName="Iron Dome IA"/>
+        <applicationConfigurable parentId="com.mio.irondome.settings"
+                                 instance="com.mio.irondome.interceptor.AgentConfigurable"
+                                 id="com.mio.irondome.settings.agent"
+                                 displayName="Arsenal (IA)"/>
+        <applicationConfigurable parentId="com.mio.irondome.settings"
+                                 instance="com.mio.irondome.defesa.DefenseConfigurable"
+                                 id="com.mio.irondome.settings.defense"
+                                 displayName="Inteligência da IA"/>
+        <toolWindow id="Iron Dome IA"
+                    anchor="right"
+                    icon="/icons/toolWindow.svg"
+                    factoryClass="com.mio.irondome.base.ReviewToolWindowFactory"/>
     </extensions>
 
     <applicationListeners>
-        <listener class="com.mio.review.listeners.ReviewSaveListener"
+        <listener class="com.mio.irondome.comando.ReviewSaveListener"
                   topic="com.intellij.openapi.fileEditor.FileDocumentManagerListener"/>
+        <listener class="com.mio.irondome.comando.ReviewSaveActionListener"
+                  topic="com.intellij.openapi.actionSystem.ex.AnActionListener"/>
     </applicationListeners>
 
     <projectListeners>
-        <listener class="com.mio.review.listeners.ReviewFileListener"
+        <listener class="com.mio.irondome.comando.ReviewFileListener"
                   topic="com.intellij.openapi.vfs.newvfs.BulkFileListener"/>
+        <listener class="com.mio.irondome.radar.TargetDecoratorRefresher"
+                  topic="com.mio.irondome.radar.ReviewCommentsListener"/>
     </projectListeners>
 
     <actions>
-        <action id="MioReview.SaveReview"
-                class="com.mio.review.actions.SaveReviewAction"
-                text="Salvar Revisão"
-                description="Salva os arquivos e grava os .md de revisão em mio-review/"
+        <action id="IronDome.SaveFileReview"
+                class="com.mio.irondome.comando.SaveFileReviewAction"
+                text="Disparar Este Arquivo"
+                description="Salva o arquivo aberto e envia à IA, no .md de revisão, as ordens de interceptação só dele"
                 icon="/icons/saveReview.svg"/>
+        <action id="IronDome.SaveReview"
+                class="com.mio.irondome.comando.SaveReviewAction"
+                text="Disparar Todos"
+                description="Salva todos os arquivos e envia à IA, no .md de revisão, as ordens de interceptação de todos eles"
+                icon="/icons/fireAll.svg"/>
 
-        <group id="MioReview.FloatingToolbar">
-            <reference ref="MioReview.SaveReview"/>
+        <action id="IronDome.ShowFileDiff"
+                class="com.mio.irondome.sentinela.ShowFileDiffAction"
+                text="Inspecionar Diff"
+                description="Compara este arquivo com a versão do último commit"
+                icon="AllIcons.Actions.Diff"/>
+
+        <action id="IronDome.FireWithAi"
+                class="com.mio.irondome.interceptor.FireWithAiAction"
+                text="Disparar Todos com IA"
+                description="Dispara os alvos e pede à IA configurada que execute a ordem de interceptação"
+                icon="/icons/interceptador.svg"/>
+
+        <group id="IronDome.FloatingToolbar">
+            <reference ref="IronDome.ShowFileDiff"/>
+            <reference ref="IronDome.SaveFileReview"/>
+            <reference ref="IronDome.SaveReview"/>
+            <reference ref="IronDome.FireWithAi"/>
         </group>
 
-        <action id="MioReview.AddComment"
-                class="com.mio.review.actions.AddReviewCommentAction"
-                text="mio-review-ia: Adicionar Comentário"
-                description="Comenta a seleção ou a linha atual para a IA corrigir">
+        <action id="IronDome.AddComment"
+                class="com.mio.irondome.radar.AddReviewCommentAction"
+                text="Iron Dome IA: Marcar Alvo"
+                description="Marca a seleção ou a linha atual como alvo para a IA corrigir"
+                icon="/icons/addComment.svg">
             <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt shift M"/>
         </action>
-        <action id="MioReview.RemoveComment"
-                class="com.mio.review.actions.RemoveReviewCommentAction"
-                text="mio-review-ia: Remover Comentário"
-                description="Marca para remoção, ao salvar, os comentários não resolvidos da seleção ou da linha atual"/>
-        <action id="MioReview.RemoveResolved"
-                class="com.mio.review.actions.RemoveResolvedCommentsAction"
-                text="mio-review-ia: Remover Comentários Resolvidos"
-                description="Tira do editor os comentários resolvidos, sem alterar o .md da revisão"/>
+        <action id="IronDome.MarkTarget"
+                class="com.mio.irondome.radar.MarkTargetAction"
+                text="Iron Dome IA: Marcar como Alvo"
+                description="Comenta o arquivo ou o pacote inteiro para a IA corrigir"
+                icon="/icons/addComment.svg">
+            <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
+            <add-to-group group-id="EditorTabPopupMenu" anchor="last"/>
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+        </action>
+        <action id="IronDome.RemoveComment"
+                class="com.mio.irondome.radar.RemoveReviewCommentAction"
+                text="Iron Dome IA: Cancelar Alvo"
+                description="Cancela os alvos não interceptados da seleção ou da linha atual; os já disparados saem no próximo disparo"
+                icon="/icons/removeComment.svg"/>
+        <action id="IronDome.RemoveResolved"
+                class="com.mio.irondome.radar.RemoveResolvedCommentsAction"
+                text="Iron Dome IA: Ocultar Alvos Interceptados"
+                description="Tira do editor os alvos já interceptados, sem alterar o .md da revisão; Mostrar Alvos Interceptados traz de volta"
+                icon="AllIcons.Actions.ToggleVisibility"/>
+        <action id="IronDome.ShowResolved"
+                class="com.mio.irondome.radar.ShowResolvedCommentsAction"
+                text="Iron Dome IA: Mostrar Alvos Interceptados"
+                description="Volta a mostrar no editor os alvos interceptados que foram ocultados"
+                icon="AllIcons.Actions.Show"/>
+        <action id="IronDome.ReportBug"
+                class="com.mio.irondome.caixapreta.ReportBugAction"
+                text="Reportar Bug do Iron Dome IA"
+                description="Gera um .md dizendo onde o bug aconteceu no plugin, com print, gravação em GIF e os erros do log, e envia ao Linear"
+                icon="/icons/caixaPreta.svg">
+            <add-to-group group-id="HelpMenu" anchor="last"/>
+        </action>
+        <action id="IronDome.CheckCompatibility"
+                class="com.mio.irondome.caixapreta.CheckCompatibilityAction"
+                text="Iron Dome IA: Verificar Compatibilidade"
+                description="Mostra o que cada mecanismo precisa da IDE, o que está faltando e os erros recentes do plugin no log"
+                icon="AllIcons.Nodes.Plugin">
+            <add-to-group group-id="HelpMenu" anchor="last"/>
+        </action>
+        <action id="IronDome.ShowErrorLog"
+                class="com.mio.irondome.caixapreta.ShowErrorLogAction"
+                text="Iron Dome IA: Ver Logs de Erro"
+                description="Lista os erros e avisos do plugin no log da IDE, com a pilha completa, para copiar ou reportar"
+                icon="AllIcons.Actions.ShowAsTree">
+            <add-to-group group-id="HelpMenu" anchor="last"/>
+        </action>
     </actions>
 </idea-plugin>

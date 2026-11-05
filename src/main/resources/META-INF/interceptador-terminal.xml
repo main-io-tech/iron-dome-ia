@@ -1,0 +1,6 @@
+<!-- Com o plugin de terminal, a IA pode rodar no terminal da IDE. -->
+<idea-plugin>
+    <extensions defaultExtensionNs="com.mio.irondome">
+        <agentTerminal implementation="com.mio.irondome.interceptor.IdeAgentTerminal"/>
+    </extensions>
+</idea-plugin>

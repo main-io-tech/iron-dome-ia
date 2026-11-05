@@ -1,0 +1,3 @@
+<idea-plugin>
+    <!-- Sem extensões: a dependência só põe as classes do JCEF ao alcance do diagrama do Raio de Impacto. -->
+</idea-plugin>
