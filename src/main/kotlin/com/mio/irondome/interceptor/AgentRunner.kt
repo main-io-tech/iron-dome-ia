@@ -118,24 +118,31 @@ class AgentRunner(private val project: Project) {
 
     /**
      * [onDone] roda na EDT com o resultado, inclusive em erro ou cancelamento; [actions] entram no aviso de
-     * sucesso, além de Ver Resposta.
+     * sucesso, além de Ver Resposta. Com [unattended], de quem roda sozinho (como as respostas automáticas da
+     * Patrulha), a IA vai sempre em segundo plano, sem perguntas nem aviso de sucesso, e quando ela está ocupada ou
+     * não configurada só devolve false, para tentar de novo depois. Devolve se a execução começou. Na EDT.
      */
-    fun run(request: AgentTask, vararg actions: Pair<String, (AgentResult) -> Unit>, onDone: (AgentResult) -> Unit = {}) {
-        if (request.write && refusesWrite()) return
+    fun run(
+        request: AgentTask,
+        vararg actions: Pair<String, (AgentResult) -> Unit>,
+        unattended: Boolean = false,
+        onDone: (AgentResult) -> Unit = {},
+    ): Boolean {
+        if (request.write && (unattended || refusesWrite())) return false
         val task = request.copy(prompt = AgentCommand.guarded(request))
         val provider = AgentSettings.provider
         val launch = AgentSettings.launch()
         if (launch == null || !AgentSettings.ready) {
-            notifyNotReady(provider, launch == null)
-            return
+            if (!unattended) notifyNotReady(provider, launch == null)
+            return false
         }
         if (running != null) {
-            notify("A IA já está trabalhando", "Espere ${running?.title} terminar ou cancele na barra de progresso da aba.", NotificationType.WARNING)
-            return
+            if (!unattended) notify("A IA já está trabalhando", "Espere ${running?.title} terminar ou cancele na barra de progresso da aba.", NotificationType.WARNING)
+            return false
         }
-        val root = project.rootPath() ?: return
-        val terminal = when (chooseMode(task)) {
-            null -> return
+        val root = project.rootPath() ?: return false
+        val terminal = when (if (unattended) AgentRunMode.BACKGROUND else chooseMode(task)) {
+            null -> return false
             AgentRunMode.TERMINAL -> AgentTerminal.available() ?: run {
                 notify("Terminal indisponível", "O plugin de terminal da IDE está desligado: a IA roda na aba.", NotificationType.WARNING)
                 null
@@ -151,7 +158,10 @@ class AgentRunner(private val project: Project) {
         val work: () -> AgentResult = if (terminal == null) {
             { execute(task, provider, launch, root, current) }
         } else {
-            val answer = answerFile(task) ?: return finish(failure(task, provider, "O projeto não tem pasta no disco."), actions, onDone)
+            val answer = answerFile(task) ?: run {
+                finish(failure(task, provider, "O projeto não tem pasta no disco."), actions, unattended, onDone)
+                return true
+            }
             val relative = "${ReviewCommentService.REVIEW_DIR}/$DIR/$ANSWERS_DIR/${answer.fileName}"
             val prompt = "${task.prompt} ${AgentCommand.answerInstruction(relative)}"
             current.step = "No terminal: abrindo o terminal"
@@ -177,8 +187,9 @@ class AgentRunner(private val project: Project) {
                 LOG.warn("A execução da IA falhou", e)
                 failure(task, provider, e.message ?: "A execução não terminou.")
             }
-            ApplicationManager.getApplication().invokeLater({ finish(result, actions, onDone) }, project.disposed)
+            ApplicationManager.getApplication().invokeLater({ finish(result, actions, unattended, onDone) }, project.disposed)
         }
+        return true
     }
 
     /** O PR em revisão pela Patrulha, ou 0. Com ele, o checkout é o do PR: está sendo revisado, não alterado. */
@@ -196,11 +207,16 @@ class AgentRunner(private val project: Project) {
         return true
     }
 
-    private fun finish(result: AgentResult, actions: Array<out Pair<String, (AgentResult) -> Unit>>, onDone: (AgentResult) -> Unit) {
+    private fun finish(
+        result: AgentResult,
+        actions: Array<out Pair<String, (AgentResult) -> Unit>>,
+        unattended: Boolean,
+        onDone: (AgentResult) -> Unit,
+    ) {
         progress = null
         runCatching { AgentActivity.finished(project) }.onFailure { LOG.warn("O ícone da IA trabalhando não pôde voltar", it) }
         refresh(result)
-        report(result, actions)
+        if (!unattended || !result.ok) report(result, actions)
         project.messageBus.syncPublisher(RUNS).changed()
         onDone(result)
     }

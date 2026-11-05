@@ -1,5 +1,6 @@
 package com.mio.irondome.patrulha
 
+import com.intellij.openapi.components.service
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.testFramework.HeavyPlatformTestCase
@@ -31,10 +32,11 @@ class PullRequestCardsTest : HeavyPlatformTestCase() {
         patrulha = PatrulhaService.getInstance(project)
     }
 
-    fun testSentRequestsAppearWhereTheCodeIsNowWhileTheHistoryIsShown() {
-        assertEmpty("sem o histórico ligado, nada no editor", cards())
-
+    fun testSentRequestsAppearWhereTheCodeIsNowWhileThePullRequestIsInReview() {
         patrulha.setHistoryShown(12, true)
+        assertEmpty("fora da revisão do PR, nada no editor", cards())
+
+        startReview()
         val cards = cards().associateBy { it.comment.id }
 
         assertEquals("o trecho desceu uma linha desde o envio", 3..3, cards.getValue("P1").lines)
@@ -42,10 +44,14 @@ class PullRequestCardsTest : HeavyPlatformTestCase() {
         assertEquals("Enviado", cards.getValue("P2").badge)
         assertTrue(cards.getValue("P1").subtitle.startsWith("Enviado ao PR #12 · Código: Alterado"))
         assertNotNull(cards.getValue("P1").onEdit)
+
+        project.service<ReviewCommentService>().stopPullRequestReview()
+        patrulha.setShownInEditor(12, false)
+        assertEmpty("encerrar a revisão tira os cartões", cards())
     }
 
     fun testHiddenRequestsLeaveTheEditorAndCanComeBack() {
-        patrulha.setHistoryShown(12, true)
+        startReview()
 
         cards().first { it.comment.id == "P1" }.onHide()
 
@@ -56,12 +62,17 @@ class PullRequestCardsTest : HeavyPlatformTestCase() {
     }
 
     fun testTheHeaderExpandsAndCollapsesTheCard() {
-        patrulha.setHistoryShown(12, true)
+        startReview()
         assertFalse(cards().first().comment.expanded)
 
         cards().first().onToggle()
 
         assertTrue(cards().first().comment.expanded)
+    }
+
+    private fun startReview() {
+        project.service<ReviewCommentService>().startPullRequestReview(12)
+        patrulha.setShownInEditor(12, true)
     }
 
     private fun cards() = PullRequestCards().cards(project, "src/Frete.kt", document())

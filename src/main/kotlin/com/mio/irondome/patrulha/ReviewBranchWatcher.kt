@@ -37,7 +37,7 @@ class ReviewBranchWatcher(private val project: Project) : GitRepositoryChangeLis
         if (current == expected) return
 
         radar.stopPullRequestReview()
-        patrulha.setHistoryShown(number, false)
+        patrulha.setShownInEditor(number, false)
         val point = patrulha.returnPoint()?.takeIf { it.pullRequest == number }
         patrulha.forgetReturnPoint()
 
@@ -69,7 +69,7 @@ class ReviewBranchWatcher(private val project: Project) : GitRepositoryChangeLis
             override fun onSuccess() {
                 patrulha.setReviewRef(ref)
                 project.service<ReviewCommentService>().startPullRequestReview(number)
-                patrulha.setHistoryShown(number, true)
+                patrulha.setShownInEditor(number, true)
             }
 
             override fun onThrowable(error: Throwable) {

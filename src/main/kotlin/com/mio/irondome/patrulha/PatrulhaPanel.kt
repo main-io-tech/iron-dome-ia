@@ -89,6 +89,8 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
         val active: Boolean,
         val checkedOut: Boolean,
         val historyShown: Boolean,
+        /** A IA responde sozinha às conversas que você abriu neste PR. */
+        val autoReply: Boolean,
     )
 
     private class Section(val title: String, val icon: Icon, val count: Int)
@@ -104,13 +106,25 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
 
     private class DraftItem(val number: Int, val comment: ReviewComment)
 
-    /** [thread] é a conversa do pedido no GitHub, quando as conversas do PR já foram lidas. */
-    private class RequestItem(val number: Int, val request: ChangeRequest, val inEditor: Boolean, val thread: Discussion? = null)
+    /**
+     * [thread] é a conversa do pedido no GitHub, quando as conversas do PR já foram lidas. [inEditor] é nulo fora da
+     * revisão do PR, quando nenhum pedido vai para o editor.
+     */
+    private class RequestItem(
+        val number: Int,
+        val request: ChangeRequest,
+        val inEditor: Boolean?,
+        val thread: Discussion? = null,
+        val auto: AutoStatus? = null,
+    )
 
-    /** As conversas do PR no GitHub que não são pedidos do `.md`: [discussions] nulo enquanto carrega ou se deu [error]. */
-    private class DiscussionsItem(val number: Int, val discussions: List<Discussion>?, val error: String?, val me: String?)
+    /**
+     * As conversas do PR no GitHub que não são pedidos do `.md`: [discussions] nulo enquanto carrega ou se deu [error].
+     * [inEditor] diz se elas estão ligadas no editor.
+     */
+    private class DiscussionsItem(val number: Int, val discussions: List<Discussion>?, val error: String?, val me: String?, val inEditor: Boolean)
 
-    private class DiscussionItem(val number: Int, val discussion: Discussion, val mine: Boolean)
+    private class DiscussionItem(val number: Int, val discussion: Discussion, val mine: Boolean, val inEditor: Boolean, val auto: AutoStatus?)
 
     /** Resposta numa conversa, de [discussion]; também as respostas aos pedidos. */
     private class ReplyItem(val number: Int, val discussion: Discussion, val comment: DiscussionComment, val mine: Boolean)
@@ -127,6 +141,7 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
     private class LoadingItem(val text: String)
 
     private val patrulha = PatrulhaService.getInstance(project)
+    private val autoReply = AutoReplyService.getInstance(project)
     private val radar = project.service<ReviewCommentService>()
     private val model = DefaultTreeModel(DefaultMutableTreeNode())
     private val tree = MechanismTree(model, IronDomeIcons.patrulha, Tone.PURPLE).apply {
@@ -149,8 +164,11 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
     /** Pastas dos arquivos alterados que o usuário fechou, como `número:caminho`; as outras abrem sozinhas. */
     private val collapsedDirs = mutableSetOf<String>()
 
-    /** As conversas de cada PR no GitHub, lidas ao abrir o PR e relidas no Atualizar e depois de responder. */
-    private val discussions = mutableMapOf<Int, List<Discussion>>()
+    /**
+     * PRs com as conversas do GitHub já lidas nesta aba, ao abrir o PR, de novo no Atualizar e depois de responder. As
+     * conversas ficam no [PatrulhaService], que as respostas automáticas da IA também atualizam.
+     */
+    private val discussionsLoaded = mutableSetOf<Int>()
     private val discussionsLoading = mutableSetOf<Int>()
     private val discussionsErrors = mutableMapOf<Int, String>()
 
@@ -201,6 +219,25 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
                     selectedPr()?.let { it.active && it.checkedOut } == true && runner.running == null && runner.available()
                 },
             ) { reviewWithAi() },
+            action(
+                "Respostas Automáticas da IA",
+                "Liga ou desliga, neste PR, a IA que acompanha as conversas que você abriu e responde no GitHub, em seu nome, quando alguém responde",
+                AllIcons.Actions.Lightning,
+                enabled = {
+                    selectedPr()?.takeIf { it.pr != null && context?.account != null }
+                        ?.let { autoReply.isOn(it.number) || AgentRunner.getInstance(project).available() } == true
+                },
+                text = { if (selectedPr()?.let { autoReply.isOn(it.number) } == true) "Desligar Respostas da IA" else "Ligar Respostas da IA" },
+                tooltipFor = {
+                    if (AgentRunner.getInstance(project).available()) {
+                        "A cada ${AutoReplyService.POLL_MINUTES} minutos, confere as conversas que você abriu no PR. Quando alguém responde, a IA avalia e " +
+                            "responde em seu nome, até chegar a uma conclusão, quando resolve a conversa (no máximo ${AutoReply.MAX_ROUNDS} rodadas). " +
+                            "Se precisar de uma decisão sua, ela não responde e avisa."
+                    } else {
+                        "Configure e teste a IA no Interceptador para ligar as respostas automáticas"
+                    }
+                },
+            ) { toggleAutoReply() },
             action("Enviar ao GitHub", "Envia os comentários não enviados deste PR, como rascunho que só você vê ou publicados. Escolha quais enviar, quais deixar para depois e quais excluir", AllIcons.Actions.Upload,
                 enabled = { selectedPr()?.let { it.pr != null && it.drafts.isNotEmpty() } == true }) { send() },
             action(
@@ -236,10 +273,18 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
             ) { deleteAll() },
             action(
                 "Mostrar no Editor",
-                "Mostra ou oculta no código os pedidos enviados: o histórico do PR inteiro, ou só o pedido selecionado",
+                "Mostra ou oculta no código os pedidos enviados (o histórico do PR inteiro, ou só o pedido selecionado) e as conversas do PR, " +
+                    "que no editor ficam só de leitura (todas pelo nó Conversas no PR, ou só a selecionada). Só no PR em revisão",
                 AllIcons.Actions.Show,
                 enabled = { historyTarget() != null },
                 text = { if (historyTarget()?.second == true) "Ocultar no Editor" else "Mostrar no Editor" },
+                tooltipFor = {
+                    if (selectedPr()?.let { it.pr != null && !it.active } == true) {
+                        "Os comentários do PR só aparecem no editor durante a revisão dele: use Revisar Este PR"
+                    } else {
+                        "Mostra ou oculta no código os pedidos enviados e as conversas do PR, que no editor ficam só de leitura"
+                    }
+                },
             ) { toggleHistory() },
             Separator.getInstance(),
             action("Verificar Pedidos", "Confere no head atual do PR e nas conversas se os pedidos foram atendidos", AllIcons.Actions.Checked,
@@ -314,7 +359,7 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
                 problem = error
                 needsToken = restricted
                 filesErrors.clear()
-                discussions.clear()
+                discussionsLoaded.clear()
                 discussionsErrors.clear()
                 rebuild()
                 if (error == null) syncQuietly(prs.map { it.number })
@@ -355,6 +400,7 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
                 // Só a branch da Patrulha conta: outra branch no mesmo commit, como a do autor, pode ter alterações não commitadas.
                 checkedOut = pr != null && pr.headSha == head && branch == PatrulhaService.branchName(number),
                 historyShown = patrulha.isHistoryShown(number),
+                autoReply = autoReply.isOn(number),
             )
         }
     }
@@ -372,7 +418,7 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
         val me = context?.account?.name
         fun addPr(parent: DefaultMutableTreeNode, item: PrItem) {
             val node = DefaultMutableTreeNode(item)
-            val loaded = discussions[item.number]
+            val loaded = patrulha.cachedDiscussions(item.number)
             item.pr?.let { pr ->
                 node.add(DefaultMutableTreeNode(AuthorItem(item.number, pr, isOwn(pr))))
                 val fork = pr.headOwner.takeIf { it.isNotBlank() && !it.equals(context?.repo?.owner, ignoreCase = true) }
@@ -388,7 +434,9 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
             item.drafts.forEach { node.add(DefaultMutableTreeNode(DraftItem(item.number, it))) }
             item.record?.requests?.forEach { request ->
                 val thread = loaded?.let { Discussions.of(request, it) }
-                val child = DefaultMutableTreeNode(RequestItem(item.number, request, patrulha.isInEditor(item.number, request.id), thread))
+                val inEditor = patrulha.isInEditor(item.number, request.id).takeIf { item.active }
+                val auto = thread?.let { autoReply.status(item.number, it) }
+                val child = DefaultMutableTreeNode(RequestItem(item.number, request, inEditor, thread, auto))
                 thread?.replies?.forEach { child.add(DefaultMutableTreeNode(ReplyItem(item.number, thread, it, Discussions.isMine(it, me)))) }
                 node.add(child)
             }
@@ -449,15 +497,18 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
 
     /** As conversas do PR que não são pedidos do `.md`, cada uma com as respostas abaixo. */
     private fun discussionsNode(item: PrItem, me: String?): DefaultMutableTreeNode {
-        val loaded = discussions[item.number]?.let { Discussions.others(it, item.record) }
+        val loaded = patrulha.cachedDiscussions(item.number)?.let { Discussions.others(it, item.record) }
         val error = discussionsErrors[item.number]
-        val node = DefaultMutableTreeNode(DiscussionsItem(item.number, loaded, error, me))
+        val node = DefaultMutableTreeNode(DiscussionsItem(item.number, loaded, error, me, patrulha.isDiscussionsShown(item.number)))
         if (loaded == null) {
             node.add(DefaultMutableTreeNode(LoadingItem(error ?: "Lendo as conversas do GitHub…")))
             return node
         }
         loaded.forEach { discussion ->
-            val child = DefaultMutableTreeNode(DiscussionItem(item.number, discussion, Discussions.isMine(discussion.first, me)))
+            val inEditor = inEditorKind(discussion) && patrulha.isDiscussionInEditor(item.number, discussion)
+            val child = DefaultMutableTreeNode(
+                DiscussionItem(item.number, discussion, Discussions.isMine(discussion.first, me), inEditor, autoReply.status(item.number, discussion)),
+            )
             discussion.replies.forEach { child.add(DefaultMutableTreeNode(ReplyItem(item.number, discussion, it, Discussions.isMine(it, me)))) }
             node.add(child)
         }
@@ -467,17 +518,15 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
     /** Lê as conversas do PR no GitHub em segundo plano, uma vez até o próximo Atualizar ou resposta. */
     private fun ensureDiscussions(pr: PullRequest, force: Boolean = false) {
         val context = context?.takeIf { it.account != null } ?: return
-        if (!force && (pr.number in discussions || pr.number in discussionsErrors)) return
+        if (!force && (pr.number in discussionsLoaded || pr.number in discussionsErrors)) return
         if (!discussionsLoading.add(pr.number)) return
         object : Task.Backgroundable(project, "Patrulha: lendo as conversas do PR #${pr.number}", true) {
-            private var loaded: List<Discussion>? = null
-
             override fun run(indicator: ProgressIndicator) {
-                loaded = patrulha.discussions(context, pr.number)
+                patrulha.discussions(context, pr.number)
             }
 
             override fun onSuccess() {
-                loaded?.let { discussions[pr.number] = it }
+                discussionsLoaded += pr.number
                 discussionsErrors.remove(pr.number)
             }
 
@@ -531,7 +580,7 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
             return node
         }
         val requests = item.record?.requests.orEmpty().filterNot { it.deleted }
-        val threads = discussions[pr.number]?.let { Discussions.others(it, item.record) }.orEmpty().filter { it.kind == DiscussionKind.THREAD }
+        val threads = patrulha.cachedDiscussions(pr.number)?.let { Discussions.others(it, item.record) }.orEmpty().filter { it.kind == DiscussionKind.THREAD }
         val comments = files.files.associate { file ->
             file.path to item.drafts.count { it.filePath == file.path } + requests.count { it.path == file.path } +
                 threads.count { it.path == file.path }
@@ -850,6 +899,29 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
         }
     }
 
+    private fun toggleAutoReply() {
+        val number = selectedPr()?.pr?.number ?: return
+        if (autoReply.isOn(number)) {
+            autoReply.setOn(number, false)
+            notify("Respostas da IA desligadas no PR #$number", "A IA para de responder às conversas deste PR.", NotificationType.INFORMATION)
+            return
+        }
+        val confirmed = Messages.showYesNoDialog(
+            project,
+            "A IA vai acompanhar as conversas que você abriu no PR #$number e responder no GitHub em seu nome, sem perguntar antes, " +
+                "até cada conversa chegar a uma conclusão, quando ela é resolvida. As respostas levam uma nota dizendo que foram da IA.\n\n" +
+                "Ela confere a cada ${AutoReplyService.POLL_MINUTES} minutos enquanto a IDE estiver aberta, faz no máximo ${AutoReply.MAX_ROUNDS} " +
+                "rodadas por conversa e devolve a conversa para você quando precisar de uma decisão sua.",
+            "Ligar Respostas da IA no PR #$number",
+            "Ligar",
+            "Cancelar",
+            IronDomeIcons.ia,
+        )
+        if (confirmed != Messages.YES) return
+        autoReply.setOn(number, true)
+        notify("Respostas da IA ligadas no PR #$number", "Conferindo as conversas agora; depois, a cada ${AutoReplyService.POLL_MINUTES} minutos.", NotificationType.INFORMATION)
+    }
+
     private fun addAiDrafts(number: Int, comments: List<AiComment>) {
         if (radar.activePullRequest != number) {
             notify("Revisão da IA descartada", "O modo revisão do PR #$number foi encerrado antes de a IA terminar.", NotificationType.WARNING)
@@ -880,17 +952,20 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
         rebuild()
     }
 
-    /** Com a revisão, o histórico do PR aparece no editor; ao encerrar, sai. Sair de [ref] encerra a revisão. */
+    /**
+     * Com a revisão, o histórico e as conversas do PR aparecem no editor; ao encerrar, saem. Sair de [ref] encerra a
+     * revisão.
+     */
     private fun startReview(number: Int, ref: String?) {
         patrulha.setReviewRef(ref)
         radar.startPullRequestReview(number)
-        patrulha.setHistoryShown(number, true)
+        patrulha.setShownInEditor(number, true)
         syncQuietly(listOf(number))
     }
 
     private fun stopReview(number: Int) {
         radar.stopPullRequestReview()
-        patrulha.setHistoryShown(number, false)
+        patrulha.setShownInEditor(number, false)
     }
 
     private fun editSelected() {
@@ -1072,11 +1147,16 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
      * O que Mostrar/Ocultar no Editor alterna, e se está no editor agora: um pedido selecionado, ou o
      * histórico do PR quando a seleção é o PR.
      */
-    private fun historyTarget(): Pair<Any, Boolean>? = when (val item = selectedNode()?.userObject) {
+    private fun historyTarget(): Pair<Any, Boolean>? = if (selectedPr()?.active != true) null else when (val item = selectedNode()?.userObject) {
         is RequestItem -> item to patrulha.isInEditor(item.number, item.request.id)
         is PrItem -> if (item.record?.requests.isNullOrEmpty()) null else item to patrulha.isHistoryShown(item.number)
+        is DiscussionsItem -> item.takeIf { patrulha.editorDiscussions(it.number).isNotEmpty() }?.let { it to patrulha.isDiscussionsShown(it.number) }
+        is DiscussionItem -> item.takeIf { inEditorKind(it.discussion) }?.let { it to patrulha.isDiscussionInEditor(it.number, it.discussion) }
         else -> null
     }
+
+    /** Só as conversas de linha e de arquivo têm lugar no código. */
+    private fun inEditorKind(discussion: Discussion) = discussion.kind == DiscussionKind.THREAD && discussion.path != null
 
     private fun toggleHistory() {
         val (item, shown) = historyTarget() ?: return
@@ -1089,6 +1169,14 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
                 navigate(item.request.path, (item.request.startLine - 1).takeIf { item.request.target == CommentTarget.LINES })
             }
             is PrItem -> patrulha.setHistoryShown(item.number, !shown)
+            is DiscussionsItem -> patrulha.setDiscussionsShown(item.number, !shown)
+            is DiscussionItem -> if (shown) {
+                patrulha.setDiscussionHidden(item.number, item.discussion, true)
+            } else {
+                patrulha.setDiscussionHidden(item.number, item.discussion, false)
+                patrulha.setDiscussionsShown(item.number, true)
+                navigateTo(item.discussion)
+            }
         }
     }
 
@@ -1423,7 +1511,8 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
                 }
                 is RequestItem -> {
                     describeRequest(row, item.request)
-                    if (item.request.target != CommentTarget.PACKAGE && !item.inEditor) row.pill("Oculto no editor", Tone.GRAY)
+                    if (item.request.target != CommentTarget.PACKAGE && item.inEditor == false) row.pill("Oculto no editor", Tone.GRAY)
+                    item.auto?.let { autoPill(row, it) }
                 }
                 is DiscussionsItem -> describeDiscussions(row, item)
                 is DiscussionItem -> describeDiscussion(row, item)
@@ -1457,9 +1546,11 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
             val reviews = discussions.filter { it.kind == DiscussionKind.REVIEW }
             reviews.count { it.reviewState == "APPROVED" }.takeIf { it > 0 }?.let { row.pill(plural(it, "aprovação", "aprovações"), Tone.GREEN) }
             reviews.count { it.reviewState == "CHANGES_REQUESTED" }.takeIf { it > 0 }?.let { row.pill("$it pedindo alterações", Tone.RED) }
+            if (item.inEditor) row.pill("No editor", Tone.PURPLE)
             row.tooltip(
                 "Os comentários do PR no GitHub, seus e de outras pessoas, fora os seus pedidos (as respostas a eles aparecem abaixo de cada pedido). " +
-                    "Selecione um e use Responder; duplo clique abre a linha comentada.",
+                    "Selecione um e use Responder; duplo clique abre a linha comentada. Na revisão do PR, as conversas de linha aparecem no código, " +
+                    "só de leitura; Mostrar/Ocultar no Editor alterna.",
             )
         }
 
@@ -1527,11 +1618,23 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
             if (discussion.resolved) row.pill("Resolvida", Tone.GREEN)
             if (discussion.outdated) row.pill("Desatualizada", Tone.GRAY)
             if (discussion.replies.isNotEmpty()) row.pill(plural(discussion.replies.size, "resposta", "respostas"), Tone.BLUE)
+            if (item.inEditor) row.pill("No editor", Tone.PURPLE)
+            item.auto?.let { autoPill(row, it) }
             if (first.body.isNotBlank()) row.detail(firstLine(first.body))
             row.tooltip(first.body.trim().ifEmpty { "Sem texto." })
         }
 
         private fun firstLine(text: String) = CommentMarkdown.plain(text, 160)
+
+        private fun autoPill(row: Row, status: AutoStatus) = row.pill(
+            status.label,
+            when (status) {
+                AutoStatus.WAITING -> Tone.PINK
+                AutoStatus.CONCLUDED -> Tone.GREEN
+                AutoStatus.NEEDS_YOU, AutoStatus.LIMIT -> Tone.ORANGE
+            },
+            bold = status == AutoStatus.NEEDS_YOU || status == AutoStatus.LIMIT,
+        )
 
         private fun describeFiles(row: Row, item: FilesItem) {
             row.icon(AllIcons.Actions.Diff)
@@ -1605,6 +1708,7 @@ class PatrulhaPanel(private val project: Project) : SimpleToolWindowPanel(true, 
             if (item.pr?.draft == true) row.pill("Rascunho", Tone.GRAY)
             if (item.active) row.pill("Em revisão", Tone.PURPLE, bold = true)
             if (item.checkedOut) row.pill("No checkout", Tone.TEAL)
+            if (item.autoReply) row.pill("Respostas da IA", Tone.PINK, bold = true)
             if (item.historyShown && item.record?.requests?.isNotEmpty() == true) row.pill("Histórico no editor", Tone.BLUE)
             if (item.drafts.isNotEmpty()) row.pill(plural(item.drafts.size, "não enviado", "não enviados"), CommentStatus.UNSAVED.tone)
             item.record?.drafts?.size?.takeIf { it > 0 }?.let { row.pill(plural(it, "rascunho no GitHub", "rascunhos no GitHub"), Tone.YELLOW, bold = true) }

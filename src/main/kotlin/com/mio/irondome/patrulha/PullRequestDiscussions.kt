@@ -28,7 +28,8 @@ enum class DiscussionKind {
 
 /**
  * Uma conversa do PR no GitHub, de qualquer pessoa. Em [DiscussionKind.THREAD], [nodeId] é o id da conversa no
- * GraphQL, para responder nela, e [line] é nula no comentário do arquivo inteiro.
+ * GraphQL, para responder nela, e [line] é nula no comentário do arquivo inteiro. Linhas 1-based; [startLine]
+ * só existe nos comentários de várias linhas.
  */
 data class Discussion(
     val kind: DiscussionKind,
@@ -36,6 +37,7 @@ data class Discussion(
     val nodeId: String = "",
     val path: String? = null,
     val line: Int? = null,
+    val startLine: Int? = null,
     val resolved: Boolean = false,
     val outdated: Boolean = false,
     /** `APPROVED`, `CHANGES_REQUESTED`, `COMMENTED` ou `DISMISSED`, nas revisões. */
@@ -85,12 +87,14 @@ object Discussions {
         val threads = pullRequest.nodes("reviewThreads").mapNotNull { thread ->
             val comments = thread.nodes("comments").map(::comment)
             if (comments.isEmpty() || comments.first().pending) return@mapNotNull null
+            val current = thread.int("line") != null
             Discussion(
                 kind = DiscussionKind.THREAD,
                 comments = comments,
                 nodeId = thread.text("id").orEmpty(),
                 path = thread.text("path"),
                 line = thread.int("line") ?: thread.int("originalLine"),
+                startLine = if (current) thread.int("startLine") else thread.int("originalStartLine"),
                 resolved = thread.bool("isResolved"),
                 outdated = thread.bool("isOutdated"),
             )

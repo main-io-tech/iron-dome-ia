@@ -74,6 +74,16 @@ class PatrulhaService(private val project: Project) : PersistentStateComponent<P
         /** Pedidos ocultos do editor e expandidos nele, como `12:P3`. */
         var hiddenRequests: MutableSet<String> = mutableSetOf()
         var expandedRequests: MutableSet<String> = mutableSetOf()
+
+        /** PRs com as conversas do GitHub no editor, pelo número. */
+        var discussionPrs: MutableSet<String> = mutableSetOf()
+
+        /**
+         * Conversas ocultas do editor e as que o usuário recolheu ou expandiu ao contrário do padrão, como
+         * `12:thread:345`.
+         */
+        var hiddenDiscussions: MutableSet<String> = mutableSetOf()
+        var toggledDiscussions: MutableSet<String> = mutableSetOf()
     }
 
     /** O que [enter] fez: o stash criado agora (vazio se não houve) e se ele vai voltar em [leave]. */
@@ -84,6 +94,8 @@ class PatrulhaService(private val project: Project) : PersistentStateComponent<P
     private val filesCache = ConcurrentHashMap<Int, PullRequestFiles>()
     /** O registro de cada PR já interpretado, com a data e o tamanho do `.md` de onde veio. */
     private val recordCache = ConcurrentHashMap<Int, Pair<Pair<Long, Long>, PullRequestRecord>>()
+    /** As conversas de cada PR na última leitura do GitHub, para os cartões do editor. */
+    private val discussionsCache = ConcurrentHashMap<Int, List<Discussion>>()
 
     /** Os arquivos já lidos do PR, se ainda valem para o head [headSha]. */
     fun cachedFiles(number: Int, headSha: String): PullRequestFiles? = filesCache[number]?.takeIf { it.headSha == headSha }
@@ -96,7 +108,10 @@ class PatrulhaService(private val project: Project) : PersistentStateComponent<P
         val mergeBase = pr.baseSha.takeIf { it.isNotEmpty() }
             ?.let { base -> runCatching { client.mergeBase(context.repo, base, pr.headSha) }.getOrDefault(base) }
             .orEmpty()
-        return PullRequestFiles(pr.headSha, mergeBase, files).also { filesCache[pr.number] = it }
+        return PullRequestFiles(pr.headSha, mergeBase, files).also {
+            filesCache[pr.number] = it
+            ApplicationManager.getApplication().invokeLater({ ChangedLines.getInstance(project).refresh() }, project.disposed)
+        }
     }
 
     /**
@@ -117,10 +132,34 @@ class PatrulhaService(private val project: Project) : PersistentStateComponent<P
         this.state = state
     }
 
-    fun isHistoryShown(number: Int): Boolean = number.toString() in state.historyPrs
+    /**
+     * Os comentários do PR só vão para o editor no modo revisão dele, com o código do PR no checkout: fora dele, as
+     * linhas não batem com as do GitHub.
+     */
+    fun isInReview(number: Int): Boolean = number != 0 && project.service<ReviewCommentService>().activePullRequest == number
 
-    /** Os `.md` dos PRs com o histórico no editor; lê só esses, porque o editor pede a cada redesenho. */
-    fun historyRecords(): List<PullRequestRecord> = state.historyPrs.mapNotNull { it.toIntOrNull()?.let(::record) }
+    /** O PR em revisão, ou 0. */
+    fun reviewing(): Int = project.service<ReviewCommentService>().activePullRequest
+
+    /** Liga ou desliga no editor os pedidos enviados e as conversas do PR [number], ao entrar e sair da revisão. */
+    fun setShownInEditor(number: Int, shown: Boolean) {
+        val key = number.toString()
+        if (shown) {
+            state.historyPrs += key
+            state.discussionPrs += key
+        } else {
+            state.historyPrs -= key
+            state.discussionPrs -= key
+        }
+        historyChanged(number)
+        discussionsChanged(number)
+    }
+
+    /** O histórico do PR [number] está no editor: ligado e com o PR em revisão. */
+    fun isHistoryShown(number: Int): Boolean = isInReview(number) && number.toString() in state.historyPrs
+
+    /** O `.md` do PR em revisão, se o histórico dele está no editor; lê só esse, porque o editor pede a cada redesenho. */
+    fun historyRecords(): List<PullRequestRecord> = listOfNotNull(reviewing().takeIf(::isHistoryShown)?.let(::record))
 
     /** Liga ou desliga os pedidos enviados ao PR [number] como cartões no editor. */
     fun setHistoryShown(number: Int, shown: Boolean) {
@@ -155,6 +194,69 @@ class PatrulhaService(private val project: Project) : PersistentStateComponent<P
     }
 
     private fun key(number: Int, id: String) = "$number:$id"
+
+    /** As conversas do PR [number] estão no editor: ligadas e com o PR em revisão. */
+    fun isDiscussionsShown(number: Int): Boolean = isInReview(number) && number.toString() in state.discussionPrs
+
+    /** Liga ou desliga as conversas do PR [number] no GitHub como cartões só de leitura no editor. */
+    fun setDiscussionsShown(number: Int, shown: Boolean) {
+        val changed = if (shown) state.discussionPrs.add(number.toString()) else state.discussionPrs.remove(number.toString())
+        if (changed) discussionsChanged(number)
+    }
+
+    /**
+     * As conversas de linha e de arquivo do PR [number] que podem ir para o editor, da última leitura do GitHub:
+     * as que não são pedidos do `.md`, que já aparecem como pedidos.
+     */
+    fun editorDiscussions(number: Int): List<Discussion> =
+        discussionsCache[number]?.let { Discussions.others(it, record(number)) }.orEmpty()
+            .filter { it.kind == DiscussionKind.THREAD && it.path != null }
+
+    fun isDiscussionHidden(number: Int, discussion: Discussion): Boolean = key(number, discussion.key) in state.hiddenDiscussions
+
+    /** O cartão está no editor: as conversas do PR estão ligadas e esta não foi ocultada. */
+    fun isDiscussionInEditor(number: Int, discussion: Discussion): Boolean =
+        isDiscussionsShown(number) && !isDiscussionHidden(number, discussion)
+
+    fun setDiscussionHidden(number: Int, discussion: Discussion, hidden: Boolean) {
+        val key = key(number, discussion.key)
+        val changed = if (hidden) state.hiddenDiscussions.add(key) else state.hiddenDiscussions.remove(key)
+        if (changed) discussionsChanged(number)
+    }
+
+    /** As abertas começam expandidas; as resolvidas e as desatualizadas, recolhidas. */
+    fun isDiscussionExpanded(number: Int, discussion: Discussion): Boolean =
+        (key(number, discussion.key) in state.toggledDiscussions) != (!discussion.resolved && !discussion.outdated)
+
+    fun toggleDiscussionExpanded(number: Int, discussion: Discussion) {
+        val key = key(number, discussion.key)
+        if (!state.toggledDiscussions.remove(key)) state.toggledDiscussions += key
+        discussionsChanged(number)
+    }
+
+    /** Redesenha os cartões das conversas do PR [number] nos editores abertos, e também os de [paths]. Na EDT. */
+    private fun discussionsChanged(number: Int, paths: Collection<String> = emptyList()) {
+        project.service<ReviewCommentService>().refreshPaths(editorDiscussions(number).mapNotNull { it.path } + paths)
+        project.messageBus.syncPublisher(TOPIC).recordsChanged()
+    }
+
+    /** As conversas do PR [number] na última leitura do GitHub, ou nulo antes da primeira. */
+    fun cachedDiscussions(number: Int): List<Discussion>? = discussionsCache[number]
+
+    /**
+     * Guarda as conversas lidas do PR [number] e avisa a aba; com elas no editor, redesenha os arquivos de antes e de
+     * agora.
+     */
+    internal fun rememberDiscussions(number: Int, discussions: List<Discussion>) {
+        val before = editorDiscussions(number).mapNotNull { it.path }
+        discussionsCache[number] = discussions
+        val update = {
+            if (isDiscussionsShown(number)) discussionsChanged(number, before)
+            else project.messageBus.syncPublisher(TOPIC).recordsChanged()
+        }
+        val application = ApplicationManager.getApplication()
+        if (application.isDispatchThread) update() else application.invokeLater(update, project.disposed)
+    }
 
     /**
      * Troca o texto e o código sugerido de um pedido já enviado, no comentário do GitHub e no `.md`. Devolve
@@ -693,7 +795,8 @@ class PatrulhaService(private val project: Project) : PersistentStateComponent<P
         )
     }
 
-    fun discussions(context: RepoContext, number: Int): List<Discussion> = client(context).discussions(context.repo, number)
+    fun discussions(context: RepoContext, number: Int): List<Discussion> =
+        client(context).discussions(context.repo, number).also { rememberDiscussions(number, it) }
 
     /** Para onde vai a resposta numa conversa de linha. */
     enum class ReplyTarget { PUBLISHED, DRAFT }

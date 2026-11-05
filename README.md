@@ -474,7 +474,10 @@ foi atendido.
    hora, e o aviso oferece **Voltar ao PR #n** e, se você voltou para a branch de antes, **Devolver as
    Alterações do Stash**. No modo revisão, o formulário de comentário fica roxo, com o título *Comentário para o PR #n*
    e o botão **Adicionar ao PR**, e os comentários ganham a etiqueta *Pedido para o PR #n · Não enviado*,
-   fora do `.md` da IA. **Sugerir código** abre um editor de verdade sobre uma cópia do arquivo, com o
+   fora do `.md` da IA. Com o checkout no head do PR, o próprio editor mostra o que o PR mudou, como o
+   diff do GitHub: linhas novas em verde e alteradas em azul (fundo e barra na margem), um triângulo vermelho
+   onde linhas saíram e as mesmas cores na barra de rolagem, para achar os trechos e comentar direto no
+   arquivo, sem abrir o diff. O destaque some ao encerrar a revisão. **Sugerir código** abre um editor de verdade sobre uma cópia do arquivo, com o
    trecho comentado destacado e editável e o resto do arquivo recolhido e só de leitura: Ctrl+Espaço,
    imports, navegação e erros funcionam como no editor, sem alterar o arquivo. Escreva como gostaria que
    ficasse: nas linhas do diff, vira uma sugestão do GitHub que o autor aplica com um clique
@@ -495,6 +498,14 @@ foi atendido.
    cabeçalho expande, **Ocultar** tira o cartão e **Editar** troca o texto e o código sugerido também no
    GitHub. Na aba, **Mostrar/Ocultar no Editor** vale para o histórico do PR inteiro ou para um pedido, e
    **Editar** serve para rascunhos e pedidos enviados.
+   Os comentários de outras pessoas também vão para o código: cada conversa de linha aparece como cartão
+   **só de leitura** na linha comentada, com as respostas abaixo e o status (*Aberta*, *Resolvida*,
+   *Desatualizada*). As do arquivo inteiro ficam no topo. O cartão não tem Editar, só expandir e **Ocultar**;
+   para responder, use **Responder** na aba. **Mostrar/Ocultar no Editor** em *Conversas no PR* alterna todas,
+   e numa conversa, só ela.
+   Os cartões, pedidos e conversas, só aparecem no editor durante a revisão do PR, depois de **Revisar Este
+   PR**: fora dela, as linhas não batem com as do GitHub. Encerrar a revisão tira os cartões, e fora dela o
+   **Mostrar no Editor** fica desabilitado.
    Se o revisor **editar ou apagar** o comentário direto no GitHub, a Patrulha sincroniza ao atualizar a
    aba, ao iniciar a revisão e em **Verificar Pedidos**: o `.md` passa a ter o texto do GitHub (*Editado no
    GitHub*), e os apagados ficam riscados (*Apagado no GitHub*), fora das contas e sem Editar.
@@ -511,6 +522,21 @@ foi atendido.
 
 Um pedido conta como atendido quando o código mudou ou a conversa foi resolvida; e como pendente quando
 nada disso aconteceu depois de commits novos.
+
+6. **Deixe a IA conversar.** **Ligar Respostas da IA**, na barra da aba, liga o modo automático no PR
+   selecionado (com a IA configurada no Interceptador). A cada 2 minutos, enquanto a IDE estiver aberta, a
+   Patrulha confere as conversas de linha que você abriu no PR. Quando alguém responde, a IA lê a conversa
+   inteira, o pedido original e o código no head do PR, e decide:
+   - **Responder:** publica a resposta em seu nome e espera o dev de novo (*IA aguardando o dev*).
+   - **Concluir:** quando o dev corrigiu, explicou bem ou os dois combinaram um próximo passo, publica a
+     mensagem final e resolve a conversa no GitHub (*IA concluiu*).
+   - **Passar para você:** quando a conversa pede uma decisão sua (regra de negócio, escopo, divergência
+     ou tom tenso), não publica nada e avisa (*IA pede você*).
+
+   As respostas são publicadas direto, sem perguntar, e terminam com uma nota dizendo que foram da IA.
+   Cada conversa tem no máximo 5 rodadas da IA; passou disso, ela para e avisa (*IA no limite de rodadas*).
+   Responder você mesmo não atrapalha: a IA só entra quando a última palavra é de outra pessoa. O modo
+   desliga sozinho quando o PR é fechado, e **Desligar Respostas da IA** para na hora.
 
 > [!NOTE]
 > A Patrulha usa os plugins Git e GitHub que vêm no IntelliJ IDEA. Sem eles, a aba não aparece, e

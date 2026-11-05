@@ -8,7 +8,7 @@ import com.mio.irondome.radar.EditorCard
 import com.mio.irondome.radar.EditorCardProvider
 
 /**
- * O histórico do PR no editor: os pedidos já enviados, de `pr-<número>.md`, como cartões recolhidos nas
+ * O histórico do PR em revisão no editor: os pedidos já enviados, de `pr-<número>.md`, como cartões recolhidos nas
  * linhas onde o trecho está agora, com o status das verificações, Editar e Ocultar.
  */
 class PullRequestCards : EditorCardProvider {

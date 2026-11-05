@@ -106,7 +106,62 @@ object DiffLines {
         }
         return lines
     }
+
+    /**
+     * Os trechos que o PR mudou, no lado novo, como as marcas de alteração da IDE: linhas novas, linhas que
+     * substituem outras e remoções, que ficam na linha logo abaixo do que saiu.
+     */
+    fun changes(patch: String?): List<LineChange> {
+        if (patch == null) return emptyList()
+        val changes = mutableListOf<LineChange>()
+        var next = 0
+        var start = 0
+        var added = 0
+        var removed = 0
+        fun flush() {
+            when {
+                added > 0 && removed > 0 -> changes += LineChange(ChangeKind.MODIFIED, start until start + added, removed)
+                added > 0 -> changes += LineChange(ChangeKind.ADDED, start until start + added, 0)
+                removed > 0 -> changes += LineChange(ChangeKind.DELETED, start..start, removed)
+            }
+            added = 0
+            removed = 0
+        }
+        for (line in patch.lineSequence()) {
+            val hunk = HUNK.find(line)
+            when {
+                hunk != null -> {
+                    flush()
+                    next = hunk.groupValues[1].toInt()
+                }
+                next == 0 || line.startsWith("\\") -> continue
+                line.startsWith("-") || line.startsWith("+") -> {
+                    if (added == 0 && removed == 0) start = next
+                    if (line.startsWith("+")) {
+                        added++
+                        next++
+                    } else {
+                        removed++
+                    }
+                }
+                else -> {
+                    flush()
+                    next++
+                }
+            }
+        }
+        flush()
+        return changes
+    }
 }
+
+enum class ChangeKind { ADDED, MODIFIED, DELETED }
+
+/**
+ * Trecho alterado pelo PR: [lines] 1-based, no lado novo; numa remoção, é a linha que ficou logo abaixo do que
+ * saiu. [removed] conta as linhas que saíram.
+ */
+data class LineChange(val kind: ChangeKind, val lines: IntRange, val removed: Int)
 
 /** Conversa de revisão no PR, identificada pelo primeiro comentário dela. */
 data class ReviewThread(

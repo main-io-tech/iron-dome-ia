@@ -56,6 +56,38 @@ class PatrulhaTest {
     }
 
     @Test
+    fun theChangesOfThePatchAreNewReplacedAndRemovedLinesOnTheNewSide() {
+        val patch = """
+            @@ -10,6 +10,7 @@ class Frete {
+             val a = 1
+            -val b = 2
+            +val b = 3
+            +val c = 4
+             val d = 5
+            +val e = 6
+             val f = 7
+            -val g = 8
+            -val h = 9
+             val i = 10
+            @@ -40,2 +41,1 @@
+             fim()
+            -sobra()
+            \ No newline at end of file
+        """.trimIndent()
+
+        assertEquals(
+            listOf(
+                LineChange(ChangeKind.MODIFIED, 11..12, 1),
+                LineChange(ChangeKind.ADDED, 14..14, 0),
+                LineChange(ChangeKind.DELETED, 16..16, 2),
+                LineChange(ChangeKind.DELETED, 42..42, 1),
+            ),
+            DiffLines.changes(patch),
+        )
+        assertTrue(DiffLines.changes(null).isEmpty())
+    }
+
+    @Test
     fun markdownRoundTripKeepsRequests() {
         val record = PullRequestRecord(
             number = 12, title = "Frete por peso", url = "https://github.com/o/r/pull/12", headRef = "frete", baseRef = "main",
@@ -150,7 +182,8 @@ class PatrulhaTest {
                   "comments": { "nodes": [
                     { "databaseId": 77, "body": "Meu pedido", "createdAt": "2026-11-01T10:00:00Z", "author": { "login": "eu" }, "state": "SUBMITTED" },
                     { "databaseId": 78, "body": "Feito", "createdAt": "2026-11-02T10:00:00Z", "author": { "login": "ana" }, "state": "SUBMITTED" } ] } },
-                { "id": "T2", "path": "src/Peso.kt", "line": null, "originalLine": 5, "isResolved": true, "isOutdated": true,
+                { "id": "T2", "path": "src/Peso.kt", "line": null, "originalLine": 5, "startLine": null, "originalStartLine": 3,
+                  "isResolved": true, "isOutdated": true,
                   "comments": { "nodes": [
                     { "databaseId": 90, "body": "Isso pode ser nulo?", "createdAt": "2026-11-03T09:00:00Z", "author": { "login": "bia" }, "state": "SUBMITTED" } ] } },
                 { "id": "T3", "path": "src/Peso.kt", "line": 1,
@@ -172,6 +205,8 @@ class PatrulhaTest {
         assertEquals(listOf("review:200", "thread:90", "thread:77", "conversation:100"), discussions.map { it.key })
         val outdated = discussions.first { it.first.id == 90L }
         assertEquals(5, outdated.line)
+        assertEquals("sem a linha atual, a inicial também é a original", 3, outdated.startLine)
+        assertNull(discussions.first { it.first.id == 77L }.startLine)
         assertTrue(outdated.resolved && outdated.outdated)
         assertEquals("fantasma", discussions.first { it.kind == DiscussionKind.CONVERSATION }.first.author)
         assertEquals("APPROVED", discussions.first().reviewState)

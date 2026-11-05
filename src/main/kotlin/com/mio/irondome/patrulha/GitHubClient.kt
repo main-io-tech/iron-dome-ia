@@ -291,7 +291,10 @@ class GitHubClient(private val apiUrl: String, private val graphQlUrl: String, p
               repository(owner: ${'$'}owner, name: ${'$'}name) {
                 pullRequest(number: ${'$'}number) {
                   reviewThreads(first: 100) {
-                    nodes { id path line originalLine isResolved isOutdated comments(first: 100) { nodes { $comment state } } }
+                    nodes {
+                      id path line originalLine startLine originalStartLine isResolved isOutdated
+                      comments(first: 100) { nodes { $comment state } }
+                    }
                   }
                   comments(last: 100) { nodes { $comment } }
                   reviews(last: 100) { nodes { $comment state submittedAt } }
@@ -326,6 +329,16 @@ class GitHubClient(private val apiUrl: String, private val graphQlUrl: String, p
             .getAsJsonObject("addPullRequestReviewThreadReply")?.getAsJsonObject("comment")
             ?: throw GitHubException("O GitHub não devolveu a resposta.")
         return Discussions.comment(node)
+    }
+
+    /** Marca a conversa [threadNodeId] como resolvida. */
+    fun resolveThread(threadNodeId: String) {
+        val mutation = """
+            mutation(${'$'}input: ResolveReviewThreadInput!) {
+              resolveReviewThread(input: ${'$'}input) { thread { id isResolved } }
+            }
+        """.trimIndent()
+        graphQl(mutation, JsonObject().apply { add("input", JsonObject().apply { addProperty("threadId", threadNodeId) }) })
     }
 
     /** Comentário novo na conversa geral do PR. */
